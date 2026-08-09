@@ -1,0 +1,28 @@
+{
+  "name": "enterprise-test-management-system",
+  "version": "1.0.0",
+  "description": "Hệ thống Quản lý Kiểm thử Cấp Doanh nghiệp - Enterprise Test Management System (MERN Stack)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "verify-models": "node -e \"const models = require('./models'); console.log('✅ All models loaded successfully:', Object.keys(models).length, 'models'); console.log(Object.keys(models));\""
+  },
+  "keywords": [
+    "test-management",
+    "qa",
+    "enterprise",
+    "mern",
+    "mongodb",
+    "mongoose"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "mongoose": "^8.9.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}
