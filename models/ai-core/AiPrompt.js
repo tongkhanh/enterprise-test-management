@@ -58,13 +58,13 @@ const aiPromptSchema = new Schema(
         values: ['OpenAI', 'GoogleAI', 'Anthropic'],
         message: 'Nhà cung cấp AI phải là: OpenAI, GoogleAI, hoặc Anthropic',
       },
-      default: 'OpenAI',
+      default: 'GoogleAI',
     },
 
     modelName: {
       type: String,
-      default: 'gpt-4o-mini',
-      // VD: 'gpt-4o', 'gpt-4o-mini', 'gemini-pro', 'claude-3-sonnet'
+      default: 'gemini-3.5-flash',
+      // VD: 'gemini-3.5-flash', 'gpt-4o-mini', 'claude-3-sonnet'
     },
 
     temperature: {

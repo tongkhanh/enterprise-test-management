@@ -79,6 +79,11 @@ const aiGenerationLogSchema = new Schema(
       enum: {
         values: [
           'GenerateTestCase',
+          'WebAnalysis',
+          'GenerateWebTestCase',
+          'SuggestUserStory',
+          'SuggestUserStoryFromGitHub',
+          'RootCauseAnalysis',
           'SuggestSeverity',
           'DetectDuplicate',
           'ChatResponse',

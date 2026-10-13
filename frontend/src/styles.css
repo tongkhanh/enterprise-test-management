@@ -1,0 +1,49 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { @apply border-border; }
+  html { @apply bg-background dark:bg-[#101114]; }
+  body { @apply m-0 min-w-[320px] bg-background font-sans text-foreground antialiased transition-colors dark:bg-[#101114] dark:text-slate-100; }
+  button, input, select, textarea { font: inherit; }
+  ::selection { @apply bg-primary-100 text-primary-700; }
+}
+
+@layer components {
+  .panel { @apply rounded-2xl border border-border bg-white shadow-panel dark:border-slate-800 dark:bg-[#17181d] dark:shadow-none; }
+  .label { @apply mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300; }
+  .field-error { @apply mt-1.5 flex items-center gap-1 text-xs font-medium text-danger; }
+  .scrollbar-thin { scrollbar-width: thin; scrollbar-color: #d8d9e2 transparent; }
+  .ai-shimmer { background: linear-gradient(90deg,#5b4ef2,#9a58ed,#5b4ef2); background-size: 200% 100%; animation: shimmer 1.8s linear infinite; }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+}
+
+/* Stripe-inspired mesh stays behind content, so forms keep strong contrast. */
+.app-mesh { isolation: isolate; background: radial-gradient(circle at 8% 12%,#d7dcff 0,transparent 31%),radial-gradient(circle at 94% 26%,#d4f5ff 0,transparent 32%),linear-gradient(145deg,#e9ebf9 0%,#f5f7ff 45%,#e9f8ff 100%); }
+.app-mesh::before, .app-mesh::after { content: ''; position: fixed; z-index: -1; pointer-events: none; filter: blur(44px); opacity: .72; border-radius: 999px; animation: mesh-drift 18s ease-in-out infinite alternate; }
+.app-mesh::before { width: 52rem; height: 52rem; top: -22rem; right: -18rem; background: radial-gradient(circle, #a78bfa 0%, #80d8ff 38%, transparent 70%); }
+.app-mesh::after { width: 43rem; height: 43rem; bottom: -21rem; left: 4%; background: radial-gradient(circle, #f0a6ff 0%, #8fc7ff 44%, transparent 73%); animation-delay: -8s; }
+.dark .app-mesh { background: #0d1020; }
+.dark .app-mesh::before { opacity: .2; }.dark .app-mesh::after { opacity: .15; }
+.glass-card { position: relative; isolation: isolate; overflow: hidden; background: color-mix(in srgb, white 84%, transparent); backdrop-filter: blur(18px); box-shadow: 0 18px 45px -32px rgba(30, 41, 59, .45); transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease; }
+.glass-card > * { position: relative; z-index: 1; }.card-scene { position:absolute!important; z-index:0!important; inset:auto -14px -18px auto; width:170px; height:150px; pointer-events:none; opacity:.58; mask-image:radial-gradient(ellipse at 70% 65%,#000 0 40%,transparent 74%); }.card-scene canvas{width:100%!important;height:100%!important}.glass-card::before,.glass-card::after { content:''; pointer-events:none; position:absolute; z-index:0; transform-style:preserve-3d; }.glass-card::before { width:150px; height:150px; right:-66px; bottom:-75px; border-radius:34px; border:1px solid rgba(118,83,255,.28); background:linear-gradient(135deg,rgba(255,255,255,.85),rgba(136,105,255,.23)); box-shadow:inset 0 0 24px rgba(255,255,255,.65),0 18px 32px rgba(79,70,229,.15); transform:rotateX(60deg) rotateZ(24deg); animation:card-prism 9s ease-in-out infinite; }.glass-card::after { width:94px; height:94px; left:-43px; top:-48px; border-radius:50%; background:radial-gradient(circle at 30% 30%,rgba(255,255,255,.96),rgba(102,168,255,.44) 30%,rgba(159,112,.18) 64%,transparent 70%); filter:blur(.4px); animation:card-orb 8s ease-in-out infinite alternate; }
+.glass-card:hover { border-color: rgba(139, 92, 246, .45); box-shadow: 0 24px 50px -28px rgba(79, 70, 229, .38); transform:translateY(-3px); }
+.dark .glass-card { background: color-mix(in srgb, #151827 80%, transparent); }
+.orb-stage { width: 168px; height: 108px; perspective: 700px; pointer-events: auto; }
+.orb-scene { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform .18s ease-out; }
+.orb-core { position: absolute; left: 52px; top: 21px; width: 66px; height: 66px; border-radius: 50%; background: radial-gradient(circle at 30% 28%, #fff 0 3%, #d9d0ff 12%, #8b5cf6 42%, #302060 76%); box-shadow: 0 0 34px rgba(139,92,246,.65); transform: translateZ(22px); }
+.orb-ring { position: absolute; left: 25px; top: 35px; width: 118px; height: 43px; border: 1px solid rgba(255,255,255,.75); border-radius: 50%; box-shadow: 0 0 16px rgba(96,165,250,.45); transform-style: preserve-3d; }
+.orb-ring-a { transform: rotateX(70deg) rotateZ(12deg) translateZ(8px); }.orb-ring-b { transform: rotateX(70deg) rotateZ(72deg) translateZ(8px); }.orb-ring-c { transform: rotateX(70deg) rotateZ(132deg) translateZ(8px); }
+@keyframes mesh-drift { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(-4rem,3rem,0) scale(1.15); } }
+@keyframes card-prism { 0%,100% { transform:rotateX(60deg) rotateZ(24deg) translate3d(0,0,0); } 50% { transform:rotateX(30deg) rotateZ(128deg) translate3d(-19px,-13px,28px); } } @keyframes card-orb { to { transform:translate3d(21px,28px,20px) scale(1.2); } }
+@media (prefers-reduced-motion: reduce) { .app-mesh::before,.app-mesh::after,.glass-card::before,.glass-card::after { animation: none; }.glass-card,.orb-scene { transition: none; } }
+
+/* Interactive hero: a visible, GPU-friendly 3D scene without an external Spline runtime. */
+.e2e-visual-hero { position: relative; isolation: isolate; min-height: 250px; overflow: hidden; border: 1px solid rgba(255,255,255,.32); border-radius: 24px; background: linear-gradient(125deg,#24105f 0%,#5134b9 35%,#116a9b 100%); box-shadow: 0 28px 65px -35px rgba(49, 28, 137, .8); }
+.e2e-mesh { position: absolute; border-radius: 50%; filter: blur(4px); mix-blend-mode: screen; opacity: .84; animation: hero-mesh 10s ease-in-out infinite alternate; }.e2e-mesh-one { width: 480px; height: 410px; right: -90px; top: -155px; background: radial-gradient(circle at 35% 60%,#fff7c0 0 3%,#ff92e7 17%,#9775ff 48%,transparent 72%); }.e2e-mesh-two { width: 430px; height: 340px; right: 13%; bottom: -210px; background: radial-gradient(circle,#7ff5ff 0,#4c9fff 28%,#9459ff 52%,transparent 71%); animation-delay: -4s; }.e2e-grid-light { position: absolute; inset: 0; opacity: .2; background-image: linear-gradient(rgba(255,255,255,.34) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.34) 1px,transparent 1px); background-size: 38px 38px; mask-image: linear-gradient(90deg,black,transparent 76%); }
+.e2e-3d-stage { position: absolute; right: 1.5rem; bottom: 0; width: min(46%,430px); height: 100%; perspective: 900px; }.e2e-3d-world { position:absolute; inset:0; transform-style:preserve-3d; transition: transform .16s ease-out; }.e2e-cube { position:absolute; width:104px; height:104px; right:36%; top:33%; transform-style:preserve-3d; animation: cube-float 7s ease-in-out infinite; }.e2e-cube i { position:absolute; inset:0; display:block; border:1px solid rgba(255,255,255,.76); background:linear-gradient(135deg,rgba(255,255,255,.5),rgba(159,124,255,.12)); backdrop-filter:blur(6px); box-shadow:inset 0 0 22px rgba(255,255,255,.14); }.e2e-cube i:nth-child(1){transform:translateZ(52px)}.e2e-cube i:nth-child(2){transform:rotateY(180deg) translateZ(52px)}.e2e-cube i:nth-child(3){transform:rotateY(90deg) translateZ(52px)}.e2e-cube i:nth-child(4){transform:rotateY(-90deg) translateZ(52px)}.e2e-cube i:nth-child(5){transform:rotateX(90deg) translateZ(52px)}.e2e-cube i:nth-child(6){transform:rotateX(-90deg) translateZ(52px)}
+.e2e-orbit { position:absolute; width:210px; height:82px; right:21%; top:38%; border:1px solid rgba(255,255,255,.68); border-radius:50%; box-shadow:0 0 22px rgba(169,148,255,.5); transform-style:preserve-3d; }.e2e-orbit-one{transform:rotateX(72deg) rotateZ(12deg); animation:orbit-spin 10s linear infinite}.e2e-orbit-two{transform:rotateX(72deg) rotateZ(102deg); animation:orbit-spin 14s linear infinite reverse}.e2e-glass-chip { position:absolute; display:grid; place-items:center; border:1px solid rgba(255,255,255,.62); border-radius:14px; background:rgba(255,255,255,.22); box-shadow:0 10px 30px rgba(15,8,70,.25),inset 0 1px rgba(255,255,255,.35); color:white; font-size:11px; font-weight:800; letter-spacing:.08em; backdrop-filter:blur(10px); }.chip-one{right:7%;top:17%;height:49px;width:49px;animation:chip-float 5s ease-in-out infinite}.chip-two{right:7%;bottom:25%;height:43px;width:62px;animation:chip-float 6s ease-in-out infinite -2s}.chip-three{right:58%;bottom:16%;height:39px;width:47px;animation:chip-float 5.5s ease-in-out infinite -3s}
+@keyframes hero-mesh{to{transform:translate3d(-38px,25px,0) scale(1.16);filter:blur(12px)}}@keyframes cube-float{0%,100%{transform:rotateX(-14deg) rotateY(25deg) translateY(0)}50%{transform:rotateX(26deg) rotateY(185deg) translateY(-19px)}}@keyframes orbit-spin{to{transform:rotateX(72deg) rotateZ(372deg)}}@keyframes chip-float{50%{transform:translate3d(0,-14px,25px) rotate(-5deg)}}
+@media (max-width: 640px){.e2e-3d-stage{right:-70px;width:63%;opacity:.75}.e2e-visual-hero{min-height:220px}}@media (prefers-reduced-motion:reduce){.e2e-mesh,.e2e-cube,.e2e-orbit,.e2e-glass-chip{animation:none}}

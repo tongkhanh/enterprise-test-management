@@ -1,0 +1,18 @@
+groups:
+  - name: etms
+    rules:
+      - alert: ETMSApiDown
+        expr: up{job="etms"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'ETMS API does not respond'}
+      - alert: ETMSWorkerStale
+        expr: etms_worker_up == 0
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: 'ETMS worker heartbeat expired'}
+      - alert: ETMSDeadLetterJobs
+        expr: etms_queue_jobs{status="failed"} > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Jobs need retry or investigation'}

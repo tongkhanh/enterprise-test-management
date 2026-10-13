@@ -1,0 +1,58 @@
+x-etms-common: &etms-common
+  image: etms-app:local
+  build: .
+  env_file: .env
+  environment:
+    REDIS_URL: redis://redis:6379
+    DOCKER_TARGET_HOST: host.docker.internal
+    RUNNER_STORAGE_VOLUME: etms-storage
+  depends_on:
+    redis:
+      condition: service_healthy
+  volumes:
+    - etms-storage:/app/storage
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    <<: *etms-common
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+
+  environment-worker:
+    <<: *etms-common
+    command: node workers/environmentWorker.js
+    volumes:
+      - etms-storage:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  automation-worker:
+    <<: *etms-common
+    command: node workers/automationWorker.js
+    volumes:
+      - etms-storage:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  integration-worker:
+    <<: *etms-common
+    command: node workers/integrationWorker.js
+    restart: unless-stopped
+
+volumes:
+  etms-storage:
+    name: etms-storage
+  redis-data:

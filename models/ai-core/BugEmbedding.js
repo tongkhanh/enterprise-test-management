@@ -101,8 +101,8 @@ const bugEmbeddingSchema = new Schema(
     // Model đã dùng để tạo embedding
     embeddingModel: {
       type: String,
-      default: 'text-embedding-3-small',
-      // VD: 'text-embedding-ada-002', 'text-embedding-3-small', 'text-embedding-3-large'
+      default: 'gemini-embedding-001',
+      // VD: 'gemini-embedding-001', 'text-embedding-3-small'
     },
 
     // Số chiều của vector
@@ -137,7 +137,6 @@ const bugEmbeddingSchema = new Schema(
 // =============================================
 // Indexes
 // =============================================
-bugEmbeddingSchema.index({ bug: 1 }, { unique: true });
 bugEmbeddingSchema.index({ project: 1 });
 // ⚡ LƯU Ý: Vector Search Index phải được tạo TRÊN ATLAS UI
 // (Không thể tạo bằng Mongoose, xem hướng dẫn ở trên)

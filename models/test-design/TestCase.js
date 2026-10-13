@@ -37,6 +37,19 @@ const testStepSchema = new Schema(
       default: '',
       // VD: "Email: test@gmail.com, Password: 123456"
     },
+    automationAction: {
+      type: String,
+      enum: ['goto', 'click', 'fill', 'select', 'check', 'uncheck', 'press', 'assertText', 'assertVisible', 'assertUrl', 'waitForResponse', 'manual'],
+      default: 'manual',
+    },
+    locator: {
+      type: Schema.Types.Mixed,
+      default: null,
+    },
+    value: {
+      type: String,
+      default: '',
+    },
   },
   { _id: false } // Không tạo _id riêng cho mỗi step
 );
@@ -55,6 +68,8 @@ const testCaseSchema = new Schema(
       trim: true,
       default: '',
     },
+    testCaseId: { type: String, trim: true, default: '' },
+    objective: { type: String, trim: true, default: '' },
 
     // Điều kiện tiên quyết trước khi thực hiện test
     preconditions: {
@@ -62,6 +77,8 @@ const testCaseSchema = new Schema(
       default: '',
       // VD: "User đã đăng nhập, đang ở trang Dashboard"
     },
+    postconditions: { type: String, default: '' },
+    testDesignTechniques: { type: [String], default: [] },
 
     priority: {
       type: String,
@@ -80,12 +97,14 @@ const testCaseSchema = new Schema(
       },
       default: 'Manual',
     },
+    quarantined: { type: Boolean, default: false },
+    retryLimit: { type: Number, min: 0, max: 3, default: 0 },
 
     status: {
       type: String,
       enum: {
-        values: ['Draft', 'Active', 'Deprecated', 'NeedsReview'],
-        message: 'Trạng thái phải là: Draft, Active, Deprecated, hoặc NeedsReview',
+        values: ['Draft', 'NeedsReview', 'Approved', 'Rejected', 'Active', 'Deprecated'],
+        message: 'Trạng thái phải là: Draft, NeedsReview, Approved, Rejected, Active, hoặc Deprecated',
       },
       default: 'Draft',
     },
@@ -106,6 +125,32 @@ const testCaseSchema = new Schema(
     tags: {
       type: [String],
       default: [],
+    },
+
+    // Dữ liệu traceability khi AI kết hợp User Story với website thật.
+    targetUrl: { type: String, default: null },
+    generatedFrom: {
+      type: String,
+      enum: ['Manual', 'UserStory', 'UserStoryAndWeb', 'SystemE2E'],
+      default: 'Manual',
+    },
+    storyCoverage: { type: [String], default: [] },
+    generatedTestData: { type: Schema.Types.Mixed, default: {} },
+    webAnalysisSnapshot: {
+      analysisId: { type: String, default: null },
+      analyzedAt: { type: Date, default: null },
+      finalUrl: { type: String, default: null },
+      screenshotUrl: { type: String, default: null },
+      pageTitle: { type: String, default: null },
+      counts: { type: Schema.Types.Mixed, default: {} },
+    },
+    e2e: {
+      systemProfile: { type: Schema.Types.ObjectId, ref: 'SystemProfile', default: null },
+      useCase: { type: Schema.Types.ObjectId, ref: 'UseCase', default: null },
+      journeyType: { type: String, default: '' },
+      routeCoverage: { type: [String], default: [] },
+      setup: { type: [String], default: [] },
+      cleanup: { type: [String], default: [] },
     },
 
     // -------------------------------------------
@@ -151,5 +196,6 @@ testCaseSchema.index({ userStory: 1 });
 testCaseSchema.index({ priority: 1, type: 1 });
 testCaseSchema.index({ tags: 1 });
 testCaseSchema.index({ createdBy: 1 });
+testCaseSchema.index({ generatedFrom: 1, 'webAnalysisSnapshot.analysisId': 1 });
 
 module.exports = mongoose.model('TestCase', testCaseSchema);

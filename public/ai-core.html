@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ETMS · AI Core & Web Analyzer</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="shell"><main>
+  <section class="hero">
+    <div>
+      <div class="eyebrow">Phân hệ 7 · Trọng tâm luận văn</div>
+      <h1>User Story + Website<br>→ Test Case</h1>
+      <p class="muted">Playwright đọc website thật; AI kết hợp với yêu cầu nghiệp vụ để sinh Test Case có căn cứ.</p>
+    </div>
+    <div class="actions">
+      <button data-load="/ai/prompts">Prompts</button>
+      <button data-load="/ai/logs">AI logs</button>
+    </div>
+  </section>
+
+  <div class="grid">
+    <section class="card wide">
+      <div class="eyebrow">Bước 1 · Không gọi AI</div>
+      <h2>Phân tích User Story và website bằng Playwright</h2>
+      <p class="muted">Cả User Story ID và URL đều bắt buộc. Analyzer chỉ đọc trang, không bấm nút và không gửi form.</p>
+      <form data-api="/ai/analyze-web-page">
+        <div class="row">
+          <label>Project ID (để đối chiếu)<input name="projectId" required></label>
+          <label>User Story ID<input name="userStoryId" required></label>
+        </div>
+        <label>URL website staging<input name="targetUrl" type="url" placeholder="https://staging.example.com/login" required></label>
+        <div class="row">
+          <label>Viewport rộng<input name="viewportWidth" type="number" data-number value="1440" min="320" max="2560"></label>
+          <label>Viewport cao<input name="viewportHeight" type="number" data-number value="900" min="320" max="1600"></label>
+        </div>
+        <button>Phân tích trang web</button>
+      </form>
+      <pre class="result hidden"></pre>
+    </section>
+
+    <section class="card wide">
+      <div class="eyebrow">Bước 2 · Gọi AI và lưu DB</div>
+      <h2>Sinh Test Case từ hai nguồn bắt buộc</h2>
+      <p class="muted">Playwright phân tích lại URL ở thời điểm tạo. AI chỉ được dùng selector đã tìm thấy và trả về DSL an toàn, không phải JavaScript thực thi trực tiếp.</p>
+      <form data-api="/ai/generate-web-test-cases">
+        <div class="row">
+          <label>Project ID<input name="projectId" required></label>
+          <label>User Story ID<input name="userStoryId" required></label>
+        </div>
+        <div class="row">
+          <label>Test Suite đích<input name="testSuiteId" required></label>
+          <label>URL website staging<input name="targetUrl" type="url" required></label>
+        </div>
+        <div class="row">
+          <label>Viewport rộng<input name="viewportWidth" type="number" data-number value="1440" min="320" max="2560"></label>
+          <label>Viewport cao<input name="viewportHeight" type="number" data-number value="900" min="320" max="1600"></label>
+        </div>
+        <button>Phân tích website & sinh Test Case Draft</button>
+      </form>
+      <pre class="result hidden"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Sinh Test Case chỉ từ Story</h2>
+      <p class="muted">Luồng cũ được giữ lại để đối chứng trong thực nghiệm luận văn.</p>
+      <form data-api="/ai/generate-test-cases">
+        <label>User Story ID<input name="userStoryId" required></label>
+        <label>Test Suite đích<input name="testSuiteId" required></label>
+        <button>Sinh cases từ Story</button>
+      </form>
+      <pre class="result hidden"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Gợi ý Severity / Priority</h2>
+      <form data-api="/ai/suggest-severity">
+        <label>Project ID<input name="project"></label>
+        <label>Tiêu đề<input name="title"></label>
+        <label>Mô tả lỗi<textarea name="description" required></textarea></label>
+        <button>Phân tích mức độ</button>
+      </form>
+      <pre class="result hidden"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Phát hiện Bug trùng</h2>
+      <form data-api="/ai/detect-duplicates">
+        <label>Project ID<input name="project" required></label>
+        <label>Tiêu đề<input name="title"></label>
+        <label>Mô tả<textarea name="description" required></textarea></label>
+        <button>Vector Search</button>
+      </form>
+      <pre class="result hidden"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Nạp Knowledge Base</h2>
+      <form data-api="/ai/knowledge">
+        <label>Project ID<input name="project" required></label>
+        <label>Tiêu đề tài liệu<input name="title" required></label>
+        <label>Nội dung<textarea class="code" name="content" required></textarea></label>
+        <button>Tạo embedding & lưu</button>
+      </form>
+      <pre class="result hidden"></pre>
+    </section>
+
+    <section class="card wide">
+      <h2>QA Chatbot RAG</h2>
+      <form data-api="/ai/chat">
+        <div class="row"><label>Project ID<input name="project"></label><label>Session ID<input name="sessionId"></label></div>
+        <label>Câu hỏi<textarea name="question" placeholder="Tiêu chí nghiệm thu của tính năng đăng nhập là gì?" required></textarea></label>
+        <button>Hỏi trợ lý QA</button>
+      </form>
+      <pre class="result hidden"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Tạo prompt cấu hình</h2>
+      <form data-api="/ai/prompts">
+        <label>Tên<input name="name" required></label>
+        <label>Category<select name="category"><option>TestCaseGeneration</option><option>BugSeverity</option><option>ChatAssistant</option><option>Custom</option></select></label>
+        <label>Prompt template<textarea class="code" name="promptTemplate" placeholder="Có thể dùng {{storyJson}} và {{webJson}}" required></textarea></label>
+        <button>Lưu prompt</button>
+      </form>
+      <pre class="result hidden"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Chính sách an toàn URL</h2>
+      <p class="muted">Mặc định chặn localhost, mạng riêng, địa chỉ metadata và redirect không an toàn. Dùng <code>WEB_ANALYZER_ALLOWED_HOSTS</code> để giới hạn domain staging. Chỉ bật private host trong môi trường phát triển tin cậy.</p>
+    </section>
+
+    <section class="card wide"><h2>Phản hồi API</h2><pre id="globalResult" class="result">Sẵn sàng phân tích website.</pre></section>
+  </div>
+</main></div>
+<script src="/app.js"></script>
+</body>
+</html>

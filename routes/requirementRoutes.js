@@ -1,0 +1,31 @@
+const router = require('express').Router();
+const c = require('../controllers/requirementController');
+const documents = require('../controllers/documentController');
+const { protect } = require('../middleware/auth');
+const { authorize, authorizeWorkspaceList } = require('../middleware/rbac');
+const { asyncHandler, auditLog } = require('../middleware/error');
+const { uploadUserStoryDocument } = require('../middleware/documentUpload');
+
+router.use(['/user-stories', '/user-story-documents', '/comments', '/design-mockups'], protect);
+router.get('/user-stories', authorizeWorkspaceList('requirement:read'), asyncHandler(c.listStories));
+router.get('/user-stories/:id', authorize('requirement:read', 'requirement:manage'), asyncHandler(c.getStory));
+router.post('/user-stories', authorize('requirement:manage'), auditLog('CREATE', 'UserStory'), asyncHandler(c.createStory));
+router.patch('/user-stories/:id', authorize('requirement:manage'), auditLog('UPDATE', 'UserStory'), asyncHandler(c.updateStory));
+router.post('/user-stories/:id/submit-approval', authorize('requirement:manage'), auditLog('SUBMIT_APPROVAL', 'UserStory'), asyncHandler(c.submitApproval));
+router.patch('/user-stories/:id/approval', authorize('requirement:manage'), auditLog('DECIDE_APPROVAL', 'UserStory'), asyncHandler(c.decideApproval));
+router.delete('/user-stories/:id', authorize('requirement:manage'), auditLog('DELETE', 'UserStory'), asyncHandler(c.deleteStory));
+router.get('/user-stories/:id/documents', authorize('requirement:read', 'requirement:manage', 'requirement:upload'), asyncHandler(documents.listDocuments));
+router.post('/user-stories/:id/documents', authorize('requirement:upload', 'requirement:manage'), uploadUserStoryDocument, auditLog('IMPORT', 'UserStoryDocument'), asyncHandler(documents.uploadDocument));
+router.get('/user-story-documents/:documentId/preview', authorize('requirement:read', 'requirement:manage', 'requirement:upload'), asyncHandler(documents.previewDocument));
+router.get('/user-story-documents/:documentId/download', authorize('requirement:read', 'requirement:manage', 'requirement:upload'), asyncHandler(documents.downloadDocument));
+router.post('/user-story-documents/:documentId/reprocess', authorize('requirement:upload', 'requirement:manage'), auditLog('IMPORT', 'UserStoryDocument'), asyncHandler(documents.reprocessDocument));
+router.delete('/user-story-documents/:documentId', authorize('requirement:upload', 'requirement:manage'), auditLog('DELETE', 'UserStoryDocument'), asyncHandler(documents.deleteDocument));
+router.post('/user-stories/:id/comments', authorize('requirement:read', 'requirement:manage'), asyncHandler(c.addComment));
+router.patch('/comments/:commentId', authorize('requirement:read', 'requirement:manage'), asyncHandler(c.updateComment));
+router.delete('/comments/:commentId', authorize('requirement:read', 'requirement:manage'), asyncHandler(c.deleteComment));
+router.get('/design-mockups', authorizeWorkspaceList('requirement:read'), asyncHandler(c.listMockups));
+router.post('/design-mockups', authorize('requirement:manage'), auditLog('CREATE', 'DesignMockup'), asyncHandler(c.createMockup));
+router.patch('/design-mockups/:id', authorize('requirement:manage'), auditLog('UPDATE', 'DesignMockup'), asyncHandler(c.updateMockup));
+router.delete('/design-mockups/:id', authorize('requirement:manage'), auditLog('DELETE', 'DesignMockup'), asyncHandler(c.deleteMockup));
+
+module.exports = router;

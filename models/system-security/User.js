@@ -96,7 +96,6 @@ const userSchema = new Schema(
 // =============================================
 // Indexes
 // =============================================
-userSchema.index({ email: 1 }, { unique: true });
 userSchema.index({ workspace: 1, status: 1 });
 userSchema.index({ role: 1 });
 

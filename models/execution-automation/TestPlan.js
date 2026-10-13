@@ -33,6 +33,22 @@ const testPlanSchema = new Schema(
       default: '',
       // VD: "Test toàn bộ chức năng Đăng nhập, Đăng ký, và Quên mật khẩu"
     },
+    planId: { type: String, trim: true, default: '' },
+    // Phân biệt kế hoạch kiểm thử trước khi thiết kế case và kế hoạch thực thi sau khi case đã được duyệt.
+    kind: {
+      type: String,
+      enum: ['TestPlan', 'ExecutionPlan'],
+      default: 'TestPlan',
+      index: true,
+    },
+    objectives: { type: [String], default: [] },
+    testStrategy: { type: String, default: '' },
+    testItems: { type: [String], default: [] },
+    outOfScope: { type: [String], default: [] },
+    entryCriteria: { type: [String], default: [] },
+    exitCriteria: { type: [String], default: [] },
+    risks: { type: [{ risk: String, mitigation: String, owner: String }], default: [] },
+    deliverables: { type: [String], default: [] },
 
     status: {
       type: String,
@@ -42,6 +58,16 @@ const testPlanSchema = new Schema(
       },
       default: 'Draft',
     },
+    approvalStatus: {
+      type: String,
+      enum: ['Draft', 'PendingApproval', 'Approved', 'Rejected'],
+      default: 'Draft',
+      index: true,
+    },
+    aiSuggestion: { type: Schema.Types.Mixed, default: null },
+    reviewNote: { type: String, default: '' },
+    approvedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    approvedAt: { type: Date, default: null },
 
     startDate: {
       type: Date,
@@ -68,6 +94,14 @@ const testPlanSchema = new Schema(
       ref: 'Project',
       required: [true, 'Dự án là bắt buộc'],
     },
+
+    cycle: {
+      type: Schema.Types.ObjectId,
+      ref: 'Sprint',
+      default: null,
+    },
+
+    boardItems: [{ type: Schema.Types.ObjectId, ref: 'BoardItem' }],
 
     release: {
       type: Schema.Types.ObjectId,
@@ -106,5 +140,6 @@ const testPlanSchema = new Schema(
 testPlanSchema.index({ project: 1, status: 1 });
 testPlanSchema.index({ release: 1 });
 testPlanSchema.index({ assignee: 1 });
+testPlanSchema.index({ cycle: 1, status: 1 });
 
 module.exports = mongoose.model('TestPlan', testPlanSchema);

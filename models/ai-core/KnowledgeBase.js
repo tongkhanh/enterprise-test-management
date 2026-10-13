@@ -158,7 +158,7 @@ const knowledgeBaseSchema = new Schema(
     // Model đã dùng để tạo embedding
     embeddingModel: {
       type: String,
-      default: 'text-embedding-3-small',
+      default: 'gemini-embedding-001',
     },
 
     // Số chiều của vector

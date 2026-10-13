@@ -66,6 +66,11 @@ const bugSchema = new Schema(
       },
       default: 'New',
     },
+    approvalStatus: { type: String, enum: ['PendingApproval', 'Approved', 'Rejected'], default: 'Approved', index: true },
+    reviewNote: { type: String, default: '', maxlength: 2000 },
+    approvedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    approvedAt: { type: Date, default: null },
+    jiraRequested: { type: Boolean, default: false },
 
     // -------------------------------------------
     // Thông tin môi trường
@@ -147,6 +152,38 @@ const bugSchema = new Schema(
       ref: 'Release',
       default: null,
     },
+
+    automationResult: {
+      type: Schema.Types.ObjectId,
+      ref: 'AutomationResult',
+      default: null,
+    },
+
+    duplicateOf: {
+      type: Schema.Types.ObjectId,
+      ref: 'Bug',
+      default: null,
+    },
+
+    rootCause: {
+      summary: { type: String, default: null },
+      confidence: { type: Number, default: null, min: 0, max: 1 },
+      failureType: { type: String, default: null },
+      evidence: { type: [String], default: [] },
+    },
+
+    externalIssue: {
+      provider: { type: String, enum: ['Jira'], default: null },
+      id: { type: String, default: null },
+      key: { type: String, default: null },
+      url: { type: String, default: null },
+      syncedAt: { type: Date, default: null },
+      attachmentWarnings: { type: [String], default: [] },
+      status: { type: String, default: null },
+      assignee: { type: String, default: null },
+      resolution: { type: String, default: null },
+    },
+    comments: [{ body: String, source: { type: String, default: 'ETMS' }, externalId: String, createdAt: { type: Date, default: Date.now } }],
   },
   {
     timestamps: true,
@@ -163,5 +200,6 @@ bugSchema.index({ reportedBy: 1, createdAt: -1 });
 bugSchema.index({ sprint: 1, status: 1 });
 bugSchema.index({ release: 1, severity: 1 });
 bugSchema.index({ tags: 1 });
+bugSchema.index({ 'externalIssue.provider': 1, 'externalIssue.key': 1 }, { sparse: true });
 
 module.exports = mongoose.model('Bug', bugSchema);

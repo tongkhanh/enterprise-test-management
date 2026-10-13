@@ -5,13 +5,18 @@
  * Collection: roles
  * ============================================================
  * Định nghĩa các vai trò trong hệ thống:
- * Admin, PM, QA Lead, Tester, Developer, Guest.
+ * System Admin, QA Manager, Tester và Guest.
  * Mỗi vai trò có danh sách quyền (permissions) riêng.
  * ============================================================
  */
 
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
+const { SYSTEM_ROLE_NAMES, WORKSPACE_ROLE_NAMES } = require('../../config/roles');
+
+// Cho phép cả system role (System_Admin, User) lẫn workspace role
+// (Owner, QA_Manager, Tester, Guest) vì collection roles lưu cả hai loại.
+const ALL_ROLE_NAMES = [...new Set([...SYSTEM_ROLE_NAMES, ...WORKSPACE_ROLE_NAMES])];
 
 const roleSchema = new Schema(
   {
@@ -19,8 +24,8 @@ const roleSchema = new Schema(
       type: String,
       required: [true, 'Tên vai trò là bắt buộc'],
       enum: {
-        values: ['Admin', 'PM', 'QA_Lead', 'Tester', 'Developer', 'Guest'],
-        message: 'Vai trò phải là: Admin, PM, QA_Lead, Tester, Developer, hoặc Guest',
+        values: ALL_ROLE_NAMES,
+        message: `Vai trò phải là: ${ALL_ROLE_NAMES.join(', ')}`,
       },
     },
 

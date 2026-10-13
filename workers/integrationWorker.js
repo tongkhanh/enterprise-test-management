@@ -1,0 +1,4 @@
+require('dotenv').config(); const mongoose = require('mongoose'); const { Worker } = require('bullmq'); const connectDB = require('../config/db'); const { connection } = require('../services/queueService'); const { processIntegrationJob } = require('../services/integrationSyncService');
+if (!connection) throw new Error('REDIS_URL là bắt buộc để chạy Integration Worker.');
+connectDB().then(() => { require('../services/automationResourcesService').startHeartbeat('integration'); const worker = new Worker('etms-integration', processIntegrationJob, { connection, concurrency: Number(process.env.INTEGRATION_WORKER_CONCURRENCY || 3) }); worker.on('failed', (job, error) => console.error(`[IntegrationWorker] ${job?.id}: ${error.message}`)); console.log('Integration Worker ready'); });
+process.on('SIGTERM', () => mongoose.disconnect());

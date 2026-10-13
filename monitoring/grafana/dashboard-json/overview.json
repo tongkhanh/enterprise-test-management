@@ -1,0 +1,11 @@
+{
+  "title": "ETMS Operations", "uid": "etms-ops", "schemaVersion": 39, "version": 1, "refresh": "15s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {"id": 1, "title": "Worker heartbeat", "type": "stat", "gridPos": {"x": 0,"y": 0,"w": 12,"h": 6}, "datasource": {"type": "prometheus","uid": "etms-prometheus"}, "targets": [{"expr": "etms_worker_up", "legendFormat": "{{name}}"}]},
+    {"id": 2, "title": "Queue jobs", "type": "timeseries", "gridPos": {"x": 12,"y": 0,"w": 12,"h": 6}, "datasource": {"type": "prometheus","uid": "etms-prometheus"}, "targets": [{"expr": "etms_queue_jobs", "legendFormat": "{{queue}} {{status}}"}]},
+    {"id": 3, "title": "Storage bytes", "type": "stat", "gridPos": {"x": 0,"y": 6,"w": 8,"h": 6}, "datasource": {"type": "prometheus","uid": "etms-prometheus"}, "targets": [{"expr": "etms_storage_bytes"}]},
+    {"id": 4, "title": "Run results", "type": "timeseries", "gridPos": {"x": 8,"y": 6,"w": 16,"h": 6}, "datasource": {"type": "prometheus","uid": "etms-prometheus"}, "targets": [{"expr": "etms_runs", "legendFormat": "{{status}}"}]},
+    {"id": 5, "title": "Worker logs", "type": "logs", "gridPos": {"x": 0,"y": 12,"w": 24,"h": 10}, "datasource": {"type": "loki","uid": "etms-loki"}, "targets": [{"expr": "{service=~\".+\"}", "refId": "A"}]}
+  ]
+}

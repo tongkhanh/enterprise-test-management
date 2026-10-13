@@ -60,9 +60,47 @@ const userStorySchema = new Schema(
       default: 'Backlog',
     },
 
+    // Quy trình Maker-Checker chỉ bắt buộc với bản User Story do AI đề xuất
+    // (có aiSuggestion). User Story có sẵn từ nguồn nghiệp vụ đáng tin cậy
+    // được dùng trực tiếp; trạng thái này vẫn được lưu để truy vết.
+    approvalStatus: {
+      type: String,
+      enum: ['Draft', 'PendingApproval', 'Approved', 'Rejected'],
+      default: 'Draft',
+      index: true,
+    },
+    source: {
+      type: String,
+      enum: ['Manual', 'AI', 'GitHub'],
+      default: 'Manual',
+    },
+    repositorySource: {
+      snapshot: { type: Schema.Types.ObjectId, ref: 'RepositorySnapshot', default: null },
+      repository: { type: String, default: '' },
+      ref: { type: String, default: '' },
+      commitSha: { type: String, default: '' },
+      pullRequestNumber: { type: Number, default: null },
+      files: { type: [String], default: [] },
+    },
+    aiSuggestion: {
+      type: Schema.Types.Mixed,
+      default: null,
+    },
+    reviewNote: { type: String, default: '' },
+    approvedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    approvedAt: { type: Date, default: null },
+
     labels: {
       type: [String],
       default: [],
+    },
+    e2e: {
+      systemProfile: { type: Schema.Types.ObjectId, ref: 'SystemProfile', default: null },
+      useCase: { type: Schema.Types.ObjectId, ref: 'UseCase', default: null },
+      journeyType: { type: String, default: 'E2E' },
+      definitionOfDone: { type: [String], default: [] },
+      assumptions: { type: [String], default: [] },
+      dependencies: { type: [String], default: [] },
     },
 
     // -------------------------------------------

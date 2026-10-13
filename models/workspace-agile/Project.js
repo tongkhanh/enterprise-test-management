@@ -60,6 +60,7 @@ const projectSchema = new Schema(
       type: [String],
       default: [],
     },
+    issueSequence: { type: Number, default: 0, min: 0 },
 
     // -------------------------------------------
     // Liên kết (References)
@@ -75,6 +76,11 @@ const projectSchema = new Schema(
       ref: 'User',
       default: null, // Trưởng dự án
     },
+
+    teams: [{ type: Schema.Types.ObjectId, ref: 'Team' }],
+    priority: { type: String, enum: ['No priority', 'Urgent', 'High', 'Medium', 'Low'], default: 'No priority' },
+    health: { type: String, enum: ['On track', 'At risk', 'Off track', 'No update'], default: 'No update' },
+    icon: { type: String, default: 'folder-kanban' },
 
     members: [
       {

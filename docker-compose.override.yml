@@ -1,0 +1,29 @@
+services:
+  api:
+    command: npm run dev
+    ports:
+      - "5000:5000"
+      - "5173:5173"
+    volumes:
+      - ./:/app
+      - /app/node_modules
+      - /app/frontend/node_modules
+      - etms-storage:/app/storage
+
+  environment-worker:
+    volumes:
+      - ./:/app
+      - /app/node_modules
+      - /app/frontend/node_modules
+
+  automation-worker:
+    volumes:
+      - ./:/app
+      - /app/node_modules
+      - /app/frontend/node_modules
+
+  integration-worker:
+    volumes:
+      - ./:/app
+      - /app/node_modules
+      - /app/frontend/node_modules

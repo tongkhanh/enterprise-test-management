@@ -80,7 +80,6 @@ const workspaceSchema = new Schema(
 // =============================================
 // Indexes
 // =============================================
-workspaceSchema.index({ slug: 1 }, { unique: true });
 workspaceSchema.index({ owner: 1 });
 
 module.exports = mongoose.model('Workspace', workspaceSchema);

@@ -27,6 +27,14 @@ const sprintSchema = new Schema(
       default: '', // Mục tiêu của Sprint
     },
 
+    description: { type: String, trim: true, default: '', maxlength: 1000 },
+
+    sequence: { type: Number, min: 1, default: 1 },
+
+    capacity: { type: Number, min: 0, default: 0 },
+
+    color: { type: String, default: '#6D5DFB', match: /^#[0-9A-F]{6}$/i },
+
     startDate: {
       type: Date,
       required: [true, 'Ngày bắt đầu là bắt buộc'],
@@ -62,6 +70,12 @@ const sprintSchema = new Schema(
       required: [true, 'Dự án là bắt buộc'],
     },
 
+    team: {
+      type: Schema.Types.ObjectId,
+      ref: 'Team',
+      default: null,
+    },
+
     createdBy: {
       type: Schema.Types.ObjectId,
       ref: 'User',
@@ -79,5 +93,6 @@ const sprintSchema = new Schema(
 // =============================================
 sprintSchema.index({ project: 1, status: 1 });
 sprintSchema.index({ project: 1, startDate: 1 });
+sprintSchema.index({ project: 1, sequence: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('Sprint', sprintSchema);

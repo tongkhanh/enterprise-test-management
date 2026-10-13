@@ -1,0 +1,36 @@
+const router = require('express').Router();
+const c = require('../controllers/automationLabController');
+const ops = require('../controllers/automationOpsController');
+const { protect } = require('../middleware/auth');
+const { authorize } = require('../middleware/rbac');
+const { asyncHandler, auditLog } = require('../middleware/error');
+
+router.use(protect);
+router.get('/automation-lab/docker-status', authorize('execution:execute', 'execution:manage'), asyncHandler(c.status));
+router.get('/automation-scripts', authorize('execution:execute', 'execution:manage'), asyncHandler(c.listScripts));
+router.post('/automation-scripts', authorize('execution:execute', 'execution:manage'), auditLog('CREATE', 'AutomationScript'), asyncHandler(c.createScript));
+router.get('/automation-scripts/:id/download', authorize('execution:execute', 'execution:manage'), asyncHandler(c.downloadScript));
+router.post('/automation-scripts/:id/validate', authorize('execution:execute', 'execution:manage'), auditLog('VALIDATE', 'AutomationScript'), asyncHandler(c.validate));
+router.patch('/automation-scripts/:id/review', authorize('testcase:approve'), auditLog('APPROVE', 'AutomationScript'), asyncHandler(c.reviewScript));
+router.get('/test-environments', authorize('execution:execute', 'execution:manage'), asyncHandler(c.listEnvironments));
+router.post('/test-environments', authorize('execution:manage'), auditLog('CREATE', 'TestEnvironment'), asyncHandler(c.createEnvironment));
+router.post('/test-environments/:id/provision', authorize('execution:manage'), asyncHandler(c.provisionEnvironment));
+router.post('/test-environments/:id/stop', authorize('execution:manage'), asyncHandler(c.stop));
+router.get('/github/:integrationId/repos', authorize('integration:read', 'integration:manage'), asyncHandler(c.repos));
+router.get('/github/:integrationId/repos/:owner/:repo/branches', authorize('integration:read', 'integration:manage'), asyncHandler(c.branches));
+router.get('/github/:integrationId/repos/:owner/:repo/commits', authorize('integration:read', 'integration:manage'), asyncHandler(c.commits));
+router.get('/github/:integrationId/repos/:owner/:repo/pulls', authorize('integration:read', 'integration:manage'), asyncHandler(c.pulls));
+router.get('/github/:integrationId/repos/:owner/:repo/runtime-files', authorize('integration:read', 'integration:manage'), asyncHandler(c.runtimeFiles));
+router.get('/github/:integrationId/repos/:owner/:repo/source-files', authorize('integration:read', 'integration:manage'), asyncHandler(c.sourceFiles));
+router.get('/test-environments/:id/builds', authorize('execution:execute', 'execution:manage'), asyncHandler(ops.builds));
+router.get('/test-environments/:id/secrets', authorize('execution:manage'), asyncHandler(ops.secrets));
+router.post('/test-environments/:id/secrets', authorize('execution:manage'), asyncHandler(ops.upsertSecret));
+router.delete('/test-environments/:id/secrets/:secretId', authorize('execution:manage'), asyncHandler(ops.deleteSecret));
+router.get('/automation-profiles', authorize('execution:execute', 'execution:manage'), asyncHandler(ops.listProfiles));
+router.post('/automation-profiles', authorize('execution:manage'), asyncHandler(ops.createProfile));
+router.get('/automation-runs', authorize('execution:execute', 'execution:manage'), asyncHandler(ops.listRuns));
+router.post('/automation-runs', authorize('execution:execute', 'execution:manage'), asyncHandler(ops.createRun));
+router.get('/automation-runs/:id', authorize('execution:execute', 'execution:manage'), asyncHandler(ops.getRun));
+router.get('/execution-artifacts/:id/download', authorize('execution:execute', 'execution:manage'), asyncHandler(ops.downloadArtifact));
+
+module.exports = router;

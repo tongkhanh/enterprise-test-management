@@ -20,6 +20,9 @@ const mongoose = require('mongoose');
 const connectDB = async () => {
   try {
     const conn = await mongoose.connect(process.env.MONGODB_URI, {
+      // Luôn dùng đúng database của ETMS, kể cả khi connection string
+      // Atlas không chứa tên database và Mongoose mặc định về "test".
+      dbName: process.env.MONGODB_DB_NAME || 'enterprise_test_mgmt',
       // =============================================
       // Connection Pool Options
       // =============================================

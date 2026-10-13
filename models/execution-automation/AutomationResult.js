@@ -1,139 +1,83 @@
-/**
- * ============================================================
- * MODEL: AutomationResult (Kết quả Automation Test)
- * Phân hệ: Thực thi & Tích hợp Tự động (Execution & Automation)
- * Collection: automation_results
- * ============================================================
- * Nhận và lưu trữ kết quả từ các tool Automation (Selenium,
- * Cypress, Playwright) thông qua Webhook CI/CD.
- * Payload JSON từ CI/CD pipeline được lưu nguyên vẹn.
- * ============================================================
- */
-
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
+/**
+ * Kết quả CI/CD hoặc job Playwright nội bộ. Model này đồng thời đóng vai trò
+ * hàng đợi bền vững để trạng thái Queued/Running vẫn hiển thị trên giao diện.
+ */
 const automationResultSchema = new Schema(
   {
-    suiteName: {
-      type: String,
-      required: [true, 'Tên Automation Suite là bắt buộc'],
-      trim: true,
-    },
-
+    suiteName: { type: String, required: true, trim: true },
     framework: {
       type: String,
-      enum: {
-        values: ['Selenium', 'Cypress', 'Playwright', 'Jest', 'Mocha', 'Robot', 'Other'],
-        message: 'Framework phải là: Selenium, Cypress, Playwright, Jest, Mocha, Robot, hoặc Other',
-      },
-      required: [true, 'Framework là bắt buộc'],
-    },
-
-    status: {
-      type: String,
-      enum: {
-        values: ['Passed', 'Failed', 'Error'],
-        message: 'Trạng thái phải là: Passed, Failed, hoặc Error',
-      },
+      enum: ['Selenium', 'Cypress', 'Playwright', 'WebdriverIO', 'Jest', 'Mocha', 'Robot', 'Other'],
       required: true,
     },
-
-    // Thời gian chạy (giây)
-    duration: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    // -------------------------------------------
-    // Thống kê kết quả
-    // -------------------------------------------
-    totalTests: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    passed: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    failed: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    skipped: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    // -------------------------------------------
-    // CI/CD Metadata
-    // -------------------------------------------
-    buildNumber: {
+    status: {
       type: String,
-      default: null,
+      enum: ['Queued', 'Running', 'Passed', 'Failed', 'Error', 'Cancelled'],
+      required: true,
     },
-
-    pipelineUrl: {
-      type: String,
-      default: null, // Link tới CI/CD pipeline (Jenkins, GitHub Actions, GitLab CI)
-    },
-
+    duration: { type: Number, default: 0, min: 0 },
+    totalTests: { type: Number, default: 0, min: 0 },
+    passed: { type: Number, default: 0, min: 0 },
+    failed: { type: Number, default: 0, min: 0 },
+    skipped: { type: Number, default: 0, min: 0 },
+    buildNumber: { type: String, default: null },
+    pipelineUrl: { type: String, default: null },
     triggeredBy: {
       type: String,
-      enum: {
-        values: ['CI_CD', 'Manual', 'Webhook', 'Scheduled'],
-        message: 'Nguồn kích hoạt phải là: CI_CD, Manual, Webhook, hoặc Scheduled',
-      },
+      enum: ['CI_CD', 'Manual', 'Webhook', 'Scheduled'],
       default: 'CI_CD',
     },
+    payload: { type: Schema.Types.Mixed, default: null },
+    errorLogs: { type: String, default: null },
 
-    // Payload JSON gốc từ CI/CD (lưu nguyên vẹn)
-    payload: {
-      type: Schema.Types.Mixed,
-      default: null,
+    // Job progress và bằng chứng Playwright.
+    progress: { type: Number, default: 0, min: 0, max: 100 },
+    currentStep: { type: Number, default: 0, min: 0 },
+    totalSteps: { type: Number, default: 0, min: 0 },
+    startedAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null },
+    targetUrl: { type: String, default: null },
+    testEnvironment: { type: mongoose.Schema.Types.ObjectId, ref: 'TestEnvironment', default: null },
+    browserName: { type: String, default: 'chromium' },
+    viewport: {
+      width: { type: Number, default: 1440 },
+      height: { type: Number, default: 900 },
     },
+    stepResults: { type: [Schema.Types.Mixed], default: [] },
+    diagnostics: {
+      consoleMessages: { type: [Schema.Types.Mixed], default: [] },
+      pageErrors: { type: [Schema.Types.Mixed], default: [] },
+      failedRequests: { type: [Schema.Types.Mixed], default: [] },
+      httpErrors: { type: [Schema.Types.Mixed], default: [] },
+      finalUrl: { type: String, default: null },
+      domSnippet: { type: String, default: null },
+    },
+    artifacts: { type: Schema.Types.Mixed, default: {} },
+    failureAnalysis: { type: Schema.Types.Mixed, default: null },
+    triage: { type: Schema.Types.Mixed, default: null },
 
-    // Log lỗi chi tiết
-    errorLogs: {
-      type: String,
-      default: null,
-    },
+    // Có thể chứa test data nhạy cảm nên không bao giờ trả về trong query mặc định.
+    runtimeConfig: { type: Schema.Types.Mixed, default: {}, select: false },
 
-    // -------------------------------------------
-    // Liên kết (References)
-    // -------------------------------------------
-    testRun: {
-      type: Schema.Types.ObjectId,
-      ref: 'TestRun',
-      default: null,
-    },
-
-    project: {
-      type: Schema.Types.ObjectId,
-      ref: 'Project',
-      required: [true, 'Dự án là bắt buộc'],
-    },
+    testRun: { type: Schema.Types.ObjectId, ref: 'TestRun', default: null },
+    testPlan: { type: Schema.Types.ObjectId, ref: 'TestPlan', default: null },
+    testExecution: { type: Schema.Types.ObjectId, ref: 'TestExecution', default: null },
+    testCase: { type: Schema.Types.ObjectId, ref: 'TestCase', default: null },
+    userStory: { type: Schema.Types.ObjectId, ref: 'UserStory', default: null },
+    requestedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    project: { type: Schema.Types.ObjectId, ref: 'Project', required: true },
   },
-  {
-    timestamps: true,
-    collection: 'automation_results',
-  }
+  { timestamps: true, collection: 'automation_results' }
 );
 
-// =============================================
-// Indexes
-// =============================================
 automationResultSchema.index({ project: 1, createdAt: -1 });
 automationResultSchema.index({ testRun: 1 });
 automationResultSchema.index({ framework: 1, status: 1 });
 automationResultSchema.index({ buildNumber: 1 });
+automationResultSchema.index({ requestedBy: 1, status: 1, createdAt: -1 });
+automationResultSchema.index({ testCase: 1, createdAt: -1 });
 
 module.exports = mongoose.model('AutomationResult', automationResultSchema);

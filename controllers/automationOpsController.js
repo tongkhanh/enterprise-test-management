@@ -1,0 +1,20 @@
+const path = require('node:path');
+const fs = require('node:fs');
+const { EnvironmentBuild, EnvironmentSecret, AutomationProfile, AutomationRun, AutomationScript, ExecutionArtifact, TestEnvironment, Project } = require('../models');
+const { encryptCredential } = require('../services/integrationCredentialService');
+const { createAutomationRun } = require('../services/multiEngineRunnerService');
+const { AppError, send } = require('../utils/http');
+const { assertProjectAccess } = require('../services/projectAccessService');
+
+async function access(req, projectId) { await assertProjectAccess(req.user, projectId); }
+const builds = async (req, res) => { const env = await TestEnvironment.findById(req.params.id); if (!env) throw new AppError('Environment không tồn tại.', 404); await access(req, env.project); send(res, await EnvironmentBuild.find({ environment: env._id }).sort('-createdAt').limit(100)); };
+const secrets = async (req, res) => { const env = await TestEnvironment.findById(req.params.id); if (!env) throw new AppError('Environment không tồn tại.', 404); await access(req, env.project); send(res, await EnvironmentSecret.find({ environment: env._id }).select('name rotatedAt createdAt')); };
+const upsertSecret = async (req, res) => { const env = await TestEnvironment.findById(req.params.id); if (!env) throw new AppError('Environment không tồn tại.', 404); await access(req, env.project); if (!req.body.name || req.body.value === undefined) throw new AppError('name và value là bắt buộc.', 400); const item = await EnvironmentSecret.findOneAndUpdate({ environment: env._id, name: String(req.body.name).toUpperCase() }, { valueCiphertext: encryptCredential(req.body.value), rotatedAt: new Date(), createdBy: req.user._id }, { upsert: true, new: true, runValidators: true }).select('name rotatedAt createdAt'); send(res, item, 201); };
+const deleteSecret = async (req, res) => { const item = await EnvironmentSecret.findById(req.params.secretId); if (!item) throw new AppError('Secret không tồn tại.', 404); const env = await TestEnvironment.findById(item.environment); await access(req, env.project); await item.deleteOne(); send(res, { _id: item._id }); };
+const listProfiles = async (req, res) => { await access(req, req.query.project); send(res, await AutomationProfile.find({ project: req.query.project }).sort('engine name')); };
+const createProfile = async (req, res) => { await access(req, req.body.project); send(res, await AutomationProfile.create({ ...req.body, createdBy: req.user._id }), 201); };
+const createRun = async (req, res) => { const script = await AutomationScript.findById(req.body.script); if (!script) throw new AppError('Script không tồn tại.', 404); await access(req, script.project); send(res, await createAutomationRun({ scriptId: script._id, environmentId: req.body.environment, profileId: req.body.profile, userId: req.user._id }), 202); };
+const listRuns = async (req, res) => { await access(req, req.query.project); send(res, await AutomationRun.find({ project: req.query.project }).populate('script', 'filename engine').populate('environment', 'name targetUrl').sort('-createdAt').limit(100)); };
+const getRun = async (req, res) => { const item = await AutomationRun.findById(req.params.id).populate('script profile environment result'); if (!item) throw new AppError('Automation Run không tồn tại.', 404); await access(req, item.project); send(res, item); };
+const downloadArtifact = async (req, res) => { const item = await ExecutionArtifact.findById(req.params.id); if (!item) throw new AppError('Artifact không tồn tại.', 404); await access(req, item.project); const root = path.resolve(path.join(__dirname, '..', 'storage')); const file = path.resolve(item.uri); if (!file.startsWith(`${root}${path.sep}`) || !fs.existsSync(file)) throw new AppError('Artifact đã hết hạn.', 404); res.download(file, item.name); };
+module.exports = { builds, secrets, upsertSecret, deleteSecret, listProfiles, createProfile, createRun, listRuns, getRun, downloadArtifact };

@@ -45,6 +45,7 @@ const auditLogSchema = new Schema(
           'APPROVE', 'REJECT',
           'EXPORT', 'IMPORT',
           'PERMISSION_CHANGE',
+          'INVITE', 'CANCEL', 'ARCHIVE',
         ],
         message: 'Hành động không hợp lệ',
       },

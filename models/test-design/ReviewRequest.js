@@ -77,5 +77,6 @@ const reviewRequestSchema = new Schema(
 reviewRequestSchema.index({ reviewer: 1, status: 1 });
 reviewRequestSchema.index({ requestedBy: 1, status: 1 });
 reviewRequestSchema.index({ testCase: 1 });
+reviewRequestSchema.index({ testCase: 1, status: 1 }, { unique: true, partialFilterExpression: { status: 'Pending' } });
 
 module.exports = mongoose.model('ReviewRequest', reviewRequestSchema);

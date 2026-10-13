@@ -1,0 +1,32 @@
+const router = require('express').Router();
+const c = require('../controllers/executionController');
+const { protect } = require('../middleware/auth');
+const { authorize, authorizeWorkspaceList } = require('../middleware/rbac');
+const { asyncHandler, auditLog } = require('../middleware/error');
+
+router.post('/automation/webhook', asyncHandler(c.automationWebhook));
+router.use(['/test-plans', '/test-runs', '/test-executions', '/automation-results', '/automation', '/integrations'], protect);
+router.get('/integrations/jira/status', authorize('bug:create', 'bug:manage', 'execution:execute'), asyncHandler(c.jiraIntegrationStatus));
+router.get('/test-plans', authorizeWorkspaceList('execution:execute'), asyncHandler(c.listPlans));
+router.post('/test-plans', authorize('execution:manage'), auditLog('CREATE', 'TestPlan'), asyncHandler(c.createPlan));
+router.post('/test-plans/suggest', authorize('execution:manage', 'execution:execute'), auditLog('CREATE', 'TestPlan'), asyncHandler(c.suggestPlan));
+router.post('/test-plans/suggest-from-requirements', authorize('execution:manage', 'execution:execute'), asyncHandler(c.suggestPlanFromRequirements));
+router.patch('/test-plans/:id/decision', authorize('execution:manage'), auditLog('APPROVE', 'TestPlan'), asyncHandler(c.decidePlan));
+router.post('/test-plans/from-approved', authorize('execution:manage', 'execution:execute'), auditLog('CREATE', 'TestPlan'), asyncHandler(c.createPlanFromApproved));
+router.get('/test-plans/:id/export', authorize('execution:execute', 'execution:manage', 'report:read'), asyncHandler(c.exportPlan));
+router.patch('/test-plans/:id', authorize('execution:manage'), auditLog('UPDATE', 'TestPlan'), asyncHandler(c.updatePlan));
+router.delete('/test-plans/:id', authorize('execution:manage'), auditLog('DELETE', 'TestPlan'), asyncHandler(c.deletePlan));
+router.get('/test-runs', authorizeWorkspaceList('execution:execute'), asyncHandler(c.listRuns));
+router.post('/test-runs', authorize('execution:manage'), auditLog('CREATE', 'TestRun'), asyncHandler(c.createRun));
+router.get('/test-runs/:id', authorize('execution:manage', 'execution:execute'), asyncHandler(c.getRun));
+router.post('/test-runs/:id/execute', authorize('execution:manage', 'execution:execute'), asyncHandler(c.executeAutomatedRun));
+router.patch('/test-runs/:id', authorize('execution:manage'), auditLog('UPDATE', 'TestRun'), asyncHandler(c.updateRun));
+router.patch('/test-executions/:id', authorize('execution:execute', 'execution:manage'), auditLog('UPDATE', 'TestExecution'), asyncHandler(c.recordExecution));
+router.get('/automation-results', authorizeWorkspaceList('execution:execute'), asyncHandler(c.listAutomationResults));
+router.post('/automation/run-test-case/:testCaseId', authorize('execution:manage', 'execution:execute'), asyncHandler(c.runAutomatedTestCase));
+router.get('/automation/jobs/:id', authorize('execution:manage', 'execution:execute'), asyncHandler(c.getAutomationJob));
+router.post('/automation/jobs/:id/cancel', authorize('execution:manage', 'execution:execute'), asyncHandler(c.cancelAutomation));
+router.get('/automation-results/:id/artifacts/:name', authorize('execution:manage', 'execution:execute'), asyncHandler(c.downloadAutomationArtifact));
+router.post('/automation-results/:id/triage', authorize('execution:manage', 'execution:execute'), asyncHandler(c.triageAutomationResult));
+
+module.exports = router;

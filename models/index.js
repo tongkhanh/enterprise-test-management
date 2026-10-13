@@ -29,6 +29,17 @@ const Workspace = require('./workspace-agile/Workspace');
 const Project = require('./workspace-agile/Project');
 const Sprint = require('./workspace-agile/Sprint');
 const Release = require('./workspace-agile/Release');
+const Team = require('./workspace-agile/Team');
+const ProjectMembership = require('./workspace-agile/ProjectMembership');
+const ProjectInvitation = require('./workspace-agile/ProjectInvitation');
+const WorkspaceMembership = require('./workspace-agile/WorkspaceMembership');
+const WorkspaceInvitation = require('./workspace-agile/WorkspaceInvitation');
+const IntegrationConnection = require('./integrations/IntegrationConnection');
+const IntegrationSyncLog = require('./integrations/IntegrationSyncLog');
+const ProjectLabel = require('./workspace-agile/ProjectLabel');
+const ProjectActivity = require('./workspace-agile/ProjectActivity');
+const BoardItem = require('./workspace-agile/BoardItem');
+const AgileIssue = require('./workspace-agile/AgileIssue');
 
 // =============================================
 // Phân hệ 3: Quản lý Yêu cầu & Tài liệu
@@ -37,6 +48,10 @@ const Release = require('./workspace-agile/Release');
 const UserStory = require('./requirements-docs/UserStory');
 const Comment = require('./requirements-docs/Comment');
 const DesignMockup = require('./requirements-docs/DesignMockup');
+const UserStoryDocument = require('./requirements-docs/UserStoryDocument');
+const RepositorySnapshot = require('./requirements-docs/RepositorySnapshot');
+const SystemProfile = require('./e2e/SystemProfile');
+const UseCase = require('./e2e/UseCase');
 
 // =============================================
 // Phân hệ 4: Thiết kế Kiểm thử
@@ -55,6 +70,14 @@ const TestPlan = require('./execution-automation/TestPlan');
 const TestRun = require('./execution-automation/TestRun');
 const TestExecution = require('./execution-automation/TestExecution');
 const AutomationResult = require('./execution-automation/AutomationResult');
+const TestEnvironment = require('./execution-automation/TestEnvironment');
+const AutomationScript = require('./execution-automation/AutomationScript');
+const EnvironmentBuild = require('./execution-automation/EnvironmentBuild');
+const EnvironmentSecret = require('./execution-automation/EnvironmentSecret');
+const ExecutionArtifact = require('./execution-automation/ExecutionArtifact');
+const AutomationProfile = require('./execution-automation/AutomationProfile');
+const AutomationRun = require('./execution-automation/AutomationRun');
+const WebhookDelivery = require('./integrations/WebhookDelivery');
 
 // =============================================
 // Phân hệ 6: Quản lý Lỗi
@@ -83,6 +106,7 @@ const ScheduledReport = require('./reports-gamification/ScheduledReport');
 const Notification = require('./reports-gamification/Notification');
 const RiskAssessment = require('./reports-gamification/RiskAssessment');
 const UserKpi = require('./reports-gamification/UserKpi');
+const TestReport = require('./reports-gamification/TestReport');
 
 // =============================================
 // Export tất cả 32 Models
@@ -99,11 +123,26 @@ module.exports = {
   Project,
   Sprint,
   Release,
+  Team,
+  ProjectMembership,
+  ProjectInvitation,
+  WorkspaceMembership,
+  WorkspaceInvitation,
+  IntegrationConnection,
+  IntegrationSyncLog,
+  ProjectLabel,
+  ProjectActivity,
+  BoardItem,
+  AgileIssue,
 
   // Phân hệ 3: Requirements & Docs
   UserStory,
   Comment,
   DesignMockup,
+  UserStoryDocument,
+  RepositorySnapshot,
+  SystemProfile,
+  UseCase,
 
   // Phân hệ 4: Test Design
   TestSuite,
@@ -116,6 +155,14 @@ module.exports = {
   TestRun,
   TestExecution,
   AutomationResult,
+  TestEnvironment,
+  AutomationScript,
+  EnvironmentBuild,
+  EnvironmentSecret,
+  ExecutionArtifact,
+  AutomationProfile,
+  AutomationRun,
+  WebhookDelivery,
 
   // Phân hệ 6: Bug Tracking
   Bug,
@@ -135,4 +182,5 @@ module.exports = {
   Notification,
   RiskAssessment,
   UserKpi,
+  TestReport,
 };

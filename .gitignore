@@ -1,3 +1,10 @@
 node_modules/
+.monitoring/
+.npm-cache/
+.playwright-browsers/
+storage/web-analysis/
+storage/automation/
+storage/user-story-documents/
+storage/environment-workspaces/
 .env
 *.log
