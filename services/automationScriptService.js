@@ -1,5 +1,6 @@
 const { AutomationScript, TestCase } = require('../models');
 const { AppError } = require('../utils/http');
+const { resolveCaseRuntime } = require('./e2eRuntimeService');
 
 const q = (value) => JSON.stringify(String(value ?? ''));
 const slug = (value) => String(value || 'test').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 60) || 'test';
@@ -17,11 +18,17 @@ const pwLocator = (locator = {}) => {
   return `page.locator(${q(value || 'body')})`;
 };
 
+function isScriptCurrent(script, testCase) {
+  if (!testCase?.e2e?.systemProfile) return true;
+  return ['Approved', 'Active'].includes(testCase.status) && Boolean(script.sourceCaseUpdatedAt && testCase.updatedAt) && new Date(script.sourceCaseUpdatedAt).getTime() === new Date(testCase.updatedAt).getTime();
+}
+
 function validateTestCase(testCase) {
   const issues = [];
   if (!testCase.targetUrl) issues.push({ level: 'error', message: 'Test Case chưa có targetUrl.' });
+  if (!testCase.testSteps?.length) issues.push({ level: 'error', message: 'Test Case chưa có bước kiểm thử.' });
   for (const step of testCase.testSteps || []) {
-    if (!step.automationAction || step.automationAction === 'manual') issues.push({ level: 'warning', stepNumber: step.stepNumber, message: 'Bước manual cần Tester hoàn thiện.' });
+    if (!step.automationAction || step.automationAction === 'manual') issues.push({ level: 'error', stepNumber: step.stepNumber, message: 'Bước manual cần Tester hoàn thiện.' });
     if (!['goto', 'assertUrl', 'manual', 'waitForResponse'].includes(step.automationAction) && !locatorValue(step.locator || {})) issues.push({ level: 'error', stepNumber: step.stepNumber, message: 'Thiếu locator.' });
   }
   return issues;
@@ -45,7 +52,7 @@ function validateCode({ code, engine }) {
 function playwright(testCase, language) {
   const lines = (testCase.testSteps || []).map((s) => {
     const l = pwLocator(s.locator || {}); const v = q(s.value || s.testData || '');
-    return ({ goto: `await page.goto(${q(s.value || testCase.targetUrl)});`, click: `await ${l}.click();`, fill: `await ${l}.fill(${v});`, select: `await ${l}.selectOption(${v});`, check: `await ${l}.check();`, uncheck: `await ${l}.uncheck();`, press: `await ${l}.press(${v});`, assertText: `await expect(${l}).toContainText(${v});`, assertVisible: `await expect(${l}).toBeVisible();`, assertUrl: `await expect(page).toHaveURL(${v});`, waitForResponse: `await page.waitForResponse(response => response.url().includes(${v}));`, manual: `// TODO manual: ${String(s.action).replace(/\r?\n/g, ' ')}` })[s.automationAction] || `// TODO: ${s.action}`;
+    return ({ goto: `await page.goto(new URL(${q(s.value || "")}, targetUrl).toString());`, click: `await ${l}.click();`, fill: `await ${l}.fill(${v});`, select: `await ${l}.selectOption(${v});`, check: `await ${l}.check();`, uncheck: `await ${l}.uncheck();`, press: `await ${l}.press(${v});`, assertText: `await expect(${l}).toContainText(${v});`, assertVisible: `await expect(${l}).toBeVisible();`, assertUrl: `await expect(page).toHaveURL(${v});`, waitForResponse: `await page.waitForResponse(response => response.url().includes(${v}));`, manual: `// TODO manual: ${String(s.action).replace(/\r?\n/g, ' ')}` })[s.automationAction] || `// TODO: ${s.action}`;
   });
   return `import { test, expect } from '@playwright/test';\n\nconst targetUrl = process.env.TARGET_URL || ${q(testCase.targetUrl)};\ntest(${q(testCase.title)}, async ({ page }) => {\n  await page.goto(targetUrl);\n${lines.map((x) => `  ${x}`).join('\n')}\n});\n`;
 }
@@ -54,7 +61,7 @@ function selenium(testCase) {
   const lines = (testCase.testSteps || []).map((s) => {
     const selector = q(cssLocator(s.locator || {})); const v = q(s.value || s.testData || '');
     const el = `await driver.findElement(By.css(${selector}))`;
-    return ({ goto: `await driver.get(${q(s.value || testCase.targetUrl)});`, click: `await (${el}).click();`, fill: `await (${el}).sendKeys(${v});`, select: `await new Select(${el}).selectByVisibleText(${v});`, check: `if (!(await (${el}).isSelected())) await (${el}).click();`, uncheck: `if (await (${el}).isSelected()) await (${el}).click();`, press: `await (${el}).sendKeys(${v});`, assertText: `assert.ok((await (${el}).getText()).includes(${v}));`, assertVisible: `assert.ok(await (${el}).isDisplayed());`, assertUrl: `assert.ok((await driver.getCurrentUrl()).includes(${v}));`, waitForResponse: `// Selenium WebDriver không theo dõi network trực tiếp: ${s.action}`, manual: `// TODO manual: ${s.action}` })[s.automationAction] || `// TODO: ${s.action}`;
+    return ({ goto: `await driver.get(new URL(${q(s.value || "")}, process.env.TARGET_URL || ${q(testCase.targetUrl)}).toString());`, click: `await (${el}).click();`, fill: `await (${el}).sendKeys(${v});`, select: `await new Select(${el}).selectByVisibleText(${v});`, check: `if (!(await (${el}).isSelected())) await (${el}).click();`, uncheck: `if (await (${el}).isSelected()) await (${el}).click();`, press: `await (${el}).sendKeys(${v});`, assertText: `assert.ok((await (${el}).getText()).includes(${v}));`, assertVisible: `assert.ok(await (${el}).isDisplayed());`, assertUrl: `assert.ok((await driver.getCurrentUrl()).includes(${v}));`, waitForResponse: `// Selenium WebDriver không theo dõi network trực tiếp: ${s.action}`, manual: `// TODO manual: ${s.action}` })[s.automationAction] || `// TODO: ${s.action}`;
   });
   return `const { Builder, By } = require('selenium-webdriver');\nconst { Select } = require('selenium-webdriver/lib/select');\nconst assert = require('node:assert');\n\n(async function test() {\n  const driver = await new Builder().usingServer(process.env.SELENIUM_REMOTE_URL || 'http://127.0.0.1:4444/wd/hub').forBrowser('chrome').build();\n  try {\n    await driver.get(process.env.TARGET_URL || ${q(testCase.targetUrl)});\n${lines.map((x) => `    ${x}`).join('\n')}\n  } finally { await driver.quit(); }\n})();\n`;
 }
@@ -62,7 +69,7 @@ function selenium(testCase) {
 function cypress(testCase) {
   const lines = (testCase.testSteps || []).map((s) => {
     const el = `cy.get(${q(cssLocator(s.locator || {}))})`; const v = q(s.value || s.testData || '');
-    return ({ goto: `cy.visit(${q(s.value || testCase.targetUrl)})`, click: `${el}.click()`, fill: `${el}.clear().type(${v})`, select: `${el}.select(${v})`, check: `${el}.check()`, uncheck: `${el}.uncheck()`, press: `${el}.type(${v})`, assertText: `${el}.should('contain.text', ${v})`, assertVisible: `${el}.should('be.visible')`, assertUrl: `cy.url().should('include', ${v})`, waitForResponse: `// TODO cy.intercept trước hành động: ${s.action}`, manual: `// TODO manual: ${s.action}` })[s.automationAction] || `// TODO: ${s.action}`;
+    return ({ goto: `cy.visit(new URL(${q(s.value || "")}, Cypress.env('TARGET_URL') || ${q(testCase.targetUrl)}).toString())`, click: `${el}.click()`, fill: `${el}.clear().type(${v})`, select: `${el}.select(${v})`, check: `${el}.check()`, uncheck: `${el}.uncheck()`, press: `${el}.type(${v})`, assertText: `${el}.should('contain.text', ${v})`, assertVisible: `${el}.should('be.visible')`, assertUrl: `cy.url().should('include', ${v})`, waitForResponse: `// TODO cy.intercept trước hành động: ${s.action}`, manual: `// TODO manual: ${s.action}` })[s.automationAction] || `// TODO: ${s.action}`;
   });
   return `describe(${q(testCase.title)}, () => {\n  it('executes generated scenario', () => {\n    cy.visit(Cypress.env('TARGET_URL') || ${q(testCase.targetUrl)})\n${lines.map((x) => `    ${x}`).join('\n')}\n  })\n})\n`;
 }
@@ -70,7 +77,7 @@ function cypress(testCase) {
 function webdriverio(testCase) {
   const lines = (testCase.testSteps || []).map((s) => {
     const el = `browser.$(${q(cssLocator(s.locator || {}))})`; const v = q(s.value || s.testData || '');
-    return ({ goto: `await browser.url(${q(s.value || testCase.targetUrl)});`, click: `await (await ${el}).click();`, fill: `await (await ${el}).setValue(${v});`, select: `await (await ${el}).selectByVisibleText(${v});`, check: `if (!(await (await ${el}).isSelected())) await (await ${el}).click();`, uncheck: `if (await (await ${el}).isSelected()) await (await ${el}).click();`, press: `await browser.keys(${v});`, assertText: `assert.ok((await (await ${el}).getText()).includes(${v}));`, assertVisible: `assert.ok(await (await ${el}).isDisplayed());`, assertUrl: `assert.ok((await browser.getUrl()).includes(${v}));`, waitForResponse: `// TODO: ${s.action}`, manual: `// TODO manual: ${s.action}` })[s.automationAction] || `// TODO: ${s.action}`;
+    return ({ goto: `await browser.url(new URL(${q(s.value || "")}, process.env.TARGET_URL || ${q(testCase.targetUrl)}).toString());`, click: `await (await ${el}).click();`, fill: `await (await ${el}).setValue(${v});`, select: `await (await ${el}).selectByVisibleText(${v});`, check: `if (!(await (await ${el}).isSelected())) await (await ${el}).click();`, uncheck: `if (await (await ${el}).isSelected()) await (await ${el}).click();`, press: `await browser.keys(${v});`, assertText: `assert.ok((await (await ${el}).getText()).includes(${v}));`, assertVisible: `assert.ok(await (await ${el}).isDisplayed());`, assertUrl: `assert.ok((await browser.getUrl()).includes(${v}));`, waitForResponse: `// TODO: ${s.action}`, manual: `// TODO manual: ${s.action}` })[s.automationAction] || `// TODO: ${s.action}`;
   });
   return `const { remote } = require('webdriverio');\nconst assert = require('node:assert');\n(async () => {\n  const browser = await remote({ hostname: process.env.SELENIUM_HOST || '127.0.0.1', port: 4444, path: '/wd/hub', capabilities: { browserName: 'chrome' } });\n  try {\n    await browser.url(process.env.TARGET_URL || ${q(testCase.targetUrl)});\n${lines.map((x) => `    ${x}`).join('\n')}\n  } finally { await browser.deleteSession(); }\n})();\n`;
 }
@@ -78,7 +85,7 @@ function webdriverio(testCase) {
 function robot(testCase) {
   const lines = (testCase.testSteps || []).map((s) => {
     const el = `css:${cssLocator(s.locator || {})}`; const v = s.value || s.testData || '';
-    return ({ goto: `Go To    ${s.value || testCase.targetUrl}`, click: `Click Element    ${el}`, fill: `Input Text    ${el}    ${v}`, select: `Select From List By Label    ${el}    ${v}`, check: `Select Checkbox    ${el}`, uncheck: `Unselect Checkbox    ${el}`, press: `Press Keys    ${el}    ${v}`, assertText: `Element Should Contain    ${el}    ${v}`, assertVisible: `Element Should Be Visible    ${el}`, assertUrl: `Location Should Contain    ${v}`, waitForResponse: `# TODO network wait: ${s.action}`, manual: `# TODO manual: ${s.action}` })[s.automationAction] || `# TODO: ${s.action}`;
+    return ({ goto: s.value ? `${'${destination}'}=    Evaluate    urllib.parse.urljoin($TARGET_URL, ${q(s.value)})    modules=urllib.parse\n    Go To    ${'${destination}'}` : 'Go To    ${TARGET_URL}', click: `Click Element    ${el}`, fill: `Input Text    ${el}    ${v}`, select: `Select From List By Label    ${el}    ${v}`, check: `Select Checkbox    ${el}`, uncheck: `Unselect Checkbox    ${el}`, press: `Press Keys    ${el}    ${v}`, assertText: `Element Should Contain    ${el}    ${v}`, assertVisible: `Element Should Be Visible    ${el}`, assertUrl: `Location Should Contain    ${v}`, waitForResponse: `# TODO network wait: ${s.action}`, manual: `# TODO manual: ${s.action}` })[s.automationAction] || `# TODO: ${s.action}`;
   });
   return `*** Settings ***\nLibrary    SeleniumLibrary\n\n*** Variables ***\n${'${TARGET_URL}'}    %{TARGET_URL=${testCase.targetUrl}}\n\n*** Test Cases ***\n${testCase.title}\n    Open Browser    ${'${TARGET_URL}'}    chrome    remote_url=%{SELENIUM_REMOTE_URL}\n${lines.map((x) => `    ${x}`).join('\n')}\n    [Teardown]    Close All Browsers\n`;
 }
@@ -96,19 +103,26 @@ async function generateScript({ testCaseId, engine, userId }) {
   if (!config) throw new AppError('Automation engine không được hỗ trợ.', 400);
   const testCase = await TestCase.findById(testCaseId).populate('testSuite', 'project');
   if (!testCase) throw new AppError('Test Case không tồn tại.', 404);
-  const code = config.compile(testCase, config.language);
-  const validation = [...validateTestCase(testCase), ...validateCode({ code, engine })];
-  return AutomationScript.create({ project: testCase.testSuite.project, testCase: testCase._id, engine, language: config.language, filename: `${slug(testCase.title)}.${config.ext}`, code, validation, status: validation.some((x) => x.level === 'error') ? 'Generated' : 'Validated', createdBy: userId });
+  if (testCase.e2e?.systemProfile && !['Approved', 'Active'].includes(testCase.status)) throw new AppError('Test Case E2E phải được duyệt trước khi tạo script.', 409);
+  const runtime = await resolveCaseRuntime(testCase);
+  if (testCase.e2e?.systemProfile && !runtime) throw new AppError('System Profile chưa có runtime sẵn sàng.', 409);
+  const resolvedCase = { ...testCase.toObject(), targetUrl: runtime?.targetUrl || '' };
+  const code = config.compile(resolvedCase, config.language);
+  const validation = [...validateTestCase(resolvedCase), ...validateCode({ code, engine })];
+  return AutomationScript.create({ project: testCase.testSuite.project, testCase: testCase._id, sourceCaseUpdatedAt: testCase.updatedAt, engine, language: config.language, filename: `${slug(testCase.title)}.${config.ext}`, code, validation, status: validation.some((x) => x.level === 'error') ? 'Generated' : 'Validated', createdBy: userId });
 }
 
 async function validateScript(script) {
   const testCase = await TestCase.findById(script.testCase);
   if (!testCase) throw new AppError('Test Case không tồn tại.', 404);
-  script.validation = [...validateTestCase(testCase), ...validateCode({ code: script.code, engine: script.engine })];
+  const runtime = await resolveCaseRuntime(testCase);
+  const resolvedCase = { ...testCase.toObject(), targetUrl: runtime?.targetUrl || '' };
+  script.validation = [...validateTestCase(resolvedCase), ...validateCode({ code: script.code, engine: script.engine })];
+  if (!isScriptCurrent(script, testCase)) script.validation.push({ level: 'error', message: 'Test Case đã thay đổi hoặc chưa được duyệt; cần sinh script mới sau khi duyệt.' });
   script.status = script.validation.some((item) => item.level === 'error') ? 'Generated' : 'Validated';
   script.approvedBy = null; script.approvedAt = null; script.reviewNote = '';
   await script.save();
   return script;
 }
 
-module.exports = { generateScript, validateScript, validateTestCase, validateCode, options };
+module.exports = { generateScript, validateScript, validateTestCase, validateCode, isScriptCurrent, options };

@@ -1,4 +1,4 @@
-const { TestPlan, TestRun, TestExecution, AutomationResult, TestCase, TestSuite, Project, Bug, Notification, ExecutionArtifact } = require('../models');
+const { TestPlan, TestRun, TestExecution, AutomationResult, TestCase, TestSuite, TestEnvironment, SystemProfile, UserStory, Project, Bug, Notification, ExecutionArtifact } = require('../models');
 const { AppError, list, getById, send } = require('../utils/http');
 const { addKpiPoints } = require('../services/kpiService');
 const { createAutomationJob, cancelAutomationJob, getAutomationArtifact } = require('../services/automationRunnerService');
@@ -6,6 +6,8 @@ const { getJiraStatus, createJiraBug } = require('../services/jiraService');
 const { assertProjectAccess, getAccessibleProjectIds } = require('../services/projectAccessService');
 const { exportArtifact } = require('../services/artifactExportService');
 const ai = require('../services/aiService');
+const { resolveCaseRuntime } = require('../services/e2eRuntimeService');
+const { validateTestCase } = require('../services/automationScriptService');
 
 const ensureProjectAccess = async (req, projectId) => {
   const { project } = await assertProjectAccess(req.user, projectId);
@@ -17,7 +19,23 @@ const listPlans = async (req, res) => {
   const result = await list(TestPlan, req, { baseFilter: { project: { $in: projectIds } }, filters: ['project', 'release', 'status', 'assignee'], searchFields: ['name', 'description', 'scope'], populate: [{ path: 'testCases', select: 'title priority status' }, { path: 'createdBy assignee', select: 'fullName' }, { path: 'release', select: 'name version' }] });
   send(res, result.data, 200, { pagination: result.pagination });
 };
-const createPlan = async (req, res) => send(res, await TestPlan.create({ ...req.body, createdBy: req.user._id }), 201);
+const createPlan = async (req, res) => {
+  await ensureProjectAccess(req, req.body.project);
+  if (req.body.systemProfile) {
+    const profile = await SystemProfile.findById(req.body.systemProfile);
+    if (!profile || String(profile.project) !== String(req.body.project)) throw new AppError('System Profile phải thuộc Project.', 409);
+    const ids = Array.isArray(req.body.userStories) ? [...new Set(req.body.userStories.map(String))] : [];
+    const stories = await UserStory.find({ _id: { $in: ids }, project: req.body.project, 'e2e.systemProfile': profile._id, approvalStatus: 'Approved' });
+    if (!ids.length || stories.length !== ids.length) throw new AppError('Test Plan cần User Story đã duyệt thuộc cùng Profile.', 409);
+    if ((req.body.kind || 'TestPlan') !== 'TestPlan') throw new AppError('Chỉ có thể lập Feature Test Plan từ User Story.', 409);
+    if (req.body.planLevel && req.body.planLevel !== 'Feature') throw new AppError('Test Plan trong luồng E2E phải là Feature Test Plan.', 409);
+    req.body.planLevel = 'Feature';
+    req.body.origin = req.body.origin === 'AI' ? 'AI' : 'Manual';
+    req.body.approvalStatus = 'PendingApproval';
+    req.body.status = 'Draft';
+  }
+  send(res, await TestPlan.create({ ...req.body, createdBy: req.user._id }), 201);
+};
 
 const suggestPlan = async (req, res) => {
   const { project: projectId, testCaseIds = [] } = req.body;
@@ -26,6 +44,7 @@ const suggestPlan = async (req, res) => {
   const suites = await TestSuite.find({ project: projectId }).distinct('_id');
   const cases = await TestCase.find({ testSuite: { $in: suites }, status: { $in: ['Approved', 'Active'] }, ...(testCaseIds.length ? { _id: { $in: testCaseIds } } : {}) }).limit(100);
   if (!cases.length) throw new AppError('Project chưa có Test Case Approved để lập Test Plan.', 409);
+  if (testCaseIds.length && cases.length !== new Set(testCaseIds.map(String)).size) throw new AppError('Một hoặc nhiều Test Case chưa được duyệt hoặc không thuộc Project.', 409);
   let suggestion = { planId: `TP-${Date.now()}`, name: `Regression Plan · ${new Date().toLocaleDateString('vi-VN')}`, description: 'Kế hoạch kiểm thử được đề xuất từ các Test Case đã duyệt.', scope: cases.map((item) => item.title).join('; '), objectives: ['Xác nhận các E2E journey đã duyệt hoạt động đúng trên môi trường mục tiêu.'], testStrategy: 'Risk-based E2E regression với evidence tự động.', testItems: cases.map((item) => item.title), outOfScope: [], entryCriteria: ['Environment Ready', 'Test Case đã Approved', 'Test data sẵn sàng'], exitCriteria: ['Đã chạy toàn bộ Test Case', 'Bug Critical được triage'], risks: [], deliverables: ['Test execution evidence', 'Defect list', 'Test Summary Report'], environment: req.body.environment || 'Staging' };
   if (ai.isAiConfigured()) {
     try {
@@ -38,7 +57,8 @@ const suggestPlan = async (req, res) => {
     }
   }
   const kind = req.body.kind === 'ExecutionPlan' ? 'ExecutionPlan' : 'TestPlan';
-  const plan = await TestPlan.create({ ...suggestion, kind, project: projectId, testCases: cases.map((item) => item._id), assignee: req.body.assignee || req.user._id, createdBy: req.user._id, status: 'Draft', approvalStatus: 'PendingApproval', aiSuggestion: suggestion });
+  if (req.body.systemProfile && cases.some((item) => String(item.e2e?.systemProfile || '') !== String(req.body.systemProfile))) throw new AppError('Test Case phải thuộc cùng System Profile.', 409);
+  const plan = await TestPlan.create({ ...suggestion, kind, planLevel: kind === 'ExecutionPlan' ? 'CycleExecution' : (req.body.planLevel || 'Feature'), origin: kind === 'ExecutionPlan' ? 'Board' : (ai.isAiConfigured() ? 'AI' : 'Rule'), systemProfile: req.body.systemProfile || null, project: projectId, testCases: cases.map((item) => item._id), assignee: req.body.assignee || req.user._id, createdBy: req.user._id, status: 'Draft', approvalStatus: 'PendingApproval', aiSuggestion: suggestion });
   send(res, plan, 201, { message: `Đã tạo ${kind === 'ExecutionPlan' ? 'Test Execution Plan' : 'Test Plan'} từ ${cases.length} Test Case Approved.` });
 };
 
@@ -52,18 +72,25 @@ const suggestPlanFromRequirements = async (req, res) => {
   const suggestion = {
     name: `E2E Test Plan · ${new Date().toLocaleDateString('vi-VN')}`,
     scope: titles.join('; '),
+    objectives: ['Xác nhận các User Story đã duyệt hoạt động đúng theo tiêu chí chấp nhận.'],
     testStrategy: 'Risk-based E2E testing, ưu tiên luồng chính, xác thực và phân quyền.',
+    testItems: titles,
+    outOfScope: ['Hiệu năng chuyên sâu và kiểm thử bảo mật xâm nhập, trừ khi có yêu cầu riêng.'],
+    entryCriteria: ['User Story đã được duyệt.', 'Môi trường và dữ liệu kiểm thử sẵn sàng.'],
+    exitCriteria: ['Test Case trong phạm vi đã được thực thi hoặc có lý do Blocked được ghi nhận.', 'Bug Critical/High đã được triage.'],
     environment: String(environment || 'Staging').slice(0, 500),
     testData: 'Dùng tài khoản và dữ liệu thử nghiệm đã khai báo trong System Profile.',
-    risks: 'Environment không ổn định hoặc test data không nhất quán — ghi evidence và triage trước khi kết luận.',
+    risks: [{ risk: 'Môi trường không ổn định hoặc dữ liệu kiểm thử không nhất quán.', mitigation: 'Ghi evidence, xác nhận dữ liệu và triage trước khi kết luận.', owner: 'QA Manager' }],
+    deliverables: ['Test Plan đã duyệt', 'Test Case và evidence thực thi', 'Danh sách defect', 'Test Summary Report'],
   };
+  let fallback = !ai.isAiConfigured();
   if (ai.isAiConfigured()) {
     try {
-      const response = await ai.complete({ system: 'Bạn là QA Test Manager. Chỉ trả JSON.', prompt: `Dựa trên các User Story đã duyệt, đề xuất Test Plan trước khi viết Test Case. JSON: {"name":"","scope":"","testStrategy":"","environment":"","testData":"","risks":""}.\n${JSON.stringify(stories)}`, json: true, temperature: 0.15, maxTokens: 1400 });
+      const response = await ai.complete({ system: 'Bạn là QA Test Manager. Chỉ trả JSON.', prompt: `Dựa trên các User Story đã duyệt, đề xuất Test Plan trước khi viết Test Case. JSON: {"name":"","scope":"","objectives":[""],"testStrategy":"","testItems":[""],"outOfScope":[""],"entryCriteria":[""],"exitCriteria":[""],"environment":"","testData":"","risks":[{"risk":"","mitigation":"","owner":""}],"deliverables":[""]}. Không bịa trạng thái, số liệu, credential hoặc môi trường chưa có bằng chứng.\n${JSON.stringify(stories)}`, json: true, temperature: 0.15, maxTokens: 2200 });
       const parsed = ai.parseJson(response.text); Object.assign(suggestion, parsed || {});
-    } catch (error) { if (!ai.isGeminiQuotaExhausted(error)) throw error; }
+    } catch (error) { if (!ai.isGeminiQuotaExhausted(error)) throw error; fallback = true; }
   }
-  send(res, { suggestion, fallback: !ai.isAiConfigured() });
+  send(res, { suggestion, fallback });
 };
 
 const decidePlan = async (req, res) => {
@@ -117,10 +144,23 @@ const exportPlan = async (req, res) => {
     .lean();
   if (!plan) throw new AppError('Test Plan không tồn tại.', 404);
   await ensureProjectAccess(req, plan.project);
-  const format = ['pdf', 'xls', 'csv', 'doc'].includes(req.query.format) ? req.query.format : 'doc';
-  const output = await exportArtifact('Test Plan', plan, format);
+  // Legacy `doc` and `xls` links remain accepted, but the generated download is
+  // always a standards-compliant DOCX/XLSX file with the matching extension.
+  const format = ['docx', 'pdf', 'xlsx', 'csv', 'doc', 'xls'].includes(req.query.format) ? req.query.format : 'docx';
+  const output = ['docx', 'pdf'].includes(format) ? await require('../services/testPlanExportService').exportTestPlan(plan, format) : await exportArtifact('Test Plan', plan, format);
   res.setHeader('Content-Type', output.mime);
   res.setHeader('Content-Disposition', `attachment; filename="test-plan-${plan._id}.${output.ext}"`);
+  res.send(output.buffer);
+};
+const exportPlanPreview = async (req, res) => {
+  if (!req.body.project || !req.body.plan || typeof req.body.plan !== 'object' || Array.isArray(req.body.plan)) throw new AppError('Project và nội dung Test Plan là bắt buộc.', 400);
+  await ensureProjectAccess(req, req.body.project);
+  const format = req.query.format;
+  if (!['docx', 'pdf'].includes(format)) throw new AppError('Chỉ hỗ trợ DOCX hoặc PDF.', 400);
+  // Export only the supplied document; do not create a plan or change approval state.
+  const output = await require('../services/testPlanExportService').exportTestPlan({ ...req.body.plan, approvalStatus: 'Draft', planId: '' }, format);
+  res.setHeader('Content-Type', output.mime);
+  res.setHeader('Content-Disposition', `attachment; filename="test-plan-draft.${output.ext}"`);
   res.send(output.buffer);
 };
 const deletePlan = async (req, res) => { const item = await getById(TestPlan, req.params.id); await ensureProjectAccess(req, item.project); if (await TestRun.exists({ testPlan: item._id })) throw new AppError('Không thể xóa kế hoạch đã có đợt chạy.', 409); req._auditBefore = item.toObject(); await item.deleteOne(); send(res, { _id: item._id }); };
@@ -135,6 +175,7 @@ const listRuns = async (req, res) => {
 const createRun = async (req, res) => {
   const plan = await getById(TestPlan, req.body.testPlan);
   await ensureProjectAccess(req, plan.project);
+  if (plan.kind === 'ExecutionPlan' && (plan.approvalStatus !== 'Approved' || !plan.testCases.length)) throw new AppError('Execution Plan phải được duyệt và có Test Case trước khi tạo Test Run.', 409);
   const run = await TestRun.create({ ...req.body, totalCases: plan.testCases.length, createdBy: req.user._id });
   if (plan.testCases.length) await TestExecution.insertMany(plan.testCases.map((testCase) => ({ testRun: run._id, testCase })));
   send(res, run, 201);
@@ -158,8 +199,20 @@ const executeAutomatedRun = async (req, res) => {
   await ensureProjectAccess(req, plan.project);
   if (!['NotStarted', 'Aborted'].includes(run.status)) throw new AppError('Test Run này đã bắt đầu hoặc đã hoàn tất.', 409);
   const cases = await TestCase.find({ _id: { $in: plan.testCases } });
-  const invalid = cases.filter((item) => !['Approved', 'Active'].includes(item.status) || item.type !== 'Automated' || !item.targetUrl || item.testSteps.some((step) => !step.automationAction || step.automationAction === 'manual'));
-  if (invalid.length || cases.length !== plan.testCases.length) throw new AppError('Test Plan chứa Test Case chưa Approved hoặc chưa thể tự động hóa.', 409);
+  if (plan.kind === 'ExecutionPlan' && plan.approvalStatus !== 'Approved') throw new AppError('Execution Plan phải được duyệt trước khi chạy.', 409);
+  let chosenEnvironment = null;
+  if (req.body.testEnvironmentId) {
+    chosenEnvironment = await TestEnvironment.findById(req.body.testEnvironmentId);
+    if (!chosenEnvironment || String(chosenEnvironment.project) !== String(plan.project) || chosenEnvironment.status !== 'Ready' || !chosenEnvironment.targetUrl) throw new AppError('Test Environment phải thuộc Project và ở trạng thái Ready.', 409);
+  }
+  const invalid = [];
+  for (const item of cases) {
+    const runtime = await resolveCaseRuntime(item);
+    const targetUrl = chosenEnvironment?.targetUrl || runtime?.targetUrl || '';
+    const validation = validateTestCase({ targetUrl, testSteps: item.testSteps });
+    if (!['Approved', 'Active'].includes(item.status) || item.type !== 'Automated' || validation.some((issue) => issue.level === 'error')) invalid.push(item);
+  }
+  if (invalid.length || cases.length !== plan.testCases.length) throw new AppError('Test Plan chứa Test Case chưa Approved, thiếu runtime, locator hoặc còn bước thủ công.', 409);
   run.status = 'InProgress'; run.startedAt = new Date(); run.completedAt = null; await run.save();
   const jobs = [];
   for (const testCase of cases) {
@@ -358,6 +411,7 @@ const triageAutomationResult = async (req, res) => {
 const jiraIntegrationStatus = async (_req, res) => send(res, getJiraStatus());
 
 module.exports = {
+  exportPlanPreview,
   listPlans, createPlan, suggestPlan, suggestPlanFromRequirements, decidePlan, updatePlan, exportPlan, deletePlan, listRuns, createRun, updateRun, getRun,
   createPlanFromApproved, executeAutomatedRun,
   recordExecution, automationWebhook, listAutomationResults,

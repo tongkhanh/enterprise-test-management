@@ -1,5 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { normalizeGitHubApiEndpoint } = require('../../services/integrationService');
+const { githubGitAuthConfig } = require('../../services/environmentService');
 const vm = require('node:vm');
 const { options } = require('../../services/automationScriptService');
 const { applyFixture } = require('../../services/automationResourcesService');
@@ -8,8 +10,22 @@ const { workspaceRoleHasPermission } = require('../../services/workspaceAccessSe
 const { resolveWorkspaceIdFromRequest } = require('../../services/workspaceAccessService');
 const { normalizeGeneratedStory, fallbackTestCases, normalizeGeneratedTestCase } = require('../../controllers/e2eController');
 const { isGeminiQuotaExhausted } = require('../../services/aiService');
-const { exportArtifact } = require('../../services/artifactExportService');
+const { exportArtifact, exportTestCases } = require('../../services/artifactExportService');
 const models = require('../../models');
+test('GitHub repository URLs are repaired to the GitHub API endpoint before verification', () => {
+  const connection = { provider: 'GitHub', baseUrl: 'https://github.com/tongkhanh/foodrush.git', externalProjectKey: '' };
+  normalizeGitHubApiEndpoint(connection);
+  assert.equal(connection.baseUrl, 'https://api.github.com');
+  assert.equal(connection.externalProjectKey, 'tongkhanh/foodrush');
+  const enterprise = { provider: 'GitHub', baseUrl: 'https://github.example.com/api/v3', externalProjectKey: '' };
+  normalizeGitHubApiEndpoint(enterprise);
+  assert.equal(enterprise.baseUrl, 'https://github.example.com/api/v3');
+});
+test('GitHub clone authentication uses a temporary Basic header, not a credential URL', () => {
+  const config = githubGitAuthConfig('test-token');
+  assert.equal(config, `http.extraHeader=Authorization: Basic ${Buffer.from('x-access-token:test-token').toString('base64')}`);
+  assert.ok(!config.includes('github.com'));
+});
 test('generated standalone scripts parse; WDIO does not depend on testrunner globals', () => {
   const tc = { title: 'Generated', targetUrl: 'http://test', testSteps: [{ automationAction: 'assertVisible', locator: { value: '#login' } }, { automationAction: 'assertText', locator: { value: '#login' }, value: 'Login' }] };
   for (const engine of ['Selenium', 'Cypress', 'WebdriverIO']) new vm.Script(options[engine].compile(tc));
@@ -73,16 +89,61 @@ test('E2E fallback provides reviewable scientific test-case components', () => {
   const normalized = normalizeGeneratedTestCase({ title: 'Tối giản', testSteps: [] }, 0, { useCase, story, targetUrl: 'https://e2e.example.test', profile: {} });
   assert.ok(normalized.objective && normalized.preconditions && normalized.postconditions);
   assert.deepEqual(normalized.storyCoverage, ['Given hợp lệ When nộp bài Then trạng thái được lưu']);
+  const sourceOnlyCases = fallbackTestCases({ useCase, story, targetUrl: '', profile: { roles: [] } });
+  assert.equal(sourceOnlyCases[0].testSteps[0].automationAction, 'manual');
+  assert.ok(sourceOnlyCases.every((item) => item.tags.includes('NeedsRuntimeBinding')));
+  const sourceOnlyNormalized = normalizeGeneratedTestCase({ title: 'Source-only draft', testSteps: [] }, 0, { useCase, story, targetUrl: '', profile: {} });
+  assert.ok(sourceOnlyNormalized.tags.includes('NeedsRuntimeBinding'));
+  assert.match(sourceOnlyNormalized.preconditions, /Runtime URL/);
+  const unsafeSuggestion = normalizeGeneratedTestCase({ title: 'Manual source', testSteps: [{ action: 'Điều hướng', automationAction: 'goto', locator: { strategy: 'css', value: '#invented' }, value: '/login' }] }, 0, { useCase, story, targetUrl: '', profile: { mode: 'SystemProfile' } });
+  assert.equal(unsafeSuggestion.testSteps[0].automationAction, 'manual');
+  assert.equal(unsafeSuggestion.testSteps[0].locator, null);
 });
-test('test-case Excel export is organized into specification, steps, data and traceability sheets', async () => {
+test('test-case Excel export is a native workbook with specification, steps, data and traceability sheets', async () => {
   const result = await exportArtifact('E2E Test Case', {
     testCaseId: 'TC-001', title: 'Nộp bài', objective: 'Xác minh nộp bài.', priority: 'High', testSteps: [{ stepNumber: 1, action: 'Mở bài tập', expectedResult: 'Trang sẵn sàng', automationAction: 'goto' }], generatedTestData: { actor: 'Sinh viên' }, storyCoverage: ['Given hợp lệ When nộp Then lưu'], e2e: { journeyType: 'HappyPath', setup: ['Chuẩn bị dữ liệu'], cleanup: ['Xóa dữ liệu'] }, tags: ['E2E'],
-  }, 'xls');
-  const xml = result.buffer.toString('utf8');
-  assert.equal(result.ext, 'xls');
-  for (const sheet of ['Test Case', 'Steps', 'Test Data', 'Traceability']) assert.match(xml, new RegExp(`Worksheet ss:Name="${sheet}"`));
-  assert.match(xml, /FreezePanes/);
-  assert.match(xml, /Mục tiêu kiểm thử/);
+  }, 'xlsx');
+  const ExcelJS = require('exceljs');
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(result.buffer);
+  assert.equal(result.ext, 'xlsx');
+  for (const sheet of ['Test Cases', 'Steps', 'Test Data', 'Traceability']) assert.ok(workbook.getWorksheet(sheet));
+  assert.equal(workbook.getWorksheet('Test Cases').rowCount, 2);
+  assert.match(String(workbook.getWorksheet('Test Cases').getRow(1).values), /Objective/);
+});
+test('batch Test Case Excel export keeps every case and step in one workbook', async () => {
+  const ExcelJS = require('exceljs');
+  const output = await exportTestCases([
+    { testCaseId: 'TC-001', title: 'Đăng nhập', testSteps: [{ stepNumber: 1, action: 'Mở đăng nhập', expectedResult: 'Hiện biểu mẫu' }], generatedTestData: { role: 'Sinh viên' }, e2e: { journeyType: 'HappyPath' } },
+    { testCaseId: 'TC-002', title: 'Nộp bài', testSteps: [{ stepNumber: 1, action: 'Tải tệp', expectedResult: 'Tệp hợp lệ' }, { stepNumber: 2, action: 'Lưu', expectedResult: 'Đã nộp' }], generatedTestData: { file: 'assignment.pdf' }, e2e: { journeyType: 'Negative' } },
+  ]);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(output.buffer);
+  assert.equal(output.ext, 'xlsx');
+  assert.equal(workbook.getWorksheet('Test Cases').rowCount, 3);
+  assert.equal(workbook.getWorksheet('Steps').rowCount, 4);
+  assert.match(String(workbook.getWorksheet('Test Cases').getRow(3).values), /TC-002/);
+});
+test('generic downloads use genuine Excel, Word, PDF and UTF-8 CSV files', async () => {
+  const artifact = { title: 'Tài liệu kiểm thử', description: 'Nội dung có dấu tiếng Việt', token: 'secret-value' };
+  const xlsx = await exportArtifact('Use Case', artifact, 'xlsx');
+  const docx = await exportArtifact('Use Case', artifact, 'docx');
+  const pdf = await exportArtifact('Use Case', artifact, 'pdf');
+  const csv = await exportArtifact('Use Case', artifact, 'csv');
+  const ExcelJS = require('exceljs');
+  const mammoth = require('mammoth');
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(xlsx.buffer);
+  const text = await mammoth.extractRawText({ buffer: docx.buffer });
+  assert.equal(xlsx.ext, 'xlsx');
+  assert.ok(workbook.getWorksheet('Export'));
+  assert.equal(docx.ext, 'docx');
+  assert.match(text.value, /Tài liệu kiểm thử/);
+  assert.equal(pdf.ext, 'pdf');
+  assert.equal(pdf.buffer.subarray(0, 4).toString(), '%PDF');
+  assert.equal(csv.ext, 'csv');
+  assert.equal(csv.buffer.subarray(0, 3).toString('hex'), 'efbbbf');
+  assert.match(csv.buffer.toString('utf8'), /\[REDACTED\]/);
 });
 test('fixture binds escaped values, rejects missing values and cross-origin calls', async () => {
   const originalFind = Fixture.findById; const originalFetch = global.fetch; let fixture; const calls = [];

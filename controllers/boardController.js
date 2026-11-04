@@ -20,7 +20,7 @@ const transitions = {
 const itemPopulate = [
   {
     path: 'testCase',
-    select: 'title description preconditions priority type status estimatedTime testSteps tags storyCoverage targetUrl testSuite userStory createdBy',
+    select: 'title description preconditions priority type status estimatedTime testSteps tags storyCoverage targetUrl e2e.systemProfile testSuite userStory createdBy',
     populate: [
       { path: 'testSuite', select: 'name project' },
       { path: 'userStory', select: 'title acceptanceCriteria' },
@@ -30,7 +30,7 @@ const itemPopulate = [
   { path: 'cycle', select: 'name status startDate endDate color' },
   { path: 'assignee createdBy lastMovedBy', select: 'fullName email avatar' },
   { path: 'labels', select: 'name color description' },
-  { path: 'testPlan', select: 'name status' },
+  { path: 'testPlan', select: 'name status systemProfile' },
   { path: 'testRun', select: 'name status passedCount failedCount totalCases' },
 ];
 
@@ -142,11 +142,20 @@ const createPlanFromBoard = async (req, res) => {
   if (!project || !Array.isArray(boardItemIds) || !boardItemIds.length) throw new AppError('Project và danh sách Board Item là bắt buộc.', 400);
   if (boardItemIds.length > 100) throw new AppError('Mỗi Test Plan hỗ trợ tối đa 100 Test Case.', 400);
   await assertProjectAccess(req.user, project);
-  const items = await BoardItem.find({ _id: { $in: boardItemIds }, project, isArchived: false }).populate('testCase');
+  const items = await BoardItem.find({ _id: { $in: boardItemIds }, project, isArchived: false }).populate('testCase', 'title status e2e.systemProfile');
   if (items.length !== new Set(boardItemIds.map(String)).size) throw new AppError('Có Board Item không tồn tại trong Project.', 404);
+  const existingRunIds = [...new Set(items.map((item) => String(item.testRun || '')).filter(Boolean))];
+  if (existingRunIds.length === 1 && items.every((item) => String(item.testRun || '') === existingRunIds[0])) {
+    const run = await TestRun.findById(existingRunIds[0]);
+    const plan = run && await TestPlan.findById(run.testPlan);
+    if (run && plan) return send(res, { plan, run, reused: true }, 200, { message: 'Các Test Case đã có Test Run. Mở lại Run hiện có.' });
+  }
+  if (items.some((item) => item.testPlan || item.testRun)) throw new AppError('Một hoặc nhiều Test Case đã thuộc kế hoạch chạy. Hãy chọn riêng các Test Case chưa có Run, hoặc mở Run hiện có.', 409);
   const invalid = items.filter((item) => item.reviewState !== 'Approved' || !['Approved', 'Active'].includes(item.testCase?.status));
   if (invalid.length) throw new AppError('Chỉ có thể tạo Test Plan từ Test Case đang Approved.', 409, { invalidItems: invalid.map((item) => item._id) });
   if (cycle && items.some((item) => String(item.cycle || '') !== String(cycle))) throw new AppError('Các thẻ phải được gán vào Cycle đã chọn trước.', 409);
+  const profileIds = [...new Set(items.map((item) => String(item.testCase?.e2e?.systemProfile || '')).filter(Boolean))];
+  if (profileIds.length > 1) throw new AppError('Các Test Case E2E phải thuộc cùng một System Profile để tạo một Test Run.', 409);
 
   const session = await mongoose.startSession();
   let result;
@@ -154,9 +163,10 @@ const createPlanFromBoard = async (req, res) => {
     await session.withTransaction(async () => {
       const now = new Date();
       const [plan] = await TestPlan.create([{
-        name: name || `Cycle Test Plan · ${now.toLocaleString('vi-VN')}`,
-        description: 'Được tạo từ Kanban Board sau khi QA phê duyệt.',
+        name: name || `Cycle Execution Plan · ${now.toLocaleString('vi-VN')}`,
+        description: 'Kế hoạch thực thi được tạo từ các Test Case đã QA phê duyệt trên Test Board.',
         scope: items.map((item) => item.testCase.title).join('; '), status: 'Active',
+        kind: 'ExecutionPlan', planLevel: 'CycleExecution', origin: 'Board', systemProfile: profileIds[0] || null,
         environment, project, cycle: cycle || null, boardItems: items.map((item) => item._id),
         testCases: items.map((item) => item.testCase._id), assignee: req.body.assignee || req.user._id,
         createdBy: req.user._id, startDate: now,

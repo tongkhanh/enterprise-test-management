@@ -48,7 +48,9 @@
     "bullmq": "^6.3.8",
     "cors": "^2.8.5",
     "dockerode": "^5.0.1",
+    "docx": "^9.5.1",
     "dotenv": "^16.4.7",
+    "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "helmet": "^8.0.0",
     "ioredis": "^6.0.0",
@@ -69,7 +71,6 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
-    "docx": "^9.5.1",
     "nodemon": "^3.1.9"
   }
 }

@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import {
   Bug, CheckSquare2, ChevronLeft, FlaskConical, FolderKanban, Gauge,
   Building2, Columns3, Repeat2, Settings, Sparkles, Trophy, UsersRound, X, TerminalSquare, ListTodo, Mail, FileBarChart,
@@ -16,7 +16,7 @@ const groups = [
       { label: 'Lời mời', to: '/invitations', icon: Mail },
       { label: 'Teams & Members', to: '/teams', icon: UsersRound },
       { label: 'Cycles & Planning', to: '/cycles', icon: Repeat2 },
-      { label: 'Agile Issues', to: '/issues', icon: ListTodo },
+      { label: 'Kế hoạch tuần', to: '/cycles?tab=issues', icon: ListTodo },
     ],
   },
   {
@@ -29,7 +29,7 @@ const groups = [
     label: 'Công cụ nâng cao',
     items: [
       { label: 'Approval Inbox', to: '/approvals', icon: CheckSquare2 },
-      { label: 'Test Board', to: '/board', icon: Columns3 },
+      { label: 'Backlog & Test Board', to: '/board', icon: Columns3 },
       { label: 'Automation Lab', to: '/automation', icon: TerminalSquare },
       { label: 'Automation Operations', to: '/automation-operations', icon: Repeat2 },
       { label: 'Bug Tracking', to: '/bugs', icon: Bug },
@@ -47,6 +47,7 @@ const groups = [
 
 export default function Sidebar({ open, onClose, collapsed, onCollapse }) {
   const user = useAuthStore((state) => state.user)
+  const location = useLocation()
   const roleName = user?.role?.name || user?.role
   // System Admin chỉ quản trị hệ thống, không tham gia nghiệp vụ
   const isSystemAdmin = roleName === 'System_Admin'
@@ -77,11 +78,14 @@ export default function Sidebar({ open, onClose, collapsed, onCollapse }) {
                 end
                 onClick={onClose}
                 title={collapsed ? label : undefined}
-                className={({ isActive }) => cn(
+                className={({ isActive }) => {
+                  const tab = to.includes('?') ? new URLSearchParams(to.split('?')[1]).get('tab') : ''
+                  const selected = tab ? location.pathname === '/cycles' && new URLSearchParams(location.search).get('tab') === tab : isActive && !(location.pathname === '/cycles' && new URLSearchParams(location.search).get('tab'))
+                  return cn(
                   'group flex h-9 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-200/70 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white',
-                  isActive && 'bg-white text-slate-950 shadow-sm ring-1 ring-slate-200 dark:bg-slate-800 dark:text-white dark:ring-slate-700',
+                  selected && 'bg-white text-slate-950 shadow-sm ring-1 ring-slate-200 dark:bg-slate-800 dark:text-white dark:ring-slate-700',
                   collapsed && 'justify-center px-0',
-                )}
+                )}}
               ><Icon className="h-4 w-4 shrink-0" />{!collapsed && <span className="truncate">{label}</span>}</NavLink>)}
             </div>
           </div>

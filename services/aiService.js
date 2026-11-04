@@ -80,22 +80,28 @@ const readGeminiError = async (response) => {
 const requestGemini = async (path, body) => {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new AppError('Chưa cấu hình GEMINI_API_KEY cho Gemini 3.5 Flash.', 503);
-  let response;
+  const configuredTimeout = Number(process.env.AI_REQUEST_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? Math.min(configuredTimeout, 90000) : 60000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/${path}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
+    if (!response.ok) {
+      const message = await readGeminiError(response);
+      if (response.status === 429) throw new AppError(`Gemini Free Tier đã đạt giới hạn tạm thời: ${message}`, 429);
+      throw new AppError(`Gemini API lỗi ${response.status}: ${message}`, 502);
+    }
+    return await response.json();
   } catch (error) {
+    if (controller.signal.aborted) throw new AppError('Gemini phản hồi quá lâu. Vui lòng thử lại sau.', 504);
+    if (error.isOperational) throw error;
     throw new AppError(`Không thể kết nối Gemini API: ${error.message}`, 502);
-  }
-  if (!response.ok) {
-    const message = await readGeminiError(response);
-    if (response.status === 429) throw new AppError(`Gemini Free Tier đã đạt giới hạn tạm thời: ${message}`, 429);
-    throw new AppError(`Gemini API lỗi ${response.status}: ${message}`, 502);
-  }
-  return response.json();
+  } finally { clearTimeout(timer); }
 };
 
 const callGemini = async ({ prompt, system, model = 'gemini-3.5-flash', maxTokens = 2048, json = false }) => {

@@ -1,4 +1,5 @@
-const { Sprint, UserStory, ProjectLabel, ProjectActivity } = require('../models');
+const { Sprint, UserStory, ProjectLabel, ProjectActivity, BoardItem } = require('../models');
+const { summarize } = require('../services/cyclePlanningService');
 const { AppError, list, getById, send } = require('../utils/http');
 const { getAccessibleProjectIds, assertProjectAccess } = require('../services/projectAccessService');
 const { recordProjectActivity } = require('../services/projectActivityService');
@@ -20,7 +21,8 @@ const listCycles = async (req, res) => {
     sort: 'startDate',
     populate: [{ path: 'project', select: 'name key' }, { path: 'createdBy', select: 'fullName' }],
   });
-  send(res, result.data, 200, { pagination: result.pagination });
+  const items = await BoardItem.find({ cycle: { $in: result.data.map((cycle) => cycle._id) }, isArchived: false }).select('cycle testCase status assignee estimate reviewState sourceTestPlan testRun').populate('testCase', 'testCaseId title priority status estimatedTime').populate('assignee', 'fullName').populate('sourceTestPlan', 'name').lean();
+  send(res, result.data.map((cycle) => { const cases = items.filter((item) => String(item.cycle) === String(cycle._id)); return { ...(cycle.toObject ? cycle.toObject() : cycle), planningSummary: summarize(cases), plannedCases: cases }; }), 200, { pagination: result.pagination });
 };
 
 const createCycle = async (req, res) => {

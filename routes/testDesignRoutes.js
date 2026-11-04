@@ -10,6 +10,7 @@ router.post('/test-suites', authorize('testcase:create'), auditLog('CREATE', 'Te
 router.patch('/test-suites/:id', authorize('testcase:update'), auditLog('UPDATE', 'TestSuite'), asyncHandler(c.updateSuite));
 router.delete('/test-suites/:id', authorize('testcase:update'), auditLog('DELETE', 'TestSuite'), asyncHandler(c.deleteSuite));
 router.get('/test-cases', authorizeWorkspaceList('testcase:read'), asyncHandler(c.listCases));
+router.post('/test-cases/export', authorize('testcase:read'), auditLog('EXPORT', 'TestCase'), asyncHandler(c.exportCases));
 router.get('/test-cases/:id', authorize('testcase:read', 'testcase:create', 'testcase:update'), asyncHandler(c.getCase));
 router.post('/test-cases', authorize('testcase:create'), auditLog('CREATE', 'TestCase'), asyncHandler(c.createCase));
 router.patch('/test-cases/:id', authorize('testcase:update'), auditLog('UPDATE', 'TestCase'), asyncHandler(c.updateCase));

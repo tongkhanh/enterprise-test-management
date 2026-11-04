@@ -27,6 +27,12 @@ const testSuiteSchema = new Schema(
       trim: true,
       default: '',
     },
+    origin: {
+      type: String,
+      enum: ['Manual', 'SystemE2E', 'Imported'],
+      default: 'Manual',
+      index: true,
+    },
 
     // Thứ tự hiển thị trong cây thư mục
     order: {

@@ -145,6 +145,7 @@ const testCaseSchema = new Schema(
       counts: { type: Schema.Types.Mixed, default: {} },
     },
     e2e: {
+      testPlan: { type: Schema.Types.ObjectId, ref: 'TestPlan', default: null },
       systemProfile: { type: Schema.Types.ObjectId, ref: 'SystemProfile', default: null },
       useCase: { type: Schema.Types.ObjectId, ref: 'UseCase', default: null },
       journeyType: { type: String, default: '' },

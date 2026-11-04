@@ -1,11 +1,15 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, CalendarDays, Clock3, Flag, Gauge, Loader2, Pencil, Plus, Tags } from 'lucide-react'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { agileApi, workspaceApi } from '@/api/client'
 import { Badge, Button, Card, Dialog, Input, Select, Textarea } from '@/components/ui'
 import { EmptyState, MetricCard, PageHeader, SectionTitle } from '@/components/common/PageKit'
 import { useAuthStore } from '@/store/authStore'
+import AgileIssuesPage from '@/features/issues/AgileIssuesPage'
+import PlanningTabs from './PlanningTabs'
+import CycleCaseSummary from './CycleCaseSummary'
 
 const emptyCycle = { name: '', goal: '', description: '', startDate: '', endDate: '', status: 'Planning', capacity: 0, color: '#6D5DFB' }
 const emptyLabel = { name: '', description: '', color: '#6D5DFB' }
@@ -16,20 +20,30 @@ const dateValue = (value) => value ? new Date(value).toISOString().slice(0, 10) 
 const dateLabel = (value) => value ? new Date(value).toLocaleDateString('vi-VN') : '—'
 
 export default function CyclesPage() {
+  const [searchParams] = useSearchParams()
+  const requestedTab = searchParams.get('tab')
+  const requestedProject = searchParams.get('project') || ''
+  if (requestedTab === 'board') { const next = new URLSearchParams(searchParams); next.delete('tab'); return <Navigate to={`/board?${next}`} replace /> }
+  if (requestedTab === 'issues') return <div className="space-y-5"><PlanningTabs project={requestedProject} current="issues" /><AgileIssuesPage embeddedProject={requestedProject} /></div>
+  return <CyclesOverview requestedProject={requestedProject} />
+}
+
+function CyclesOverview({ requestedProject }) {
+  const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const user = useAuthStore((state) => state.user)
-  const [projectId, setProjectId] = useState('')
+  const [projectId, setProjectId] = useState(requestedProject)
   const [cycleOpen, setCycleOpen] = useState(false)
   const [cycleForm, setCycleForm] = useState(emptyCycle)
   const [editingCycle, setEditingCycle] = useState(null)
   const [labelOpen, setLabelOpen] = useState(false)
   const [labelForm, setLabelForm] = useState(emptyLabel)
-  const roleName = user?.role?.name || user?.role
-  const canManage = user?.role?.permissions?.includes('agile:manage') || false
+  const hasManagePermission = user?.role?.permissions?.includes('agile:manage') || false
 
   const projectsQuery = useQuery({ queryKey: ['projects'], queryFn: workspaceApi.projects })
   const activeProjectId = projectId || projectsQuery.data?.[0]?._id || ''
-  const cyclesQuery = useQuery({ queryKey: ['cycles', activeProjectId], queryFn: () => agileApi.cycles(activeProjectId), enabled: Boolean(activeProjectId) })
+  const canManage = hasManagePermission || ['Owner', 'QA_Manager'].includes(projectsQuery.data?.find((item) => item._id === activeProjectId)?.currentRole)
+  const cyclesQuery = useQuery({ queryKey: ['cycles', activeProjectId], queryFn: () => agileApi.cycles(activeProjectId), enabled: Boolean(activeProjectId), refetchInterval: 10000 })
   const labelsQuery = useQuery({ queryKey: ['labels', activeProjectId], queryFn: () => agileApi.labels(activeProjectId), enabled: Boolean(activeProjectId) })
   const activityQuery = useQuery({ queryKey: ['project-activity', activeProjectId], queryFn: () => agileApi.activity(activeProjectId), enabled: Boolean(activeProjectId) })
 
@@ -51,12 +65,13 @@ export default function CyclesPage() {
   const submitCycle = (event) => { event.preventDefault(); if (!cycleForm.name.trim() || !cycleForm.startDate || !cycleForm.endDate) return toast.error('Tên và thời gian Cycle là bắt buộc.'); saveCycle.mutate({ ...cycleForm, capacity: Number(cycleForm.capacity) || 0 }) }
 
   return <div className="space-y-6">
-    <PageHeader eyebrow="Agile delivery" title="Cycles & Planning" description="Lập kế hoạch chu kỳ kiểm thử, chuẩn hóa Label và theo dõi mọi thay đổi theo Project." actions={<><Select className="min-w-56" value={activeProjectId} onChange={(event) => setProjectId(event.target.value)}><option value="">Chọn Project</option>{projectsQuery.data?.map((project) => <option key={project._id} value={project._id}>{project.key} · {project.name}</option>)}</Select>{canManage && <Button onClick={openCreate}><Plus className="h-4 w-4" />Tạo Cycle</Button>}</>} />
+    <PageHeader eyebrow="Agile & Scrum workspace" title="Cycles & Planning" description="Một nơi để lập Sprint, quản lý Backlog, phân công Test Case và theo dõi công việc liên quan." actions={<><Select className="min-w-56" value={activeProjectId} onChange={(event) => { const value = event.target.value; setProjectId(value); const next = new URLSearchParams(searchParams); if (value) next.set('project', value); else next.delete('project'); setSearchParams(next) }}><option value="">Chọn Project</option>{projectsQuery.data?.map((project) => <option key={project._id} value={project._id}>{project.key} · {project.name}</option>)}</Select>{canManage && <Button onClick={openCreate}><Plus className="h-4 w-4" />Tạo Cycle</Button>}</>} />
+    <PlanningTabs project={activeProjectId} current="cycles" />
 
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><MetricCard label="Tất cả Cycle" value={metrics.total} hint="Trong Project đang chọn" icon={CalendarDays} /><MetricCard label="Đang hoạt động" value={metrics.active} hint="Cycle đang chạy" icon={Gauge} tone="emerald" /><MetricCard label="Đang lên kế hoạch" value={metrics.planning} hint="Chưa bắt đầu" icon={Clock3} tone="amber" /><MetricCard label="Đã hoàn thành" value={metrics.completed} hint="Đã đóng chu kỳ" icon={Flag} tone="violet" /></div>
 
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,.8fr)]">
-      <Card className="p-5"><SectionTitle title="Cycle timeline" description="Sprint được hiển thị dưới tên Cycle để đồng nhất với luồng Linear-style." action={canManage && <Button size="sm" variant="outline" onClick={openCreate}><Plus className="h-3.5 w-3.5" />Thêm</Button>} /><div className="mt-4 space-y-3">{cyclesQuery.data?.map((cycle) => <div key={cycle._id} className="rounded-xl border border-slate-200 p-4 transition hover:border-violet-300 dark:border-slate-800 dark:hover:border-violet-700"><div className="flex flex-col gap-3 sm:flex-row sm:items-start"><span className="mt-1 h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: cycle.color || '#6D5DFB' }} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold">{cycle.name}</h3><Badge tone={statusTone[cycle.status]}>{cycle.status}</Badge><span className="text-[10px] text-slate-400">Cycle #{cycle.sequence}</span></div><p className="mt-1 text-xs leading-5 text-slate-500">{cycle.goal || 'Chưa đặt mục tiêu cho Cycle.'}</p><div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-[11px] text-slate-500"><span className="flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />{dateLabel(cycle.startDate)} → {dateLabel(cycle.endDate)}</span><span className="flex items-center gap-1.5"><Gauge className="h-3.5 w-3.5" />Capacity {cycle.capacity || 0}</span><span>Velocity {cycle.velocity || 0}</span></div></div>{canManage && <div className="flex shrink-0 gap-1"><Button size="sm" variant="ghost" onClick={() => openEdit(cycle)}><Pencil className="h-3.5 w-3.5" /></Button>{cycle.status === 'Planning' && <Button size="sm" variant="outline" disabled={changeStatus.isPending} onClick={() => changeStatus.mutate({ id: cycle._id, status: 'Active' })}>Bắt đầu</Button>}{cycle.status === 'Active' && <Button size="sm" variant="outline" disabled={changeStatus.isPending} onClick={() => changeStatus.mutate({ id: cycle._id, status: 'Completed' })}>Hoàn tất</Button>}</div>}</div></div>)}{!cyclesQuery.isLoading && !cyclesQuery.data?.length && <EmptyState title="Chưa có Cycle" description="Tạo Cycle đầu tiên để lên kế hoạch các đợt kiểm thử theo Sprint." action={canManage && <Button size="sm" onClick={openCreate}><Plus className="h-4 w-4" />Tạo Cycle</Button>} />}</div></Card>
+      <Card className="p-5"><SectionTitle title="Cycle timeline" description="Cycle xác định mục tiêu, thời gian và capacity. Test Case được lập kế hoạch và thực thi tại Test Board của chính Cycle đó." action={canManage && <Button size="sm" variant="outline" onClick={openCreate}><Plus className="h-3.5 w-3.5" />Thêm</Button>} /><div className="mt-4 space-y-3">{cyclesQuery.data?.map((cycle) => <div key={cycle._id} className="rounded-xl border border-slate-200 p-4 transition hover:border-violet-300 dark:border-slate-800 dark:hover:border-violet-700"><div className="flex flex-col gap-3 sm:flex-row sm:items-start"><span className="mt-1 h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: cycle.color || '#6D5DFB' }} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold">{cycle.name}</h3><Badge tone={statusTone[cycle.status]}>{cycle.status}</Badge><span className="text-[10px] text-slate-400">Cycle #{cycle.sequence}</span></div><p className="mt-1 text-xs leading-5 text-slate-500">{cycle.goal || 'Chưa đặt mục tiêu cho Cycle.'}</p><div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-[11px] text-slate-500"><span className="flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />{dateLabel(cycle.startDate)} → {dateLabel(cycle.endDate)}</span><span className="flex items-center gap-1.5"><Gauge className="h-3.5 w-3.5" />Capacity {cycle.capacity || 0}</span><span>Velocity {cycle.velocity || 0}</span></div></div><div className="flex shrink-0 flex-wrap gap-1">{['Planning', 'Active'].includes(cycle.status) && <Button size="sm" variant="outline" asChild><Link to={`/cycles?tab=issues&project=${activeProjectId}&cycle=${cycle._id}`}>Lập kế hoạch tuần</Link></Button>}<Button size="sm" variant="outline" asChild><Link to={`/board?project=${activeProjectId}&cycle=${cycle._id}`}>Mở Test Board</Link></Button>{canManage && <><Button size="sm" variant="ghost" onClick={() => openEdit(cycle)}><Pencil className="h-3.5 w-3.5" /></Button>{cycle.status === 'Planning' && <Button size="sm" variant="outline" disabled={changeStatus.isPending} onClick={() => changeStatus.mutate({ id: cycle._id, status: 'Active' })}>Bắt đầu</Button>}{cycle.status === 'Active' && <Button size="sm" variant="outline" disabled={changeStatus.isPending} onClick={() => changeStatus.mutate({ id: cycle._id, status: 'Completed' })}>Hoàn tất</Button>}</>}</div></div><CycleCaseSummary cycle={cycle} project={activeProjectId} /></div>)}{!cyclesQuery.isLoading && !cyclesQuery.data?.length && <EmptyState title="Chưa có Cycle" description="Tạo Cycle đầu tiên để lên kế hoạch các đợt kiểm thử theo Sprint." action={canManage && <Button size="sm" onClick={openCreate}><Plus className="h-4 w-4" />Tạo Cycle</Button>} />}</div></Card>
 
       <div className="space-y-5">
         <Card className="p-5"><SectionTitle title="Project Labels" description="Nhãn dùng chung cho User Story và Test Case." action={canManage && <Button size="sm" variant="ghost" onClick={() => setLabelOpen(true)}><Plus className="h-3.5 w-3.5" /></Button>} /><div className="mt-4 flex flex-wrap gap-2">{labelsQuery.data?.map((label) => <span key={label._id} title={label.description} className="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium dark:border-slate-700"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: label.color }} />{label.name}</span>)}{!labelsQuery.isLoading && !labelsQuery.data?.length && <p className="py-4 text-xs text-slate-400">Chưa có Label trong Project.</p>}</div></Card>

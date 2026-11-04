@@ -6,6 +6,8 @@ const { Schema } = mongoose;
 const systemProfileSchema = new Schema({
   project: { type: Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
   name: { type: String, required: true, trim: true, maxlength: 200 },
+  description: { type: String, default: '', maxlength: 8000 },
+  referenceUrl: { type: String, default: '' },
   mode: { type: String, enum: ['SystemProfile', 'GitHubE2E'], required: true },
   environment: { type: Schema.Types.ObjectId, ref: 'TestEnvironment', default: null },
   baseUrl: { type: String, default: '' },

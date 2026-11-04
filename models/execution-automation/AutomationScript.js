@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const schema = new mongoose.Schema({
   project: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
   testCase: { type: mongoose.Schema.Types.ObjectId, ref: 'TestCase', required: true, index: true },
+  sourceCaseUpdatedAt: { type: Date, default: null },
   engine: { type: String, enum: ['Playwright', 'Selenium', 'Cypress', 'WebdriverIO', 'RobotFramework'], required: true },
   language: { type: String, enum: ['TypeScript', 'JavaScript', 'Python', 'Robot'], required: true },
   filename: { type: String, required: true },

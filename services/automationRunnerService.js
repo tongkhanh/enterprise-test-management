@@ -1,3 +1,5 @@
+const { resolveCaseRuntime } = require('./e2eRuntimeService');
+const { validateTestCase } = require('./automationScriptService');
 const fs = require('node:fs');
 const fsp = require('node:fs').promises;
 const path = require('node:path');
@@ -325,12 +327,17 @@ const createAutomationJob = async ({ testCaseId, userId, testRunId, testPlanId, 
   if (testCase.type !== 'Automated') throw new AppError('Test Case này chưa được đánh dấu Automated.', 409);
   const suite = await TestSuite.findById(testCase.testSuite);
   if (!suite) throw new AppError('Test Suite không tồn tại.', 404);
+  const runtime = await resolveCaseRuntime(testCase);
+  if (testCase.e2e?.systemProfile && !testEnvironmentId && !runtime) throw new AppError('System Profile chưa có runtime sẵn sàng.', 409);
+  if (testCase.e2e?.systemProfile && (testCase.testSteps || []).some((step) => !step.automationAction || step.automationAction === 'manual')) throw new AppError('Cần hoàn thiện các bước tự động trước khi chạy.', 409);
+  testEnvironmentId = testEnvironmentId || runtime?.environmentId;
   let testEnvironment = null;
   if (testEnvironmentId) {
     testEnvironment = await TestEnvironment.findById(testEnvironmentId);
     if (!testEnvironment || String(testEnvironment.project) !== String(suite.project)) throw new AppError('Test Environment không thuộc Project này.', 409);
     if (testEnvironment.status !== 'Ready' || !testEnvironment.targetUrl) throw new AppError('Test Environment chưa ở trạng thái Ready.', 409);
   }
+  if (testCase.e2e?.systemProfile && validateTestCase({ targetUrl: testEnvironment?.targetUrl || runtime?.targetUrl || '', testSteps: testCase.testSteps }).some((issue) => issue.level === 'error')) throw new AppError('Test Case E2E còn thiếu runtime hoặc locator, hoặc có bước thủ công.', 409);
   let plan = testPlanId ? await TestPlan.findById(testPlanId) : null;
   if (testPlanId && !plan) throw new AppError('Test Plan được chọn không tồn tại.', 404);
   if (plan && String(plan.project) !== String(suite.project)) throw new AppError('Test Plan và Test Case phải thuộc cùng Project.', 409);
@@ -346,7 +353,7 @@ const createAutomationJob = async ({ testCaseId, userId, testRunId, testPlanId, 
   const height = Math.min(Math.max(Number(viewport?.height) || 900, 320), 1600);
   const result = await AutomationResult.create({
     suiteName: testCase.title, framework: 'Playwright', status: 'Queued', triggeredBy: 'Manual',
-    totalTests: 1, progress: 0, totalSteps: testCase.testSteps.length, targetUrl: testEnvironment?.targetUrl || testCase.targetUrl,
+    totalTests: 1, progress: 0, totalSteps: testCase.testSteps.length, targetUrl: testEnvironment?.targetUrl || runtime?.targetUrl || testCase.targetUrl,
     testEnvironment: testEnvironment?._id || null,
     browserName, viewport: { width, height }, runtimeConfig: { testData: testData || {} },
     project: suite.project, testPlan: plan._id, testRun: run._id, testExecution: execution._id,

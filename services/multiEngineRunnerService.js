@@ -5,6 +5,7 @@ const { AutomationRun, AutomationScript, AutomationProfile, AutomationResult, Te
 const { AppError } = require('../utils/http');
 const { normalizeEvidence } = require('./evidenceNormalizerService');
 const resources = require('./automationResourcesService');
+const { isScriptCurrent } = require('./automationScriptService');
 const docker = new Docker(process.env.DOCKER_HOST ? { host: process.env.DOCKER_HOST } : undefined);
 const root = path.resolve(path.join(__dirname, '..', 'storage', 'multi-engine'));
 const defaults = {
@@ -33,7 +34,8 @@ async function createAutomationRun({ scriptId, environmentId, profileId, userId,
   const profile = profileId ? await AutomationProfile.findById(profileId) : await ensureDefaultProfile({ project: script.project, engine: script.engine, userId });
   if (!profile || String(profile.project) !== String(script.project) || profile.engine !== script.engine) throw new AppError('Profile không thuộc Project/engine.', 409);
   const tc = await require('../models').TestCase.findById(script.testCase);
-  if (tc?.quarantined) throw new AppError('Test Case đang bị quarantine.', 409);
+  if (!tc || !isScriptCurrent(script, tc)) throw new AppError('Test Case chưa được duyệt hoặc script không còn khớp Test Case; hãy sinh và duyệt script mới.', 409);
+  if (tc.quarantined) throw new AppError('Test Case đang bị quarantine.', 409);
   const run = await AutomationRun.create({ project: script.project, testCase: script.testCase, script: script._id, profile: profile._id, environment: environment._id, commitSha: environment.repository?.commitSha, targetUrl: environment.targetUrl, engine: script.engine, requestedBy: userId, dataset, fixture, matrix, dataRow, groupId, schedule, triggeredBy });
   const job = await require('./queueService').enqueueAutomationRun(run._id);
   if (job) { run.jobId = job.id; await run.save(); } else setImmediate(() => executeWithRetries(run._id).catch(console.error));
@@ -43,6 +45,8 @@ async function executeAutomationRun(runId, progress = async () => {}) {
   const run = await AutomationRun.findById(runId); if (!run) throw new Error('AutomationRun không tồn tại.');
   const [script, profile, environment] = await Promise.all([AutomationScript.findById(run.script), AutomationProfile.findById(run.profile), TestEnvironment.findById(run.environment)]);
   const adapter = adapters[run.engine]; if (!adapter || !script || !profile || !environment) throw new Error('Automation run configuration không đầy đủ.');
+  const testCase = await require('../models').TestCase.findById(script.testCase);
+  if (script.status !== 'Approved' || !testCase || !isScriptCurrent(script, testCase) || environment.status !== 'Ready') throw new AppError('Script, Test Case hoặc Environment không còn sẵn sàng.', 409);
   adapter.validate({ profile }); const values = await resources.runtimeData(run);
   const directory = path.join(root, String(run._id), `attempt-${run.attempt + 1}`); await fs.mkdir(directory, { recursive: true }); await adapter.prepare({ directory, script: { filename: script.filename, code: resources.substitute(script.code, values, run.engine) }, environment, profile });
   if (run.engine === 'Playwright') {

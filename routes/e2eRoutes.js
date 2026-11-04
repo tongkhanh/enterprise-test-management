@@ -3,6 +3,7 @@ const c = require('../controllers/e2eController');
 const { protect } = require('../middleware/auth');
 const { authorize, authorizeWorkspaceList } = require('../middleware/rbac');
 const { asyncHandler, auditLog } = require('../middleware/error');
+const { uploadRequirement } = require('../middleware/documentUpload');
 router.use(protect);
 router.get('/system-profiles', authorizeWorkspaceList('ai:use'), asyncHandler(c.listProfiles));
 router.post('/system-profiles', authorize('ai:use'), auditLog('CREATE', 'SystemProfile'), asyncHandler(c.createProfile));
@@ -13,6 +14,7 @@ router.post('/use-cases', authorize('ai:use'), auditLog('CREATE', 'UseCase'), as
 router.patch('/use-cases/:id', authorize('ai:use'), auditLog('UPDATE', 'UseCase'), asyncHandler(c.updateUseCase));
 router.patch('/use-cases/:id/decision', authorize('requirement:manage'), auditLog('APPROVE', 'UseCase'), asyncHandler(c.decideUseCase));
 router.post('/system-profiles/:profileId/suggest-use-cases', authorize('ai:use'), auditLog('CREATE', 'UseCase'), asyncHandler(c.suggestUseCases));
+router.post('/system-profiles/:profileId/import-use-cases', authorize('ai:use'), uploadRequirement, auditLog('IMPORT', 'UseCase'), asyncHandler(c.importUseCasesFromDocument));
 router.post('/use-cases/:useCaseId/generate-story', authorize('ai:use'), auditLog('CREATE', 'UserStory'), asyncHandler(c.generateStory));
 router.post('/use-cases/:useCaseId/generate-test-cases', authorize('ai:use'), auditLog('CREATE', 'TestCase'), asyncHandler(c.generateCases));
 // Export reads one concrete E2E artifact.  Do the access check after loading

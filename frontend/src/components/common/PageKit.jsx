@@ -28,7 +28,7 @@ export function Avatar({ user, className }) {
 }
 
 export function SectionTitle({ title, description, action }) {
-  return <div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">{title}</h2>{description && <p className="mt-0.5 text-xs text-slate-400">{description}</p>}</div>{action && <div>{action}</div>}</div>
+  return <div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">{title}</h2>{description && <p className="mt-0.5 text-xs font-medium leading-5 text-slate-600 dark:text-slate-300">{description}</p>}</div>{action && <div>{action}</div>}</div>
 }
 
 export function TextLink({ children }) { return <span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600 dark:text-violet-400">{children}<ArrowUpRight className="h-3 w-3" /></span> }

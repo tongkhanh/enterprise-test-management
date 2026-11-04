@@ -11,6 +11,7 @@ router.get('/test-plans', authorizeWorkspaceList('execution:execute'), asyncHand
 router.post('/test-plans', authorize('execution:manage'), auditLog('CREATE', 'TestPlan'), asyncHandler(c.createPlan));
 router.post('/test-plans/suggest', authorize('execution:manage', 'execution:execute'), auditLog('CREATE', 'TestPlan'), asyncHandler(c.suggestPlan));
 router.post('/test-plans/suggest-from-requirements', authorize('execution:manage', 'execution:execute'), asyncHandler(c.suggestPlanFromRequirements));
+router.post('/test-plans/export-preview', authorize('execution:execute', 'execution:manage', 'report:read'), asyncHandler(c.exportPlanPreview));
 router.patch('/test-plans/:id/decision', authorize('execution:manage'), auditLog('APPROVE', 'TestPlan'), asyncHandler(c.decidePlan));
 router.post('/test-plans/from-approved', authorize('execution:manage', 'execution:execute'), auditLog('CREATE', 'TestPlan'), asyncHandler(c.createPlanFromApproved));
 router.get('/test-plans/:id/export', authorize('execution:execute', 'execution:manage', 'report:read'), asyncHandler(c.exportPlan));

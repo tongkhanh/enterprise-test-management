@@ -41,8 +41,28 @@ const testPlanSchema = new Schema(
       default: 'TestPlan',
       index: true,
     },
+    // Master = toàn Project/Release; Feature = một module/epic hoặc nhóm User
+    // Story liên quan; CycleExecution = tập Test Case thực thi trong một Cycle.
+    // Giữ trường này độc lập với `kind` để phân biệt tài liệu chiến lược và kế
+    // hoạch chạy, thay vì gọi chung tất cả là Test Plan.
+    planLevel: {
+      type: String,
+      enum: ['Master', 'Feature', 'CycleExecution'],
+      default: 'Feature',
+      index: true,
+    },
+    // Ghi tại thời điểm tạo để truy vết nguồn tài liệu, không suy đoán ở UI.
+    origin: {
+      type: String,
+      enum: ['Manual', 'AI', 'Rule', 'Board'],
+      default: null,
+      index: true,
+    },
+    systemProfile: { type: Schema.Types.ObjectId, ref: 'SystemProfile', default: null, index: true },
+    userStories: [{ type: Schema.Types.ObjectId, ref: 'UserStory' }],
     objectives: { type: [String], default: [] },
     testStrategy: { type: String, default: '' },
+    testData: { type: String, default: '' },
     testItems: { type: [String], default: [] },
     outOfScope: { type: [String], default: [] },
     entryCriteria: { type: [String], default: [] },

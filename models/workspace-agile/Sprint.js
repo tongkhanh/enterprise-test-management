@@ -32,6 +32,11 @@ const sprintSchema = new Schema(
     sequence: { type: Number, min: 1, default: 1 },
 
     capacity: { type: Number, min: 0, default: 0 },
+    planningCapacityMinutes: { type: Number, min: 0, default: 0 },
+    planningMaxCases: { type: Number, min: 0, default: 0 },
+    sourceTestPlans: [{ type: Schema.Types.ObjectId, ref: 'TestPlan' }],
+    planningUpdatedAt: { type: Date, default: null },
+    planningUpdatedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
 
     color: { type: String, default: '#6D5DFB', match: /^#[0-9A-F]{6}$/i },
 

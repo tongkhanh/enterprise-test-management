@@ -16,6 +16,12 @@ const useCaseSchema = new Schema({
   businessRules: { type: [String], default: [] }, assumptions: { type: [String], default: [] }, dependencies: { type: [String], default: [] },
   status: { type: String, enum: ['Draft', 'PendingApproval', 'Approved', 'Rejected'], default: 'Draft', index: true },
   reviewNote: { type: String, default: '' }, approvedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null }, approvedAt: { type: Date, default: null },
+  // Nguồn tạo giúp QA truy vết vì sao tài liệu xuất hiện và cần rà soát ở mức nào.
+  origin: { type: String, enum: ['Manual', 'AIProfile', 'ImportedDocument'], default: null, index: true },
+  originDetail: {
+    fileName: { type: String, default: '' },
+    extractionMethod: { type: String, default: '' },
+  },
   evidence: { type: Schema.Types.Mixed, default: {} }, createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
 }, { timestamps: true, collection: 'e2e_use_cases' });
 useCaseSchema.index({ project: 1, systemProfile: 1, status: 1 });

@@ -36,7 +36,6 @@ function ThemeSync() {
 function AuthGuard() {
   const token = useAuthStore((state) => state.token)
   const setUser = useAuthStore((state) => state.setUser)
-  const user = useAuthStore((state) => state.user)
   // Revalidate on every fresh application load.  Workspace roles can change
   // while a user still has a persisted browser session (for example after
   // accepting an invitation from an email link).
@@ -57,6 +56,7 @@ export default function App() {
     <Route path="/register" element={<RegisterPage />} />
     <Route path="/accept-invite" element={<AcceptInvitationPage />} />
     <Route element={<AuthGuard />}>
+      <Route path="board" element={<KanbanBoardPage />} />
       <Route element={<AppLayout />}>
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="projects" element={<ProjectsPage />} />
@@ -68,7 +68,6 @@ export default function App() {
         <Route path="issues" element={<AgileIssuesPage />} />
         <Route path="ai-generator" element={<E2EStudioPage />} />
         <Route path="approvals" element={<ApprovalInboxPage />} />
-        <Route path="board" element={<KanbanBoardPage />} />
         <Route path="automation" element={<AutomationLabPage />} />
         <Route path="bugs" element={<BugTrackingPage />} />
         <Route path="reports" element={<TestReportsPage />} />

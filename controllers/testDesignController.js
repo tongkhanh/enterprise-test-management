@@ -9,6 +9,7 @@ const { assertProjectAccess, getAccessibleProjectIds } = require('../services/pr
 const { upsertApprovedBoardItem, markBoardItemNeedsReview } = require('../services/boardService');
 const { recordProjectActivity } = require('../services/projectActivityService');
 const { getWorkspaceRole } = require('../services/workspaceAccessService');
+const { exportTestCases } = require('../services/artifactExportService');
 
 const accessibleSuiteFilter = async (req) => {
   if (req.query.project) {
@@ -86,6 +87,29 @@ const getCase = async (req, res) => {
   send(res, testCase);
 };
 
+// A QA workbook represents a selected set of cases.  It deliberately accepts
+// IDs rather than a project-wide implicit export so the user sees exactly the
+// cases they chose in the current Profile / Use Case view.
+const exportCases = async (req, res) => {
+  const requestedIds = [...new Set(Array.isArray(req.body?.testCaseIds) ? req.body.testCaseIds.map(String).filter(Boolean) : [])];
+  if (!requestedIds.length || requestedIds.length > 500) throw new AppError('Chọn từ 1 đến 500 Test Case để xuất Excel.', 400);
+  if (requestedIds.some((id) => !mongoose.isValidObjectId(id))) throw new AppError('Danh sách Test Case không hợp lệ.', 400);
+  const cases = await TestCase.find({ _id: { $in: requestedIds } })
+    .populate('testSuite', 'name project')
+    .populate('userStory', 'title acceptanceCriteria')
+    .populate('e2e.useCase', 'name code')
+    .sort({ testCaseId: 1, createdAt: 1 })
+    .lean();
+  if (cases.length !== requestedIds.length) throw new AppError('Có Test Case không tồn tại hoặc không còn khả dụng.', 404);
+  const projectIds = [...new Set(cases.map((item) => String(item.testSuite?.project || '')).filter(Boolean))];
+  if (projectIds.length !== 1) throw new AppError('Một lần xuất chỉ bao gồm Test Case thuộc cùng một Project.', 400);
+  await assertProjectAccess(req.user, projectIds[0]);
+  const output = await exportTestCases(cases);
+  res.setHeader('Content-Type', output.mime);
+  res.setHeader('Content-Disposition', 'attachment; filename="test-cases.xlsx"');
+  res.send(output.buffer);
+};
+
 const createCase = async (req, res) => {
   const suite = await getById(TestSuite, req.body.testSuite);
   await assertProjectAccess(req.user, suite.project);
@@ -99,16 +123,17 @@ const updateCase = async (req, res) => {
   const suite = await getById(TestSuite, testCase.testSuite);
   await assertProjectAccess(req.user, suite.project);
   req._auditBefore = testCase.toObject();
+  if (testCase.e2e?.systemProfile && testCase.status === 'NeedsReview') throw new AppError('Test Case đang chờ duyệt, không thể chỉnh sửa.', 409);
   const editable = [
     'title', 'objective', 'description', 'preconditions', 'postconditions', 'testDesignTechniques', 'priority', 'type', 'estimatedTime',
     'testSteps', 'tags', 'testSuite', 'userStory', 'sharedTestData', 'targetUrl',
     'storyCoverage', 'generatedTestData', 'e2e',
   ];
   editable.forEach((key) => { if (req.body[key] !== undefined) testCase[key] = req.body[key]; });
-  if (['Approved', 'Active'].includes(testCase.status)) testCase.status = 'NeedsReview';
+  if (['Approved', 'Active'].includes(testCase.status)) testCase.status = testCase.e2e?.systemProfile ? 'Draft' : 'NeedsReview';
   else if (testCase.status === 'Rejected') testCase.status = 'Draft';
   await testCase.save();
-  if (testCase.status === 'NeedsReview') await markBoardItemNeedsReview({ testCaseId: testCase._id, actor: req.user._id });
+  if (testCase.status === 'NeedsReview' || (testCase.e2e?.systemProfile && ['Approved', 'Active'].includes(req._auditBefore.status))) await markBoardItemNeedsReview({ testCaseId: testCase._id, actor: req.user._id });
   send(res, testCase);
 };
 
@@ -246,7 +271,7 @@ const decideReview = async (req, res) => {
 
 module.exports = {
   listSuites, createSuite, updateSuite, deleteSuite,
-  listCases, getCase, createCase, updateCase, deleteCase,
+  listCases, getCase, exportCases, createCase, updateCase, deleteCase,
   listData, createData, updateData, deleteData,
   listReviews, submitReview, decideReview,
 };

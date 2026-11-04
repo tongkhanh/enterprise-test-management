@@ -1,0 +1,11 @@
+import { Link } from 'react-router-dom'
+
+export const statusLabel = { Backlog: 'Backlog', Todo: 'Todo', InProgress: 'In Progress', InReview: 'In Review', Done: 'Done' }
+export default function CycleCaseSummary({ cycle, project }) {
+  const summary = cycle.planningSummary || { total: 0, estimatedMinutes: 0, byStatus: {} }
+  return <div className="mt-4 border-t border-slate-200 pt-3 dark:border-slate-700">
+    <div className="flex flex-wrap items-center justify-between gap-2 text-xs"><p><b>{summary.total}</b> Test Case · <b>{summary.estimatedMinutes}</b> phút ước tính{cycle.planningCapacityMinutes > 0 && ` / ${cycle.planningCapacityMinutes} phút ngân sách`}{summary.unknownEstimates > 0 && ` · ${summary.unknownEstimates} case chưa ước tính`}</p><Link className="font-semibold text-violet-700 underline dark:text-violet-300" to={`/board?project=${project}&cycle=${cycle._id}`}>Mở Board của Cycle →</Link></div>
+    <div className="mt-2 flex flex-wrap gap-2">{Object.entries(statusLabel).map(([key, label]) => <span key={key} className="rounded-md bg-slate-100 px-2 py-1 text-[11px] dark:bg-slate-800">{label}: <b>{summary.byStatus?.[key] || 0}</b></span>)}</div>
+    {summary.total > 0 && <details className="mt-3"><summary className="cursor-pointer text-xs font-semibold">Xem Test Case, người phụ trách và trạng thái</summary><div className="mt-2 overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="border-b"><th className="p-2">Test Case</th><th className="p-2">Trạng thái</th><th className="p-2">Phụ trách</th><th className="p-2">Phút</th></tr></thead><tbody>{(cycle.plannedCases || []).map((item) => <tr key={item._id} className="border-b border-slate-100 align-top dark:border-slate-800"><td className="p-2">{item.testCase?.testCaseId} · {item.testCase?.title}{item.reviewState !== 'Approved' && <p className="text-amber-700">Cần duyệt lại</p>}{item.sourceTestPlan?.name && <p className="mt-1 text-slate-500">{item.sourceTestPlan.name}</p>}</td><td className="whitespace-nowrap p-2">{statusLabel[item.status] || item.status}</td><td className="p-2">{item.assignee?.fullName || 'Chưa phân công'}</td><td className="p-2">{item.estimate || item.testCase?.estimatedTime || 'Chưa có'}</td></tr>)}</tbody></table></div></details>}
+  </div>
+}

@@ -12,9 +12,13 @@ const run = promisify(execFile);
 const docker = new Docker(process.env.DOCKER_HOST ? { host: process.env.DOCKER_HOST } : undefined);
 const workRoot = path.resolve(process.env.ENVIRONMENT_WORK_ROOT || path.join(__dirname, '..', 'storage', 'environment-workspaces'));
 const artifactRoot = path.resolve(path.join(__dirname, '..', 'storage', 'environment-artifacts'));
+const generatedNodeDockerfile = 'ETMS.generated.Node.Dockerfile';
 const command = (file, args, options = {}) => run(file, args, { timeout: options.timeout || 120000, maxBuffer: 20 * 1024 * 1024, ...options });
-const safeLog = (value) => String(value || '').replace(/(Bearer|token|password|secret)\s+[^\s]+/gi, '$1 ***').slice(-450000);
+const safeLog = (value) => String(value || '').replace(/(Authorization:\s*Basic\s+|Bearer|token|password|secret)\s*[^\s]+/gi, '$1***').slice(-450000);
 const append = async (build, text) => { build.logs = `${build.logs || ''}${safeLog(text)}\n`.slice(-450000); await build.save({ validateBeforeSave: false }); };
+// GitHub's smart-HTTP Git endpoint expects Basic authentication. Keep the PAT
+// only in Git's in-memory request header; never place it in the clone URL.
+const githubGitAuthConfig = (token) => `http.extraHeader=Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
 
 async function dockerStatus() {
   try { const info = await docker.info(); return { available: true, version: (await docker.version()).Version, containers: info.Containers, images: info.Images }; }
@@ -38,6 +42,15 @@ async function detectRuntime(dir, preferred = {}) {
   const dockerfile = preferred.dockerfile || 'Dockerfile';
   if (await exists(dockerfile)) return { mode: 'dockerfile', dockerfile, context: preferred.context || '.' };
   throw new Error('Không tìm thấy Dockerfile hoặc Docker Compose trong repository.');
+}
+async function createGeneratedNodeDockerfile(dir) {
+  let pkg;
+  try { pkg = JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8')); } catch { throw new Error('Không thể tạo cấu hình Node.js tạm: repository không có package.json hợp lệ.'); }
+  const scripts = pkg.scripts || {}; const command = scripts.start ? 'npm run start -- --host 0.0.0.0' : scripts.dev ? 'npm run dev -- --host 0.0.0.0' : '';
+  if (!command) throw new Error('Không thể tạo cấu hình Node.js tạm: package.json cần có script start hoặc dev.');
+  const source = `FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev || npm install\nCOPY . .\nENV HOST=0.0.0.0\nEXPOSE 3000\nCMD ["sh", "-c", "${command}"]\n`;
+  await fs.writeFile(path.join(dir, generatedNodeDockerfile), source, { mode: 0o600 });
+  return generatedNodeDockerfile;
 }
 async function healthCheck(url, build, timeoutMs = 90000) {
   const started = Date.now(); let lastError = '';
@@ -71,12 +84,13 @@ async function provisionBuild(buildId, progress = async () => {}) {
       const integration = await IntegrationConnection.findById(env.integration).select('+credentialCiphertext'); if (!integration) throw new Error('Thiếu GitHub integration.');
       const token = decryptCredential(integration.credentialCiphertext); dir = path.join(workRoot, String(build._id)); await fs.mkdir(workRoot, { recursive: true }); await fs.rm(dir, { recursive: true, force: true });
       build.status = 'Cloning'; build.progress = 10; await build.save(); await progress(10);
-      const authArg = `http.extraHeader=AUTHORIZATION: bearer ${token}`;
+      const authArg = githubGitAuthConfig(token);
       const cloneArgs = build.pullRequestNumber ? ['-c', authArg, 'clone', '--depth', '50', env.repository.cloneUrl, dir] : ['-c', authArg, 'clone', '--depth', '50', '--branch', build.ref || 'main', env.repository.cloneUrl, dir];
       const clone = await command('git', cloneArgs, { timeout: 240000 }); await append(build, clone.stdout || clone.stderr);
       if (build.pullRequestNumber) { await command('git', ['-c', authArg, 'fetch', 'origin', `pull/${build.pullRequestNumber}/head`], { cwd: dir }); await command('git', ['checkout', 'FETCH_HEAD'], { cwd: dir }); }
       else if (build.commitSha) await command('git', ['checkout', build.commitSha], { cwd: dir });
       const actualSha = (await command('git', ['rev-parse', 'HEAD'], { cwd: dir })).stdout.trim(); build.commitSha = actualSha; env.repository.commitSha = actualSha;
+      if (env.docker?.dockerfile === generatedNodeDockerfile) { await createGeneratedNodeDockerfile(dir); await append(build, 'Generated temporary Node.js Dockerfile from package.json.'); }
       const runtime = await detectRuntime(dir, env.docker || {}); await append(build, `Detected ${runtime.mode}: ${runtime.composeFile || runtime.dockerfile}`);
       build.status = 'Building'; build.progress = 30; await build.save(); await progress(30);
       const name = `etms-${String(env._id).toLowerCase()}`; const networkName = `${name}-net`;
@@ -107,4 +121,4 @@ async function provisionBuild(buildId, progress = async () => {}) {
 }
 async function cleanupEnvironment(environmentId) { const env = await TestEnvironment.findById(environmentId); if (!env) return { removed: false }; const projectName = `etms-${String(env._id).toLowerCase()}`; if (env.docker?.containerId) await docker.getContainer(env.docker.containerId).remove({ force: true, v: true }).catch(() => null); const composeContainers = await docker.listContainers({ all: true, filters: { label: [`com.docker.compose.project=${projectName}`] } }).catch(() => []); await Promise.all(composeContainers.map((x) => docker.getContainer(x.Id).remove({ force: true, v: true }).catch(() => null))); if (env.docker?.networkName) await docker.getNetwork(env.docker.networkName).remove().catch(() => null); const composeNetworks = await docker.listNetworks({ filters: { label: [`com.docker.compose.project=${projectName}`] } }).catch(() => []); await Promise.all(composeNetworks.map((x) => docker.getNetwork(x.Id).remove().catch(() => null))); if (env.docker?.imageTag) await docker.getImage(env.docker.imageTag).remove({ force: true }).catch(() => null); env.status = 'Stopped'; if (env.kind !== 'StaticUrl') env.targetUrl = ''; await env.save(); return { removed: true }; }
 const enqueueProvision = async (environmentId, requestedBy) => createEnvironmentBuild({ environment: environmentId, requestedBy });
-module.exports = { dockerStatus, githubRequest, detectRuntime, createEnvironmentBuild, provisionBuild, cleanupEnvironment, enqueueProvision, stopEnvironment: cleanupEnvironment };
+module.exports = { dockerStatus, githubRequest, detectRuntime, githubGitAuthConfig, createGeneratedNodeDockerfile, createEnvironmentBuild, provisionBuild, cleanupEnvironment, enqueueProvision, stopEnvironment: cleanupEnvironment };

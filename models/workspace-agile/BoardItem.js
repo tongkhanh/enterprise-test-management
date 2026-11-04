@@ -24,6 +24,7 @@ const boardItemSchema = new mongoose.Schema({
   estimate: { type: Number, min: 0, default: 0 },
   dueDate: { type: Date, default: null },
   testPlan: { type: mongoose.Schema.Types.ObjectId, ref: 'TestPlan', default: null },
+  sourceTestPlan: { type: mongoose.Schema.Types.ObjectId, ref: 'TestPlan', default: null },
   testRun: { type: mongoose.Schema.Types.ObjectId, ref: 'TestRun', default: null },
   isArchived: { type: Boolean, default: false },
   archivedReason: { type: String, default: null },
