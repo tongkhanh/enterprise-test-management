@@ -24,20 +24,90 @@ frontend/
 
 Stack frontend: React 19, Vite, Tailwind CSS, Radix/shadcn-style components, Zustand, TanStack Query, Axios và React Router.
 
-## Khởi chạy
+## Khởi chạy từ bản clone mới
+
+### 1. Chuẩn bị
+
+- Git và Node.js 22 LTS (khuyến nghị 22.16 trở lên), kèm npm. Kiểm tra bằng `git --version`, `node --version` và `npm --version`.
+- Một MongoDB đang chạy. Có thể dùng MongoDB cục bộ hoặc MongoDB Atlas.
+- Để chạy theo cấu hình mặc định, dành cổng `5000` cho backend và `5173` cho frontend ở chế độ phát triển.
+
+### 2. Clone và cài dependencies
+
+```sh
+git clone https://github.com/tongkhanh/enterprise-test-management.git
+cd enterprise-test-management
+npm ci
+npm --prefix frontend ci
+```
+
+Tạo file `.env` ở thư mục gốc. Trên Windows PowerShell:
 
 ```powershell
-npm install
 Copy-Item .env.example .env
+```
+
+Trên macOS hoặc Linux:
+
+```sh
+cp .env.example .env
+```
+
+### 3. Cấu hình database và đăng nhập
+
+Mở `.env` và chỉnh các biến sau:
+
+| Biến | Giá trị |
+| --- | --- |
+| `MONGODB_URI` | Với MongoDB cục bộ, dùng `mongodb://127.0.0.1:27017/enterprise_test_mgmt` sau khi khởi động MongoDB. Với Atlas, dùng chuỗi kết nối của cluster và điền thông tin người dùng database. |
+| `MONGODB_DB_NAME` | Giữ `enterprise_test_mgmt` hoặc chọn tên database riêng. |
+| `JWT_SECRET` | Tạo giá trị riêng bằng lệnh bên dưới và dán kết quả vào `.env`. |
+| `PORT` | Giữ `5000` để khớp với proxy của Vite khi chạy dev. |
+
+```sh
+node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"
+```
+
+Với Atlas, thêm IP máy chạy backend vào danh sách truy cập mạng và cấp cho người dùng database quyền đọc/ghi database đã chọn. Giữ `.env` và các khóa truy cập trên máy của bạn.
+
+### 4. Build và chạy
+
+```sh
+npm run frontend:build
 npm run check
 npm start
 ```
 
-Khi phát triển, chỉ chạy một lần `npm run dev`. Nodemon tự khởi động lại backend mỗi khi code thay đổi; file giao diện được trình duyệt tải lại ngay khi refresh.
+Giữ terminal chạy và mở [API health](http://localhost:5000/api/v1/health). Backend đã khởi động khi endpoint trả về JSON có `"success": true`.
 
-Mở `http://localhost:5000`. Tài khoản đăng ký đầu tiên tự nhận vai trò `Admin`; các tài khoản tiếp theo nhận `Guest`. Giao diện lưu JWT trong Local Storage và tự gắn header `Authorization: Bearer ...` vào mỗi request.
+Mở [Studio](http://localhost:5000/studio/), chọn **Đăng ký bằng email**, tạo tài khoản rồi đăng nhập. Tài khoản đầu tiên trên database mới nhận vai trò quản trị hệ thống (`System_Admin`). Các tài khoản tiếp theo nhận vai trò người dùng thông thường. Database mới bắt đầu với dữ liệu trống, nên hãy tạo workspace và project để dùng các tính năng quản lý kiểm thử.
 
-Các biến bắt buộc để chạy chức năng nền tảng là `MONGODB_URI` và `JWT_SECRET`. AI Core mặc định dùng Gemini 3.5 Flash Free Tier qua Interactions API và cần `GEMINI_API_KEY`; `OPENAI_API_KEY` không còn bắt buộc. Gửi báo cáo cần cấu hình SMTP. Webhook CI/CD sẽ kiểm tra header `x-webhook-secret` khi `AUTOMATION_WEBHOOK_SECRET` được đặt.
+Khi cần sửa code và xem thay đổi ngay, dừng `npm start`, rồi chạy:
+
+```sh
+npm run dev
+```
+
+Lệnh này chạy cả Express và Vite. Mở [Studio dev](http://localhost:5173/studio/).
+
+### 5. Bật các tính năng tùy chọn
+
+- **AI Core** cần `GEMINI_API_KEY` khi dùng cấu hình Gemini mặc định. Nếu chuyển sang OpenAI, cấu hình provider, model và `OPENAI_API_KEY` tương ứng. Khởi động lại backend sau khi sửa `.env`.
+- **Web Analyzer và Playwright** cần trình duyệt Playwright trên máy chạy backend hoặc worker. Chạy `npx playwright install chromium` từ thư mục gốc. Cài thêm `firefox` hoặc `webkit` nếu chọn các trình duyệt đó. Trên Linux, dùng `npx playwright install --with-deps chromium` nếu máy thiếu thư viện hệ thống.
+- **Docker, Redis và worker** xem [Automation Lab và Docker](#automation-lab-và-docker). Chạy cơ bản bằng npm có thể dùng hàng đợi trong tiến trình khi để trống `REDIS_URL`.
+- **Gửi báo cáo qua email** cần cấu hình SMTP theo `.env.example`. Webhook CI/CD kiểm tra header `x-webhook-secret` khi đặt `AUTOMATION_WEBHOOK_SECRET`.
+
+### Xử lý lỗi thường gặp
+
+| Hiện tượng | Cách kiểm tra |
+| --- | --- |
+| Backend thoát với lỗi kết nối MongoDB | Kiểm tra `.env` nằm ở thư mục gốc và URI đã được thay bằng giá trị thật. Với MongoDB cục bộ, kiểm tra dịch vụ đang chạy. Với Atlas, kiểm tra thông tin xác thực và danh sách IP được phép. |
+| Vite báo thiếu package | Chạy `npm --prefix frontend ci` từ thư mục gốc. |
+| PowerShell chặn `npm.ps1` | Dùng `npm.cmd` thay cho `npm` trong các lệnh trên. |
+| Cổng 5000 hoặc 5173 đã được sử dụng | Dừng tiến trình đang chiếm cổng, rồi chạy lại ứng dụng. |
+| Studio dev mở được nhưng API báo lỗi kết nối | Kiểm tra backend tại `http://localhost:5000/api/v1/health`. Nếu đổi cổng backend, cập nhật proxy trong `frontend/vite.config.js` cho khớp. |
+| Studio trên cổng 5000 hiển thị giao diện cũ | Chạy lại `npm run frontend:build` rồi tải lại trang. |
+| Playwright báo thiếu trình duyệt | Cài trình duyệt bằng lệnh ở bước 5 trên máy thực thi job. |
 
 ## Cấu trúc
 
@@ -122,10 +192,10 @@ Mở menu **Automation Lab** sau khi đăng nhập:
 3. Repository đích phải có `Dockerfile`, ứng dụng trong container phải lắng nghe trên port đã chọn.
 4. Chọn Automated Test Case và sinh script Playwright, Selenium, Cypress, WebdriverIO hoặc Robot Framework.
 
-Nhánh GitHub + Docker cần Git và Docker Desktop đang chạy trên máy backend. Docker được gọi trực tiếp, container bị giới hạn CPU/RAM/PID và chỉ publish port trên `127.0.0.1`. Để đóng gói chính ETMS:
+Nhánh GitHub + Docker cần Git và Docker Desktop đang chạy trên máy backend. Docker được gọi trực tiếp, container bị giới hạn CPU/RAM/PID và chỉ publish port trên `127.0.0.1`. Để chạy chính ETMS bằng Docker, tạo và cấu hình file `.env` theo các bước trên trước. Compose chạy Redis và các worker cùng ứng dụng. MongoDB cần được cung cấp riêng qua Atlas hoặc một địa chỉ mà container truy cập được. Nếu MongoDB chạy trên máy chủ Docker Desktop, dùng `host.docker.internal` trong URI thay cho `127.0.0.1`.
 
 ```powershell
-docker compose up --build
+docker compose -f docker-compose.yml up --build
 ```
 
 Compose mount Docker socket để ETMS có thể dựng container ứng dụng đích. Đây là quyền mạnh; chỉ cấp cho worker ETMS đáng tin cậy và không public API quản trị ra Internet nếu chưa có reverse proxy/allowlist.
@@ -140,7 +210,7 @@ Automation Run → etms-automation → Automation Worker → Playwright/Selenium
 Jira outbound → etms-integration → Integration Worker → retry/backoff
 ```
 
-`docker compose up --build` tự chạy Redis, API và cả ba worker. Khi phát triển không có Redis, API dùng fallback trong process cho Environment/Automation/Integration. Muốn chạy worker riêng trên máy:
+`docker compose -f docker-compose.yml up --build` tự chạy Redis, API và cả ba worker. Khi phát triển không có Redis, API dùng fallback trong process cho Environment/Automation/Integration. Muốn chạy worker riêng trên máy:
 
 ```powershell
 $env:REDIS_URL="redis://127.0.0.1:6379"
