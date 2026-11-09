@@ -411,14 +411,26 @@ const acceptInvitationById = async (req, res) => {
 const listIntegrations = async (req, res) => {
   const allowed = req.allowedProjectIds || await accessibleProjectIds(req.user);
   if (allowed && req.query.project && !allowed.some((id) => String(id) === String(req.query.project))) throw new AppError('Bạn không thuộc Project này.', 403);
-  const baseFilter = {
-    ...(allowed ? { $or: [{ project: { $in: allowed } }, { project: null, workspace: req.user.workspace }] } : {}),
-    ...(req.query.project ? { project: req.query.project } : {}),
-  };
+  if (req.query.workspace && req.allowedWorkspaceIds && !req.allowedWorkspaceIds.some((id) => String(id) === String(req.query.workspace))) throw new AppError('Bạn không thuộc Workspace này.', 403);
+  let baseFilter = req.allowedWorkspaceIds ? { workspace: { $in: req.allowedWorkspaceIds } } : {};
+  if (req.query.project) {
+    const project = await getById(Project, req.query.project);
+    if (req.query.workspace && String(req.query.workspace) !== String(project.workspace)) throw new AppError('Project không thuộc Workspace đã chọn.', 400);
+    baseFilter = {
+      workspace: project.workspace,
+      $or: [
+        { provider: 'GitHub' },
+        { project: project._id },
+        { project: null },
+      ],
+    };
+  } else if (req.query.workspace) {
+    baseFilter = { workspace: req.query.workspace };
+  }
   const result = await list(IntegrationConnection, req, {
     baseFilter,
-    filters: ['provider', 'status', 'workspace'],
-    populate: [{ path: 'project', select: 'name key' }, { path: 'createdBy', select: 'fullName email' }],
+    filters: ['provider', 'status'],
+    populate: [{ path: 'workspace', select: 'name slug' }, { path: 'project', select: 'name key workspace' }, { path: 'createdBy', select: 'fullName email' }],
   });
   send(res, result.data, 200, { pagination: result.pagination });
 };
@@ -444,7 +456,9 @@ const createIntegration = async (req, res) => {
     provider,
     displayName: req.body.displayName || `${provider} integration`,
     workspace: project?.workspace || req.body.workspace,
-    project: project?._id || null,
+    // GitHub credentials are shared by all Projects in the Workspace. Keep
+    // Jira/Linear project-scoped because their issue mappings are project data.
+    project: provider === 'GitHub' ? null : (project?._id || null),
     baseUrl: req.body.baseUrl || '',
     externalProjectKey: req.body.externalProjectKey || '',
     settings: req.body.settings || {},

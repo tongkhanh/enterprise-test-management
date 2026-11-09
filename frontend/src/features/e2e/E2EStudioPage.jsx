@@ -1,5 +1,5 @@
 /* eslint-disable no-unreachable */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useInfiniteQuery,
   useMutation,
@@ -119,17 +119,20 @@ const profileToForm = (item) => ({
   cleanupUrl: item?.hooks?.cleanupUrl || "",
 });
 const workflowStepIds = new Set([
-  "profile",
+  "requirement",
+  "evidence",
   "usecase",
   "story",
   "plan",
   "suite",
   "testcase",
   "review",
+  "agile",
   "runtime",
   "automation",
   "execution",
   "result",
+  "documents",
 ]);
 
 export default function E2EStudioPage() {
@@ -137,15 +140,19 @@ export default function E2EStudioPage() {
   const [search] = useSearchParams();
   const user = useAuthStore((state) => state.user);
   const [project, setProject] = useState("");
+  const ensuredScopeProject = useRef("");
   const [activeStep, setActiveStep] = useState(() =>
-    workflowStepIds.has(search.get("step")) ? search.get("step") : "profile",
+    workflowStepIds.has(search.get("step"))
+      ? search.get("step")
+      : search.get("mode") === "github"
+        ? "evidence"
+        : "requirement",
   );
   const [profile, setProfile] = useState(emptyProfile);
   const [profileEditor, setProfileEditor] = useState("create");
   const [profileMode, setProfileMode] = useState("SystemProfile");
   const [selectedProfile, setSelectedProfile] = useState(
-    () =>
-      search.get("profile") || (search.get("mode") === "github" ? "" : null),
+    () => search.get("profile") || null,
   );
   const [useCase, setUseCase] = useState(blankUseCase);
   const [caseTarget, setCaseTarget] = useState({
@@ -174,6 +181,9 @@ export default function E2EStudioPage() {
   const requestedPaths = search.get("paths") || "";
   const activeProject =
     project || search.get("project") || projects.data?.[0]?._id || "";
+  const activeProjectRecord = (projects.data || []).find(
+    (item) => String(item._id) === String(activeProject),
+  );
   const environments = useQuery({
     queryKey: ["e2e-environments", activeProject],
     queryFn: () => automationLabApi.environments(activeProject),
@@ -185,7 +195,10 @@ export default function E2EStudioPage() {
   });
   const integrations = useQuery({
     queryKey: ["integrations", activeProject],
-    queryFn: () => workspaceApi.integrations(activeProject),
+    // Fetch the Workspace catalogue and filter client-side. This keeps legacy
+    // project-bound GitHub records reusable while older running API processes
+    // are being restarted after the Workspace-scope rollout.
+    queryFn: () => workspaceApi.integrations(),
     enabled: Boolean(activeProject),
   });
   const profiles = useQuery({
@@ -193,6 +206,17 @@ export default function E2EStudioPage() {
     queryFn: () => e2eApi.profiles(activeProject),
     enabled: Boolean(activeProject),
   });
+  const ensureTestScope = useMutation({
+    mutationFn: () => e2eApi.ensureProfile(activeProject),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["system-profiles", activeProject] }),
+    onError: (error) => toast.error(error.message),
+  });
+  useEffect(() => {
+    if (activeProject && profiles.isSuccess && !(profiles.data || []).length && !ensureTestScope.isPending && ensuredScopeProject.current !== activeProject) {
+      ensuredScopeProject.current = activeProject;
+      ensureTestScope.mutate();
+    }
+  }, [activeProject, profiles.isSuccess, profiles.data, ensureTestScope.isPending]);
   const currentProfile =
     selectedProfile === null
       ? (profiles.data || [])[0]
@@ -200,6 +224,11 @@ export default function E2EStudioPage() {
   const useCases = useQuery({
     queryKey: ["use-cases", activeProject, currentProfile?._id],
     queryFn: () => e2eApi.useCases(activeProject, currentProfile?._id),
+    enabled: Boolean(activeProject && currentProfile?._id),
+  });
+  const requirements = useQuery({
+    queryKey: ["e2e-requirements", activeProject, currentProfile?._id],
+    queryFn: () => e2eApi.requirements(currentProfile?._id),
     enabled: Boolean(activeProject && currentProfile?._id),
   });
   const stories = useQuery({
@@ -230,9 +259,13 @@ export default function E2EStudioPage() {
   const github = useMemo(
     () =>
       (integrations.data || []).filter(
-        (item) => item.provider === "GitHub" && item.status === "Connected",
+        (item) =>
+          item.provider === "GitHub" &&
+          item.status === "Connected" &&
+          String(item.workspace?._id || item.workspace || "") ===
+            String(activeProjectRecord?.workspace?._id || activeProjectRecord?.workspace || ""),
       ),
-    [integrations.data],
+    [integrations.data, activeProjectRecord?.workspace],
   );
   const currentCases = (e2eCases.data || []).filter(
     (item) =>
@@ -252,8 +285,10 @@ export default function E2EStudioPage() {
   );
   useEffect(() => {
     if (search.get("mode") === "github") {
-      setSelectedProfile("");
-      setProfileEditor("create");
+      // The QA workflow keeps one Project scope/profile and attaches GitHub
+      // evidence to it. Selecting the default profile lets the evidence step
+      // open immediately after returning from Settings.
+      setSelectedProfile(search.get("profile") || null);
       setProfileMode("GitHubE2E");
       if (requestedProfileName || requestedRepository)
         setProfile((current) => ({
@@ -344,6 +379,7 @@ export default function E2EStudioPage() {
     mutationFn: () =>
       e2eApi.analyzeGithub({
         projectId: activeProject,
+        systemProfile: currentProfile?._id || undefined,
         name: profile.name || `GitHub E2E · ${git.repository}`,
         environment: profile.environment || null,
         ...git,
@@ -375,10 +411,11 @@ export default function E2EStudioPage() {
     onError: (error) => toast.error(error.message),
   });
   const addUseCase = useMutation({
-    mutationFn: () =>
+    mutationFn: (reference = "") =>
       e2eApi.createUseCase({
         ...blankUseCase,
         ...useCase,
+        reference,
         systemProfile: currentProfile._id,
         stakeholders: lines(useCase.stakeholders),
         specialRequirements: lines(useCase.specialRequirements),
@@ -418,7 +455,6 @@ export default function E2EStudioPage() {
           ? "Gemini đã hết quota: đã tạo User Story E2E nháp"
           : "Gemini đã tạo User Story E2E nháp để bạn chỉnh sửa",
       );
-      setActiveStep("story");
       qc.invalidateQueries({ queryKey: ["e2e-stories"] });
     },
     onError: (error) => toast.error(error.message),
@@ -437,7 +473,15 @@ export default function E2EStudioPage() {
       return requirementApi.submitApproval(id);
     },
     onSuccess: () => {
-      toast.success("Đã gửi User Story cho QA Manager duyệt");
+      toast.success("Đã gửi User Story để PO/BA xác nhận nghiệp vụ");
+      qc.invalidateQueries({ queryKey: ["e2e-stories"] });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const qaReviewStory = useMutation({
+    mutationFn: ({ id, decision, reviewNote }) => requirementApi.decideQaTestability(id, { decision, reviewNote }),
+    onSuccess: (_, variables) => {
+      toast.success(variables.decision === "Testable" ? "QA đã xác nhận User Story có thể thiết kế kiểm thử" : "QA đã yêu cầu làm rõ User Story");
       qc.invalidateQueries({ queryKey: ["e2e-stories"] });
     },
     onError: (error) => toast.error(error.message),
@@ -482,8 +526,8 @@ export default function E2EStudioPage() {
     onError: (error) => toast.error(error.message),
   });
   const generateCases = useMutation({
-    mutationFn: () =>
-      e2eApi.generateCases(caseTarget.useCaseId, {
+    mutationFn: () => {
+      const body = {
         userStoryId: caseTarget.storyId,
         testSuiteId: caseTarget.suiteId,
         testPlanId: (plans.data || []).find(
@@ -496,7 +540,14 @@ export default function E2EStudioPage() {
               (id) => String(id._id || id) === String(caseTarget.storyId),
             ),
         )?._id,
-      }),
+      };
+      return caseTarget.useCaseId
+        ? e2eApi.generateCases(caseTarget.useCaseId, body)
+        : e2eApi.generateCasesFromStory(caseTarget.storyId, {
+            testSuiteId: body.testSuiteId,
+            testPlanId: body.testPlanId,
+          });
+    },
     onSuccess: (result) => {
       toast.success(
         result._e2eFallback
@@ -644,6 +695,7 @@ export default function E2EStudioPage() {
         newProfile,
         selectProfile,
         useCases,
+        requirements,
         useCase,
         setUseCase,
         suggestUseCases,
@@ -654,6 +706,7 @@ export default function E2EStudioPage() {
         user,
         updateStory,
         submitStory,
+        qaReviewStory,
         suites,
         caseTarget,
         setCaseTarget,
@@ -1758,6 +1811,7 @@ function StoryDraftCard({
   currentUser,
   updateStory,
   submitStory,
+  qaReviewStory,
   download,
 }) {
   const [open, setOpen] = useState(false);
@@ -1806,12 +1860,17 @@ function StoryDraftCard({
               {item.approvalStatus}
             </Badge>
             {item.source === "AI" && <Badge tone="purple">AI suggestion</Badge>}
+            {item.source === "ImportedDocument" && <Badge tone="blue">Tài liệu User Story</Badge>}
+            <Badge tone={item.businessApprovalStatus === "BusinessConfirmed" ? "green" : item.businessApprovalStatus === "BusinessRejected" ? "red" : item.businessApprovalStatus === "PendingBusinessConfirmation" ? "amber" : "slate"}>Nghiệp vụ: {item.businessApprovalStatus === "BusinessConfirmed" ? "đã xác nhận" : item.businessApprovalStatus === "PendingBusinessConfirmation" ? "chờ PO/BA" : item.businessApprovalStatus === "BusinessRejected" ? "từ chối" : "chưa xác nhận"}</Badge>
+            <Badge tone={item.qaTestabilityStatus === "Testable" ? "green" : item.qaTestabilityStatus === "NeedsClarification" ? "amber" : "slate"}>QA: {item.qaTestabilityStatus === "Testable" ? "có thể test" : item.qaTestabilityStatus === "NeedsClarification" ? "cần làm rõ" : "chưa rà soát"}</Badge>
           </div>
           <span className="text-xs font-semibold text-violet-600">
             Mở để xem / sửa
           </span>
         </div>
         <h3 className="mt-3 text-sm font-semibold">{item.title}</h3>
+        {item.sourceDocument?.fileName && <p className="mt-1 text-[11px] text-slate-400">Nguồn: {item.sourceDocument.fileName}</p>}
+        {(item.externalReference?.externalId || item.externalReference?.version || item.externalReference?.effectiveAt) && <p className="mt-1 text-[11px] text-slate-400">{item.externalReference?.system || 'Nguồn ngoài'}{item.externalReference?.externalId ? ` · ${item.externalReference.externalId}` : ''}{item.externalReference?.version ? ` · ${item.externalReference.version}` : ''}{item.externalReference?.effectiveAt ? ` · hiệu lực ${new Date(item.externalReference.effectiveAt).toLocaleDateString('vi-VN')}` : ''}</p>}
         <p className="mt-1 line-clamp-2 text-sm leading-6 text-slate-500">
           {item.description}
         </p>
@@ -1910,17 +1969,7 @@ function StoryDraftCard({
                 >
                   Lưu nháp
                 </Button>
-                <Button
-                  disabled={
-                    invalid || updateStory.isPending || submitStory.isPending
-                  }
-                  onClick={() =>
-                    submitStory.mutate({ id: item._id, body: body() })
-                  }
-                >
-                  <Check className="h-4 w-4" />
-                  Gửi QA Manager duyệt
-                </Button>
+                {item.businessApprovalStatus === "BusinessConfirmed" ? <><Button variant="outline" disabled={invalid || qaReviewStory?.isPending} onClick={() => { const reviewNote = window.prompt("Nội dung QA cần PO/BA làm rõ:"); if (reviewNote?.trim()) qaReviewStory?.mutate({ id: item._id, decision: "NeedsClarification", reviewNote }) }}>QA yêu cầu làm rõ</Button><Button disabled={invalid || qaReviewStory?.isPending} onClick={() => qaReviewStory?.mutate({ id: item._id, decision: "Testable", reviewNote: "QA đã rà soát mô tả và Acceptance Criteria; User Story đủ điều kiện thiết kế kiểm thử." })}><Check className="h-4 w-4" />QA xác nhận có thể test</Button></> : <Button disabled={invalid || updateStory.isPending || submitStory.isPending || item.businessApprovalStatus === "PendingBusinessConfirmation"} onClick={() => submitStory.mutate({ id: item._id, body: body() })}><Check className="h-4 w-4" />{item.businessApprovalStatus === "PendingBusinessConfirmation" ? "Đang chờ PO/BA" : "Gửi PO/BA xác nhận"}</Button>}
               </div>
             </div>
           </div>
@@ -1984,27 +2033,24 @@ function TestCaseStep({
     (item) => item.status === "Approved",
   );
   const approvedStories = currentStories.filter(
-    (item) =>
-      item.approvalStatus === "Approved" &&
-      (!item.e2e?.useCase ||
-        String(item.e2e.useCase?._id || item.e2e.useCase) ===
-          String(caseTarget.useCaseId)),
+    (item) => item.approvalStatus === "Approved" &&
+      (!caseTarget.useCaseId || String(item.e2e?.useCase?._id || item.e2e?.useCase || "") === String(caseTarget.useCaseId)),
   );
   const suiteItems = suites.data || [];
   const validSelection =
-    approvedUseCases.some((item) => item._id === caseTarget.useCaseId) &&
     approvedStories.some((item) => item._id === caseTarget.storyId) &&
-    suiteItems.some((item) => item._id === caseTarget.suiteId);
+    suiteItems.some((item) => item._id === caseTarget.suiteId) &&
+    (!caseTarget.useCaseId || approvedUseCases.some((item) => item._id === caseTarget.useCaseId));
   const projectId = currentProfile.project?._id || currentProfile.project;
   return (
     <Card className="p-5">
       <SectionTitle
         title="Bộ kiểm thử E2E"
-        description="Chọn hành trình, yêu cầu và nhóm kiểm thử để sinh các kịch bản trong đúng phạm vi."
+        description="User Story đã được PO/BA và QA xác nhận là đầu vào bắt buộc. Use Case chỉ là ngữ cảnh tùy chọn khi Story thuộc một hành trình."
       />
       <div className="mt-5 grid gap-4 rounded-xl bg-slate-50 p-4 md:grid-cols-3 dark:bg-slate-900">
         <div>
-          <Field label="1. Use Case">
+          <Field label="1. Use Case (tùy chọn)">
             <Select
               value={caseTarget.useCaseId}
               disabled={!approvedUseCases.length}
@@ -2016,7 +2062,7 @@ function TestCaseStep({
                 })
               }
             >
-              <option value="">Chọn hành trình đã duyệt</option>
+              <option value="">Không gắn Use Case · kiểm thử trực tiếp theo User Story</option>
               {approvedUseCases.map((item) => (
                 <option key={item._id} value={item._id}>
                   {item.code} · {item.name}
@@ -2025,27 +2071,15 @@ function TestCaseStep({
             </Select>
           </Field>
           <p className="mt-1 text-xs text-slate-500">
-            Hành trình nghiệp vụ cần kiểm thử.
+            Chỉ chọn khi User Story thực sự thuộc một hành trình đã duyệt.
           </p>
-          {!approvedUseCases.length && (
-            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
-              Chưa có hành trình đã duyệt.{" "}
-              <button
-                type="button"
-                className="font-semibold underline"
-                onClick={() => setActiveStep("usecase")}
-              >
-                Tạo hoặc duyệt Use Case
-              </button>
-              .
-            </p>
-          )}
+          {!approvedUseCases.length && <p className="mt-1 text-xs text-slate-500">Không có Use Case vẫn có thể thiết kế Test Case trực tiếp từ User Story.</p>}
         </div>
         <div>
           <Field label="2. User Story">
             <Select
               value={caseTarget.storyId}
-              disabled={!caseTarget.useCaseId || !approvedStories.length}
+              disabled={!approvedStories.length}
               onChange={(event) =>
                 setCaseTarget({ ...caseTarget, storyId: event.target.value })
               }
@@ -2059,9 +2093,9 @@ function TestCaseStep({
             </Select>
           </Field>
           <p className="mt-1 text-xs text-slate-500">
-            Yêu cầu thuộc Test Plan và phù hợp với hành trình.
+            Chỉ hiển thị Story đã được PO/BA xác nhận nghiệp vụ và QA xác nhận khả năng kiểm thử.
           </p>
-          {caseTarget.useCaseId && !approvedStories.length && (
+          {!approvedStories.length && (
             <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
               Chưa có yêu cầu phù hợp trong Test Plan đã duyệt.{" "}
               <button
@@ -2511,12 +2545,11 @@ export function GitHubForm({
           {!github.length && (
             <div className="rounded-xl border border-dashed border-slate-300 p-4 dark:border-slate-700">
               <p className="text-sm font-semibold">
-                Project chưa có kết nối GitHub đã kiểm tra
+                Workspace chưa có kết nối GitHub đã kiểm tra
               </p>
               <p className="mt-1 text-xs leading-5 text-slate-500">
-                Thêm kết nối trong Settings, chọn đúng project và bấm “Kiểm
-                tra”. Nếu kết nối đã có nhưng chưa hoạt động, hãy kiểm tra lại
-                tại đó.
+                GitHub chỉ cần kết nối một lần cho Workspace. Nếu đã có kết nối,
+                hãy tải lại trang hoặc bấm “Kiểm tra” lại trong Settings.
               </p>
               <Button variant="outline" size="sm" className="mt-3" asChild>
                 <Link to={`/settings?${settingsParams}`}>
@@ -2564,8 +2597,9 @@ export function GitHubForm({
           )}
           {git.integrationId && !connected && (
             <p className="text-xs text-amber-700 dark:text-amber-300">
-              Kết nối được chọn trước đó không khả dụng trong project này hoặc
-              chưa kiểm tra thành công. Hãy chọn hoặc kiểm tra lại kết nối.
+              Kết nối được chọn trước đó chưa tải được hoặc không thuộc
+              Workspace này. Hãy tải lại trang; bạn không cần tạo connection
+              mới nếu GitHub đã Connected trong cùng Workspace.
             </p>
           )}
         </>

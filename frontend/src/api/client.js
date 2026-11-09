@@ -226,9 +226,10 @@ export const aiApi = {
     api.post("/ai/suggest-user-story", body).then(data),
   // Put the project in the query string as well: RBAC runs before multipart
   // fields are parsed, so it needs this value to resolve the workspace role.
-  suggestUserStoryDocument: (projectId, file) => {
+  suggestUserStoryDocument: (projectId, file, documentKind = 'Requirement') => {
     const body = new FormData();
     body.append("projectId", projectId);
+    body.append("documentKind", documentKind);
     body.append("document", file);
     return api
       .post(
@@ -248,10 +249,37 @@ export const aiApi = {
       .then((response) => response.data),
 };
 export const e2eApi = {
+  requirements: (systemProfile) => api.get("/requirements", { params: { systemProfile } }).then(data),
+  createRequirement: (body) => api.post("/requirements", body).then(data),
+  updateRequirement: (id, body) => api.patch(`/requirements/${id}`, body).then(data),
+  decideRequirement: (id, body) => api.patch(`/requirements/${id}/decision`, body).then(data),
+  importRequirements: (systemProfile, source, file, scope = null) => {
+    const body = new FormData();
+    body.append("systemProfile", systemProfile);
+    body.append("source", JSON.stringify(source));
+    if (scope) body.append("scope", JSON.stringify(scope));
+    body.append("document", file);
+    return api.post("/requirements/import", body, { timeout: 180_000, headers: { "Content-Type": "multipart/form-data" } }).then(e2eData);
+  },
   profiles: (project = "") =>
     api
       .get("/system-profiles", { params: { project: project || undefined } })
       .then(data),
+    ensureProfile: async (project) => {
+      try {
+        return data(await api.post("/system-profiles/ensure", { project }));
+      } catch (error) {
+        // Older running servers do not have the convenience endpoint yet.
+        // Create the same internal scope through the long-standing endpoint.
+        if ((error.status || error.response?.status) !== 404) throw error;
+        return data(await api.post("/system-profiles", {
+          project,
+          name: "Phạm vi kiểm thử",
+          description: "Phạm vi kiểm thử được tạo tự động từ đề bài khách hàng.",
+          mode: "SystemProfile",
+        }));
+      }
+    },
   createProfile: (body) => api.post("/system-profiles", body).then(data),
   updateProfile: (id, body) =>
     api.patch(`/system-profiles/${id}`, body).then(data),
@@ -280,8 +308,9 @@ export const e2eApi = {
         { timeout: 180_000 },
       )
       .then(e2eData),
-  importUseCasesDocument: (profileId, file) => {
+  importUseCasesDocument: (profileId, file, reference = "") => {
     const body = new FormData();
+    if (reference) body.append("reference", reference);
     body.append("document", file);
     return api
       .post(`/system-profiles/${profileId}/import-use-cases`, body, {
@@ -289,6 +318,11 @@ export const e2eApi = {
         headers: { "Content-Type": "multipart/form-data" },
       })
       .then(e2eData);
+  },
+  uploadRequirementImage: (requirementId, file) => {
+    const body = new FormData();
+    body.append("image", file);
+    return api.post(`/requirements/${requirementId}/images`, body, { headers: { "Content-Type": "multipart/form-data" } }).then(data);
   },
   exportArtifact: (type, id, format) => {
     // Test Case is a tabular artifact, so it is always delivered as a real Excel workbook.
@@ -308,6 +342,12 @@ export const e2eApi = {
         timeout: 180_000,
       })
       .then(e2eData),
+  generateCasesFromStory: (storyId, body) =>
+    api
+      .post(`/user-stories/${storyId}/generate-test-cases`, body, {
+        timeout: 180_000,
+      })
+      .then(e2eData),
 };
 export const requirementApi = {
   pendingStories: () =>
@@ -320,6 +360,10 @@ export const requirementApi = {
     api.post(`/user-stories/${id}/submit-approval`).then(data),
   decideApproval: (id, body) =>
     api.patch(`/user-stories/${id}/approval`, body).then(data),
+  decideBusiness: (id, body) =>
+    api.patch(`/user-stories/${id}/business-decision`, body).then(data),
+  decideQaTestability: (id, body) =>
+    api.patch(`/user-stories/${id}/qa-testability`, body).then(data),
 };
 export const testCaseApi = {
   list: (params = "limit=100") => api.get(`/test-cases?${params}`).then(data),

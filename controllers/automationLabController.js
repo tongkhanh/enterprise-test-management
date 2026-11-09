@@ -6,11 +6,12 @@ const { assertProjectAccess } = require('../services/projectAccessService');
 const { assertWorkspaceAccess } = require('../services/workspaceAccessService');
 const { ROLE_NAMES } = require('../config/roles');
 const { listRepositoryFiles } = require('../services/repositoryContextService');
+const { assertGithubConnectionForProject } = require('../services/integrationScopeService');
 
 async function access(req, projectId) {
   return (await assertProjectAccess(req.user, projectId)).project;
 }
-async function githubAccess(req) { const connection = await IntegrationConnection.findById(req.params.integrationId); if (!connection || connection.provider !== 'GitHub') throw new AppError('GitHub integration không tồn tại.', 404); if (connection.project) await access(req, connection.project); else await assertWorkspaceAccess(req.user, connection.workspace, { manage: true, permission: 'integration:manage' }); }
+async function githubAccess(req) { const connection = await IntegrationConnection.findById(req.params.integrationId); if (!connection || connection.provider !== 'GitHub') throw new AppError('GitHub integration không tồn tại.', 404); await assertWorkspaceAccess(req.user, connection.workspace, { permission: 'integration:read' }); }
 const runtimeNames = new Set(['Dockerfile', 'compose.yaml', 'compose.yml', 'docker-compose.yml', 'docker-compose.yaml']);
 const generatedNodeDockerfile = 'ETMS.generated.Node.Dockerfile';
 const findRuntimeFiles = async (integrationId, owner, repo, ref = 'HEAD') => {
@@ -53,8 +54,11 @@ const createEnvironment = async (req, res) => {
     const fullName = String(req.body.repository?.fullName || '');
     const ref = String(req.body.repository?.ref || 'main');
     if (!req.body.integration || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(fullName)) throw new AppError('GitHub integration và repository hợp lệ là bắt buộc.', 400);
-    const connection = await IntegrationConnection.findById(req.body.integration); if (!connection || connection.provider !== 'GitHub' || (connection.project && String(connection.project) !== String(req.body.project))) throw new AppError('GitHub integration không thuộc Project này.', 409);
-    if (connection.status !== 'Connected') throw new AppError('Kết nối GitHub chưa được xác thực. Hãy bấm “Kiểm tra” trong Settings hoặc tại đây trước khi tạo môi trường.', 409);
+    const [connection, project] = await Promise.all([
+      IntegrationConnection.findById(req.body.integration),
+      Project.findById(req.body.project).select('workspace'),
+    ]);
+    assertGithubConnectionForProject(connection, project, { connected: true });
     if (!/^(?!-)[A-Za-z0-9._\/-]+$/.test(ref) || ref.includes('..')) throw new AppError('Tên branch/ref không hợp lệ.', 400);
     const dockerfile = String(req.body.docker?.dockerfile || 'Dockerfile');
     const context = String(req.body.docker?.context || '.');

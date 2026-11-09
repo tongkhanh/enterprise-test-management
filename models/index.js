@@ -50,6 +50,7 @@ const Comment = require('./requirements-docs/Comment');
 const DesignMockup = require('./requirements-docs/DesignMockup');
 const UserStoryDocument = require('./requirements-docs/UserStoryDocument');
 const RepositorySnapshot = require('./requirements-docs/RepositorySnapshot');
+const Requirement = require('./requirements-docs/Requirement');
 const SystemProfile = require('./e2e/SystemProfile');
 const UseCase = require('./e2e/UseCase');
 
@@ -141,6 +142,7 @@ module.exports = {
   DesignMockup,
   UserStoryDocument,
   RepositorySnapshot,
+  Requirement,
   SystemProfile,
   UseCase,
 

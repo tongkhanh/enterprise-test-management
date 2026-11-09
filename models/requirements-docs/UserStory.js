@@ -27,6 +27,19 @@ const userStorySchema = new Schema(
       // Format: "As a [role], I want [feature], so that [benefit]"
     },
 
+    businessValue: { type: String, trim: true, maxlength: 2000, default: '' },
+    inScope: { type: [String], default: [] },
+    outOfScope: { type: [String], default: [] },
+    nonFunctionalRequirements: { type: [String], default: [] },
+    risks: { type: [String], default: [] },
+    assumptions: { type: [String], default: [] },
+    dependencies: { type: [String], default: [] },
+    definitionOfReady: { type: [String], default: [] },
+    definitionOfDone: { type: [String], default: [] },
+    testDataRequirements: { type: [String], default: [] },
+    dataRestrictions: { type: [String], default: [] },
+    estimatedHours: { type: Number, min: 0, max: 10000, default: 0 },
+
     // Tiêu chí chấp nhận
     acceptanceCriteria: [
       {
@@ -71,9 +84,43 @@ const userStorySchema = new Schema(
     },
     source: {
       type: String,
-      enum: ['Manual', 'AI', 'GitHub'],
+      enum: ['Manual', 'AI', 'GitHub', 'ImportedDocument'],
       default: 'Manual',
     },
+    reference: { type: String, trim: true, maxlength: 1000, default: "" },
+    sourceDocument: {
+      fileName: { type: String, default: '' },
+      documentType: { type: String, enum: ['', 'Requirement', 'UserStory'], default: '' },
+      extractedAt: { type: Date, default: null },
+    },
+    externalReference: {
+      system: { type: String, enum: ['', 'Jira', 'AzureDevOps', 'File', 'Other'], default: '' },
+      externalId: { type: String, trim: true, maxlength: 160, default: '' },
+      version: { type: String, trim: true, maxlength: 120, default: '' },
+      effectiveAt: { type: Date, default: null },
+    },
+    // A User Story may be imported directly from the customer/PO backlog, or
+    // be derived from one or more baselined requirements.  The link is kept
+    // even when the story is the original business input.
+    parentRequirements: [{ type: Schema.Types.ObjectId, ref: 'Requirement' }],
+    businessApprovalStatus: {
+      type: String,
+      enum: ['NotConfirmed', 'PendingBusinessConfirmation', 'BusinessConfirmed', 'BusinessRejected'],
+      default: 'NotConfirmed',
+      index: true,
+    },
+    businessApprovedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    businessApprovedAt: { type: Date, default: null },
+    businessDecisionNote: { type: String, default: '' },
+    qaTestabilityStatus: {
+      type: String,
+      enum: ['NotReviewed', 'Testable', 'NeedsClarification'],
+      default: 'NotReviewed',
+      index: true,
+    },
+    qaReviewedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    qaReviewedAt: { type: Date, default: null },
+    qaReviewNote: { type: String, default: '' },
     repositorySource: {
       snapshot: { type: Schema.Types.ObjectId, ref: 'RepositorySnapshot', default: null },
       repository: { type: String, default: '' },
@@ -97,6 +144,7 @@ const userStorySchema = new Schema(
     e2e: {
       systemProfile: { type: Schema.Types.ObjectId, ref: 'SystemProfile', default: null },
       useCase: { type: Schema.Types.ObjectId, ref: 'UseCase', default: null },
+      requirements: [{ type: Schema.Types.ObjectId, ref: 'Requirement' }],
       journeyType: { type: String, default: 'E2E' },
       definitionOfDone: { type: [String], default: [] },
       assumptions: { type: [String], default: [] },

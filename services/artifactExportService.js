@@ -75,7 +75,8 @@ function testCaseWorkbook(title, artifact) {
   const testData = artifact.generatedTestData && typeof artifact.generatedTestData === 'object' ? Object.entries(artifact.generatedTestData) : [];
   const dataRows = [row(['Biến / trường dữ liệu', 'Giá trị hoặc mô tả'], ['Section', 'Section']), ...testData.map(([key, value]) => row([key, typeof value === 'object' ? JSON.stringify(value) : value], ['Label', 'Text']))].join('');
   const coverage = Array.isArray(artifact.storyCoverage) ? artifact.storyCoverage : [];
-  const traceRows = [row(['Loại truy vết', 'Nội dung'], ['Section', 'Section']), row(['Use Case', e2e.useCase?.name || e2e.useCase || '']), row(['User Story', artifact.userStory?.title || artifact.userStory || '']), ...coverage.map((item, index) => row([`Acceptance Criteria ${index + 1}`, item])), ...arrayText(artifact.tags).split('\n').filter(Boolean).map((item) => row(['Tag', item]))].join('');
+  const requirements = e2e.requirements || artifact.requirements || [];
+  const traceRows = [row(['Loại truy vết', 'Nội dung'], ['Section', 'Section']), ...requirements.map((item) => row(['Requirement khách hàng', item?.requirementId ? `${item.requirementId} · ${item.title || ''}` : String(item || '')])), row(['Use Case', e2e.useCase?.name || e2e.useCase || '']), row(['User Story', artifact.userStory?.title || artifact.userStory || '']), ...coverage.map((item, index) => row([`Acceptance Criteria ${index + 1}`, item])), ...arrayText(artifact.tags).split('\n').filter(Boolean).map((item) => row(['Tag', item]))].join('');
   return excelDocument([
     worksheet('Test Case', [170, 680], overviewRows),
     worksheet('Steps', [45, 300, 300, 170, 110, 230, 170], stepRows, { freeze: true }),
@@ -113,6 +114,7 @@ async function testCaseExecutionWorkbook(artifacts) {
   appendSheetRows(traceSheet, cases.flatMap((item, caseIndex) => {
     const id = caseId(item, caseIndex);
     return [
+      ...(item.e2e?.requirements || []).map((requirement) => [id, 'Customer requirement', cellText(requirement?.requirementId ? `${requirement.requirementId} · ${requirement.title || ''}` : requirement)]),
       [id, 'Use Case', cellText(item.e2e?.useCase?.name || item.e2e?.useCase || '')],
       [id, 'User Story', cellText(item.userStory?.title || item.userStory || '')],
       ...(item.storyCoverage || []).map((criterion, index) => [id, `Acceptance Criteria ${index + 1}`, cellText(criterion)]),

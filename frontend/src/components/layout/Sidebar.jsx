@@ -15,21 +15,26 @@ const groups = [
       { label: 'Quản lý Workspace', to: '/workspace-management', icon: Building2 },
       { label: 'Lời mời', to: '/invitations', icon: Mail },
       { label: 'Teams & Members', to: '/teams', icon: UsersRound },
-      { label: 'Cycles & Planning', to: '/cycles', icon: Repeat2 },
-      { label: 'Kế hoạch tuần', to: '/cycles?tab=issues', icon: ListTodo },
     ],
   },
   {
-    label: 'E2E workflow',
+    label: 'Tài liệu kiểm thử',
     items: [
-      { label: 'E2E Workflow', to: '/ai-generator', icon: Sparkles },
+      { label: 'Tạo & quản lý tài liệu', to: '/ai-generator?step=requirement', icon: Sparkles },
+    ],
+  },
+  {
+    label: 'Kế hoạch & thực thi',
+    items: [
+      { label: 'Cycles & Planning', to: '/cycles', icon: Repeat2 },
+      { label: 'Backlog & Test Board', to: '/board', icon: Columns3 },
+      { label: 'Công việc Agile', to: '/issues', icon: ListTodo },
     ],
   },
   {
     label: 'Công cụ nâng cao',
     items: [
       { label: 'Approval Inbox', to: '/approvals', icon: CheckSquare2 },
-      { label: 'Backlog & Test Board', to: '/board', icon: Columns3 },
       { label: 'Automation Lab', to: '/automation', icon: TerminalSquare },
       { label: 'Automation Operations', to: '/automation-operations', icon: Repeat2 },
       { label: 'Bug Tracking', to: '/bugs', icon: Bug },

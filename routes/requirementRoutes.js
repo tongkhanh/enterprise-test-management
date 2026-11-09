@@ -13,6 +13,8 @@ router.post('/user-stories', authorize('requirement:manage'), auditLog('CREATE',
 router.patch('/user-stories/:id', authorize('requirement:manage'), auditLog('UPDATE', 'UserStory'), asyncHandler(c.updateStory));
 router.post('/user-stories/:id/submit-approval', authorize('requirement:manage'), auditLog('SUBMIT_APPROVAL', 'UserStory'), asyncHandler(c.submitApproval));
 router.patch('/user-stories/:id/approval', authorize('requirement:manage'), auditLog('DECIDE_APPROVAL', 'UserStory'), asyncHandler(c.decideApproval));
+router.patch('/user-stories/:id/business-decision', authorize('requirement:manage'), auditLog('BUSINESS_CONFIRM', 'UserStory'), asyncHandler(c.decideBusinessApproval));
+router.patch('/user-stories/:id/qa-testability', authorize('requirement:manage'), auditLog('QA_TESTABILITY_REVIEW', 'UserStory'), asyncHandler(c.decideQaTestability));
 router.delete('/user-stories/:id', authorize('requirement:manage'), auditLog('DELETE', 'UserStory'), asyncHandler(c.deleteStory));
 router.get('/user-stories/:id/documents', authorize('requirement:read', 'requirement:manage', 'requirement:upload'), asyncHandler(documents.listDocuments));
 router.post('/user-stories/:id/documents', authorize('requirement:upload', 'requirement:manage'), uploadUserStoryDocument, auditLog('IMPORT', 'UserStoryDocument'), asyncHandler(documents.uploadDocument));

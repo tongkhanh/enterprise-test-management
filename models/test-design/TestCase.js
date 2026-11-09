@@ -148,6 +148,7 @@ const testCaseSchema = new Schema(
       testPlan: { type: Schema.Types.ObjectId, ref: 'TestPlan', default: null },
       systemProfile: { type: Schema.Types.ObjectId, ref: 'SystemProfile', default: null },
       useCase: { type: Schema.Types.ObjectId, ref: 'UseCase', default: null },
+      requirements: [{ type: Schema.Types.ObjectId, ref: 'Requirement' }],
       journeyType: { type: String, default: '' },
       routeCoverage: { type: [String], default: [] },
       setup: { type: [String], default: [] },

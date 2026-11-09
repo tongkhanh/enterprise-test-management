@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { cloneElement, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
+  ChevronLeft,
+  ChevronRight,
   CheckCircle2,
   ClipboardCheck,
   FileCheck2,
@@ -10,6 +12,8 @@ import {
   Layers3,
   PlayCircle,
   Route,
+  Search,
+  X,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -37,10 +41,12 @@ const runtimeUrlForProfile = (profile) =>
       ? profile.environment.targetUrl
       : ""
     : profile?.baseUrl || "";
+const lines = (value = "") => String(value).split("\n").map((item) => item.trim()).filter(Boolean);
 const steps = [
-  ["profile", "Nguồn & phạm vi", Layers3],
+  ["requirement", "Nguồn yêu cầu", FileCheck2],
+  ["evidence", "Bằng chứng GitHub", FileCode2],
   ["usecase", "Use Case", Route],
-  ["story", "User Story được duyệt", CheckCircle2],
+  ["story", "User Story", CheckCircle2],
   ["plan", "Test Plan", FileCheck2],
   ["suite", "Test Suite", Layers3],
   ["testcase", "Test Case", ClipboardCheck],
@@ -53,21 +59,20 @@ const steps = [
 ];
 const phases = [
   {
-    label: "Nguồn & yêu cầu",
-    detail: "Profile, Use Case, User Story",
-    ids: ["profile", "usecase", "story"],
+    label: "Nguồn & đặc tả",
+    detail: "Nhập nguồn, phân loại, chuẩn hóa và xác nhận",
+    ids: ["requirement", "evidence", "usecase", "story"],
   },
   {
-    label: "Thiết kế & lập Sprint",
-    detail: "Kế hoạch, Test Case, duyệt, backlog",
+    label: "Lập kế hoạch & Sprint",
+    detail: "Test Plan, Test Case, duyệt và Backlog",
     ids: ["plan", "suite", "testcase", "review", "agile"],
   },
   {
-    label: "Chuẩn bị & chạy",
-    detail: "Môi trường, automation, thực thi",
-    ids: ["runtime", "automation", "execution"],
+    label: "Thực thi & kết quả",
+    detail: "Môi trường, automation, chạy test và báo cáo",
+    ids: ["runtime", "automation", "execution", "result"],
   },
-  { label: "Kết quả", detail: "Evidence, lỗi và báo cáo", ids: ["result"] },
 ];
 
 export default function QAWorkflow(props) {
@@ -96,15 +101,31 @@ export default function QAWorkflow(props) {
     StoryDraftCard,
     TestCaseStep,
   } = props;
-  const index = Math.max(
-    0,
-    steps.findIndex(([id]) => id === activeStep),
-  );
+  // One intake record accompanies the user until the document is normalized.
+  // It prevents the same source/version from being re-entered on every screen.
+  const [intake, setIntake] = useState(() => ({
+    documentType: "Requirement",
+    sourceSystem: "Customer",
+    officialStatus: "NeedsConfirmation",
+    title: "",
+    provider: "",
+    version: "",
+    receivedAt: new Date().toISOString().slice(0, 10),
+    externalId: "",
+    reference: "",
+    scopeLevel: "Feature",
+    scopeName: "",
+  }));
   const phaseIndex = Math.max(
     0,
     phases.findIndex((phase) => phase.ids.includes(activeStep)),
   );
   const phase = phases[phaseIndex];
+  const phaseStopPoint = [
+    "Dừng sau khi tài liệu đã được lưu hoặc duyệt",
+    "Dừng sau khi Backlog / Sprint đã được lập",
+    "Dừng sau khi có kết quả chạy và báo cáo",
+  ][phaseIndex];
   const testPlans = (plans.data || []).filter(
     (item) =>
       (item.kind || "TestPlan") === "TestPlan" &&
@@ -118,8 +139,10 @@ export default function QAWorkflow(props) {
   const approvedCaseCount = currentCases.filter(
     (item) => item.status === "Approved",
   ).length;
+  const baselineRequirementCount = (props.requirements?.data || []).filter((item) => item.status === "Baselined").length;
   const stepStatus = {
-    profile: currentProfile ? "Đã có Profile" : "",
+    requirement: baselineRequirementCount ? `${baselineRequirementCount} đã Baseline` : "",
+    evidence: currentProfile?.repository?.fullName ? "Đã phân tích" : "Tuỳ chọn",
     usecase: (useCases.data || []).some((item) => item.status === "Approved")
       ? "Có mục đã duyệt"
       : "",
@@ -138,8 +161,19 @@ export default function QAWorkflow(props) {
     runtime: currentProfile?.environment?.status === "Ready" ? "Sẵn sàng" : "",
   };
   const content = {
-    profile: (
-      <ProfileConfig {...props} onNext={() => setActiveStep("usecase")} />
+    evidence: (
+      <TechnicalEvidenceStep
+        profile={currentProfile}
+        github={props.github}
+        integrations={props.integrations}
+        git={props.git}
+        setGit={props.setGit}
+        analyzeGithub={props.analyzeGithub}
+        activeProject={activeProject}
+        GitHubForm={props.GitHubForm}
+        updateProfile={updateProfile}
+        onNext={() => setActiveStep("usecase")}
+      />
     ),
     usecase: (
       <UseCaseStep
@@ -150,6 +184,7 @@ export default function QAWorkflow(props) {
         addUseCase={addUseCase}
         approveUseCase={approveUseCase}
         useCases={useCases}
+        requirements={props.requirements}
         onNext={() => setActiveStep("story")}
       />
     ),
@@ -158,13 +193,16 @@ export default function QAWorkflow(props) {
         setActiveStep={setActiveStep}
         project={activeProject}
         profile={currentProfile}
+        intake={intake}
         useCases={useCases}
+        requirements={props.requirements}
         stories={currentStories}
         generateStory={generateStory}
         StoryDraftCard={StoryDraftCard}
         user={props.user}
         updateStory={props.updateStory}
         submitStory={props.submitStory}
+        qaReviewStory={props.qaReviewStory}
         download={props.download}
         onNext={() => setActiveStep("plan")}
       />
@@ -291,13 +329,25 @@ export default function QAWorkflow(props) {
         setActiveStep={setActiveStep}
       />
     ),
-  }[activeStep];
+  };
+  const requirementContent = (
+      <RequirementStep
+        profile={currentProfile}
+        requirements={props.requirements}
+        intake={intake}
+        setIntake={setIntake}
+        evidenceContent={content.evidence}
+        alternateContent={intake.documentType !== "Requirement" && cloneElement(content[{ UserStory: "story", UseCase: "usecase", }[intake.documentType]], { intakeOnly: true, reference: intake.reference })}
+        onNext={() => setActiveStep("evidence")}
+      />
+  );
+
   return (
     <div className="e2e-workflow space-y-5 pb-8">
       <PageHeader
         eyebrow="QA delivery workflow"
         title="Luồng E2E theo quy trình QA"
-        description="Thiết kế và duyệt tài liệu trước; chỉ chuẩn bị môi trường khi bạn muốn thực thi kiểm thử."
+        description="Chọn đúng mục tiêu cho lần làm việc này. Mọi tài liệu được lưu độc lập, nên bạn có thể dừng và quay lại bất cứ lúc nào."
       />
       <Card className="overflow-hidden border-slate-200 shadow-sm dark:border-slate-700">
         <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-700 sm:flex-row sm:items-end sm:justify-between">
@@ -310,8 +360,7 @@ export default function QAWorkflow(props) {
               value={activeProject}
               onChange={(event) => {
                 setProject(event.target.value);
-                props.newProfile();
-                setActiveStep("profile");
+                setActiveStep("requirement");
               }}
             >
               <option value="">Chọn Project</option>
@@ -322,14 +371,14 @@ export default function QAWorkflow(props) {
               ))}
             </Select>
           </div>
-          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
-            Giai đoạn {phaseIndex + 1}/{phases.length} · Bước {index + 1}/
-            {steps.length}
-          </p>
+          <div className="text-right text-xs text-slate-600 dark:text-slate-300">
+            <p className="font-semibold text-slate-800 dark:text-white">Mục tiêu {phaseIndex + 1}/{phases.length} · {phase.label}</p>
+            <p className="mt-1">{phaseStopPoint}</p>
+          </div>
         </div>
         <nav
           aria-label="Các giai đoạn kiểm thử"
-          className="grid grid-cols-1 gap-2 p-4 sm:grid-cols-2 xl:grid-cols-4"
+          className="grid grid-cols-1 gap-2 p-4 md:grid-cols-3"
         >
           {phases.map((item, position) => (
             <button
@@ -358,9 +407,9 @@ export default function QAWorkflow(props) {
           ))}
         </nav>
         <div className="border-t border-slate-200 px-4 py-3 dark:border-slate-700">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><div><p className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
             Các bước trong {phase.label}
-          </p><Button size="sm" variant={activeStep === "documents" ? "default" : "outline"} onClick={() => setActiveStep("documents")}>Danh mục tài liệu</Button></div>
+          </p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{phaseStopPoint}. Bạn luôn có thể mở lại từ Danh mục tài liệu.</p></div><Button size="sm" variant={activeStep === "documents" ? "default" : "outline"} onClick={() => setActiveStep("documents")}>Danh mục tài liệu</Button></div>
           <nav
             aria-label={`Các bước: ${phase.label}`}
             className="flex flex-wrap gap-2"
@@ -394,20 +443,256 @@ export default function QAWorkflow(props) {
           </nav>
         </div>
       </Card>
-      {activeStep === "documents" || currentProfile || activeStep === "profile" ? (
-        content
+      {activeStep === "documents" || currentProfile || activeStep === "requirement" ? (
+        activeStep === "requirement" ? requirementContent : content[activeStep]
       ) : (
         <Blocked
           title="Cần chọn System Profile"
           description="Chọn hoặc tạo Profile trước khi bắt đầu Use Case; chưa cần môi trường chạy."
-          onClick={() => setActiveStep("profile")}
+          onClick={() => setActiveStep("requirement")}
         />
       )}
     </div>
   );
 }
 
+function RequirementStep({ profile, requirements, intake, setIntake, onNext, alternateContent, evidenceContent }) {
+  const blank = () => ({ requirementId: "", title: "", type: "Functional", priority: "Medium", release: "", description: "", objective: "", actors: "", inScope: "", outOfScope: "", businessRules: "", acceptanceCriteria: "", nonFunctionalRequirements: "", risks: "", assumptions: "", dependencies: "", testDataRequirements: "", dataRestrictions: "", source: { type: "ManualCustomerBrief", title: "", provider: "", receivedAt: new Date().toISOString().slice(0, 10), version: "", reference: "", section: "" } });
+  const [form, setForm] = useState(blank);
+  const [mode, setMode] = useState("modern");
+  const [referenceImages, setReferenceImages] = useState([]);
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const updateIntake = (key, value) => setIntake((current) => ({ ...current, [key]: value, ...(key === "documentType" ? { reference: "" } : {}) }));
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const created = await e2eApi.createRequirement({ ...form, source, scope: { level: intake.scopeLevel, name: intake.scopeName }, systemProfile: profile._id, actors: lines(form.actors), inScope: lines(form.inScope), outOfScope: lines(form.outOfScope), businessRules: lines(form.businessRules), acceptanceCriteria: lines(form.acceptanceCriteria), nonFunctionalRequirements: lines(form.nonFunctionalRequirements), risks: lines(form.risks), assumptions: lines(form.assumptions), dependencies: lines(form.dependencies), testDataRequirements: lines(form.testDataRequirements), dataRestrictions: lines(form.dataRestrictions) });
+      await Promise.all(referenceImages.map(({ file }) => e2eApi.uploadRequirementImage(created._id, file)));
+      return created;
+    },
+    onSuccess: () => { toast.success(referenceImages.length ? "Đã lưu Requirement và đính kèm ảnh tham chiếu." : "Đã lưu Requirement nháp từ đề bài khách hàng."); setForm(blank()); setReferenceImages([]); requirements.refetch(); },
+    onError: (error) => toast.error(error.message),
+  });
+  const importDocument = useMutation({
+    mutationFn: (file) => e2eApi.importRequirements(profile._id, { ...source, type: "CustomerDocument" }, file, { level: intake.scopeLevel, name: intake.scopeName }),
+    onSuccess: (result) => { toast.success(result.message || "Đã trích xuất Requirement nháp; hãy rà soát trước khi Baseline."); requirements.refetch(); },
+    onError: (error) => toast.error(error.message),
+  });
+  const decide = useMutation({
+    mutationFn: ({ id, decision }) => e2eApi.decideRequirement(id, { decision }),
+    onSuccess: () => { toast.success("Đã cập nhật trạng thái Requirement."); requirements.refetch(); },
+    onError: (error) => toast.error(error.message),
+  });
+  if (!profile) return <Blocked title="Đang chuẩn bị phạm vi kiểm thử" description="Hệ thống đang tạo không gian liên kết tài liệu cho Project này; bạn không cần cấu hình trước." />;
+  const items = requirements.data || [];
+  const baselined = items.filter((item) => item.status === "Baselined");
+  const source = { ...form.source, title: intake.title, provider: intake.provider, receivedAt: intake.receivedAt, version: intake.version, reference: intake.reference };
+  const scopeReady = intake.scopeLevel === "System" || intake.scopeName.trim();
+  const canSave = form.title && form.description && form.objective && lines(form.actors).length && lines(form.inScope).length && lines(form.acceptanceCriteria).length && source.title.trim() && source.provider.trim() && source.receivedAt && scopeReady;
+  if (mode === "modern") return <ModernRequirementEditor {...{ intake, updateIntake, form, update, source, canSave, mutation, importDocument, items, baselined, decide, onNext, alternateContent, evidenceContent, referenceImages, setReferenceImages }} />;
+  return <Card className="p-5 sm:p-6">
+    <SectionTitle title="Nhập nguồn yêu cầu" description="Chọn loại đầu vào để nhập ngay tại đây. Yêu cầu mô tả hành vi mong đợi. URL kiểm thử, thiết kế giao diện và mã nguồn giúp đối chiếu khi thiết kế hoặc chạy test." />
+    <section className="mt-5 rounded-xl border border-violet-200 bg-violet-50/40 p-4 dark:border-violet-900 dark:bg-violet-950/20">
+      <p className="text-sm font-semibold">1. Phân loại và xác nhận nguồn</p>
+      <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <Field label="Loại đầu vào *"><Select value={intake.documentType} onChange={(event) => updateIntake("documentType", event.target.value)}><option value="Requirement">BRD / SRS / PRD / email khách hàng</option><option value="UserStory">User Story / Product Backlog</option><option value="UseCase">Use Case / quy trình nghiệp vụ</option></Select></Field>
+        {intake.documentType === "Requirement" && <>
+        <Field label="Nguồn từ đâu? *"><Select value={intake.sourceSystem} onChange={(event) => updateIntake("sourceSystem", event.target.value)}>{["Customer", "ProductOwner", "Jira", "AzureDevOps", "Internal", "GitHub"].map((item) => <option key={item}>{item}</option>)}</Select></Field>
+        <Field label="Trạng thái nguồn *"><Select value={intake.officialStatus} onChange={(event) => updateIntake("officialStatus", event.target.value)}><option value="Official">Nguồn chính thức</option><option value="NeedsConfirmation">Cần PO/BA xác nhận</option></Select></Field>
+        <Field label="Ngày nhận *"><Input type="date" value={intake.receivedAt} onChange={(event) => updateIntake("receivedAt", event.target.value)} /></Field>
+        <Field label="Tên tài liệu / ticket *"><Input value={intake.title} onChange={(event) => updateIntake("title", event.target.value)} placeholder="BRD thanh toán / PROJ-123" /></Field>
+        <Field label="Người cung cấp *"><Input value={intake.provider} onChange={(event) => updateIntake("provider", event.target.value)} placeholder="Khách hàng, PO hoặc BA" /></Field>
+        <Field label="Phiên bản"><Input value={intake.version} onChange={(event) => updateIntake("version", event.target.value)} placeholder="v1.0" /></Field>
+        <Field label="External ID / liên kết"><Input value={intake.externalId || intake.reference} onChange={(event) => { updateIntake("externalId", event.target.value); updateIntake("reference", event.target.value); }} placeholder="JIRA-123 hoặc URL" /></Field>
+        </>}
+      </div>
+    </section>
+    {alternateContent || <>
+    <div className="mt-6 border-t border-slate-200 pt-5 dark:border-slate-700"><p className="text-sm font-semibold">2. Chuẩn hóa Requirement</p><p className="mt-1 text-xs text-slate-500">Chỉ dùng phần này khi loại đầu vào bên trên là BRD, SRS, PRD, email hoặc yêu cầu khách hàng.</p></div>
+    <div className="mt-5 grid gap-3 md:grid-cols-2">
+      <button type="button" onClick={() => setMode("manual")} className={`rounded-xl border p-4 text-left ${mode === "manual" ? "border-violet-600 bg-violet-50 ring-1 ring-violet-600 dark:bg-violet-950/30" : "border-slate-200 dark:border-slate-700"}`}><p className="font-semibold">Nhập đề bài / yêu cầu khách hàng</p><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Dùng cho email, họp, ticket hoặc trao đổi trực tiếp có thể truy vết.</p></button>
+      <button type="button" onClick={() => setMode("document")} className={`rounded-xl border p-4 text-left ${mode === "document" ? "border-violet-600 bg-violet-50 ring-1 ring-violet-600 dark:bg-violet-950/30" : "border-slate-200 dark:border-slate-700"}`}><p className="font-semibold">Tải đề bài khách hàng</p><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">PDF, DOC hoặc DOCX; AI trích xuất Requirement nháp để bạn xác nhận.</p></button>
+    </div>
+    {mode === "document" ? <div className="mt-5 rounded-xl border border-dashed border-violet-300 bg-violet-50/50 p-5 dark:border-violet-900 dark:bg-violet-950/20"><p className="font-semibold">Tải đề bài khách hàng</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">Điền nguồn bên trên trước. Hệ thống chỉ tạo bản nháp, không tự Baseline Requirement.</p><label className="mt-4 inline-flex h-10 cursor-pointer items-center rounded-lg bg-violet-600 px-4 text-sm font-semibold text-white"><FileUp className="mr-2 h-4 w-4" />{importDocument.isPending ? "Đang trích xuất…" : "Chọn PDF, DOC hoặc DOCX"}<input className="hidden" type="file" accept=".pdf,.doc,.docx" disabled={!source.title.trim() || !source.provider.trim() || !source.receivedAt || importDocument.isPending} onChange={(event) => { const file = event.target.files?.[0]; if (file) importDocument.mutate(file); event.target.value = ""; }} /></label></div> : <div className="mt-5 space-y-4 rounded-xl border border-slate-200 p-4 dark:border-slate-700"><div className="grid gap-4 md:grid-cols-2"><Field label="Requirement ID"><Input value={form.requirementId} onChange={(e) => update("requirementId", e.target.value)} placeholder="REQ-ORDER-001 (để trống để tự sinh)" /></Field><Field label="Release / version áp dụng"><Input value={form.release} onChange={(e) => update("release", e.target.value)} placeholder="Release 1.2" /></Field><Field label="Tiêu đề yêu cầu *"><Input value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="Customer đặt đơn hàng" /></Field><Field label="Loại / ưu tiên"><div className="grid grid-cols-2 gap-2"><Select value={form.type} onChange={(e) => update("type", e.target.value)}>{["Functional", "NonFunctional", "BusinessRule", "Integration"].map((item) => <option key={item}>{item}</option>)}</Select><Select value={form.priority} onChange={(e) => update("priority", e.target.value)}>{["Critical", "High", "Medium", "Low"].map((item) => <option key={item}>{item}</option>)}</Select></div></Field></div><Field label="Mô tả yêu cầu *"><Textarea rows={3} value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="Hệ thống phải…" /></Field><Field label="Mục tiêu nghiệp vụ *"><Textarea rows={2} value={form.objective} onChange={(e) => update("objective", e.target.value)} placeholder="Giá trị/kết quả khách hàng mong đợi…" /></Field><div className="grid gap-4 md:grid-cols-2"><Field label="Actor / role * · mỗi dòng một mục"><Textarea rows={3} value={form.actors} onChange={(e) => update("actors", e.target.value)} placeholder="Customer" /></Field><Field label="Phạm vi trong kiểm thử * · mỗi dòng một mục"><Textarea rows={3} value={form.inScope} onChange={(e) => update("inScope", e.target.value)} placeholder="Đặt hàng\nThanh toán" /></Field><Field label="Acceptance Criteria * · mỗi dòng một tiêu chí"><Textarea rows={4} value={form.acceptanceCriteria} onChange={(e) => update("acceptanceCriteria", e.target.value)} placeholder="Given… When… Then…" /></Field><Field label="Business rules · mỗi dòng một quy tắc"><Textarea rows={4} value={form.businessRules} onChange={(e) => update("businessRules", e.target.value)} placeholder="Chỉ được đặt món từ một nhà hàng trong cùng giỏ." /></Field></div><details><summary className="cursor-pointer text-sm font-semibold text-violet-700 dark:text-violet-300">Bổ sung NFR, rủi ro, dependency và chính sách dữ liệu</summary><div className="mt-4 grid gap-4 md:grid-cols-2"><Field label="Ngoài phạm vi"><Textarea rows={3} value={form.outOfScope} onChange={(e) => update("outOfScope", e.target.value)} /></Field><Field label="Yêu cầu phi chức năng"><Textarea rows={3} value={form.nonFunctionalRequirements} onChange={(e) => update("nonFunctionalRequirements", e.target.value)} /></Field><Field label="Rủi ro"><Textarea rows={3} value={form.risks} onChange={(e) => update("risks", e.target.value)} /></Field><Field label="Giả định / phụ thuộc"><Textarea rows={3} value={`${form.assumptions}${form.assumptions && form.dependencies ? "\n" : ""}${form.dependencies}`} onChange={(e) => { const value = e.target.value; update("assumptions", value); update("dependencies", ""); }} /></Field><Field label="Dữ liệu test cần có"><Textarea rows={3} value={form.testDataRequirements} onChange={(e) => update("testDataRequirements", e.target.value)} /></Field><Field label="Dữ liệu cấm sử dụng"><Textarea rows={3} value={form.dataRestrictions} onChange={(e) => update("dataRestrictions", e.target.value)} placeholder="PII thật, token, mật khẩu, dữ liệu production" /></Field></div></details><div className="flex justify-end"><Button disabled={!canSave || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? "Đang lưu…" : "Lưu Requirement nháp"}</Button></div></div>}
+    <div className="mt-7 border-t border-slate-200 pt-5 dark:border-slate-700"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-semibold">Requirement trong Profile</p><p className="mt-1 text-xs text-slate-500">{baselined.length} Requirement đã Baselined. Chỉ các mục này được dùng để AI sinh Use Case.</p></div>{baselined.length > 0 && <Button variant="outline" onClick={onNext}>Tiếp tục Use Case <ArrowRight className="h-4 w-4" /></Button>}</div>{items.length ? <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700"><table className="min-w-[800px] w-full text-left text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-500 dark:bg-slate-800"><tr><th className="p-3">Requirement</th><th className="p-3">Nguồn khách hàng</th><th className="p-3">Trạng thái</th><th className="p-3 text-right">Thao tác</th></tr></thead><tbody>{items.map((item) => <tr key={item._id} className="border-t border-slate-200 dark:border-slate-700"><td className="p-3"><p className="font-semibold">{item.requirementId} · {item.title}</p><p className="mt-1 text-xs text-slate-500">{item.actors?.join(", ")} · {item.inScope?.join(", ")}</p></td><td className="p-3 text-xs">{item.source?.title}<br />{item.source?.provider}</td><td className="p-3"><Badge tone={item.status === "Baselined" ? "green" : item.status === "Rejected" ? "red" : "amber"}>{item.status}</Badge></td><td className="p-3 text-right">{item.status !== "Baselined" && <Button size="sm" variant="outline" disabled={decide.isPending} onClick={() => decide.mutate({ id: item._id, decision: "Baselined" })}>Baseline</Button>}</td></tr>)}</tbody></table></div> : <p className="mt-4 text-sm text-slate-500">Chưa có Requirement. Thêm đề bài khách hàng bằng một trong hai cách bên trên.</p>}</div>
+    </>}
+  </Card>;
+}
+
+function ModernRequirementEditor({ intake, updateIntake, form, update, source, canSave, mutation, importDocument, items, baselined, decide, onNext, alternateContent, evidenceContent, referenceImages, setReferenceImages }) {
+  const [entryMode, setEntryMode] = useState("manual");
+  const [activeSection, setActiveSection] = useState(1);
+  const [selectedDocument, setSelectedDocument] = useState(null);
+  const completed = [form.title, form.description, form.objective, form.actors, form.inScope, form.acceptanceCriteria].filter(Boolean).length;
+  const itemCount = items.length;
+  const sourceReady = source.title.trim() && source.provider.trim() && source.receivedAt;
+  return <Card className="overflow-hidden p-0">
+    <div className="border-b border-violet-100 bg-gradient-to-r from-violet-50 via-white to-sky-50 px-5 py-5 dark:border-violet-900/50 dark:from-violet-950/30 dark:via-slate-950 dark:to-sky-950/20 sm:px-6">
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-700 dark:text-violet-300">Requirement workspace</p>
+      <div className="mt-2 flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-xl font-bold text-slate-950 dark:text-white">Nguồn tài liệu đầu vào</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">Nhập hoặc tải nguồn nghiệp vụ đã có. Với ứng dụng đang chạy, bổ sung URL và bằng chứng kỹ thuật. Tạo tài liệu dẫn xuất tại bước Use Case hoặc User Story.</p></div><div className="rounded-xl border border-violet-200 bg-white/80 px-3 py-2 text-right text-xs shadow-sm dark:border-violet-800 dark:bg-slate-900/70"><p className="font-semibold text-violet-800 dark:text-violet-200">{completed}/6 nội dung cốt lõi</p><p className="mt-1 text-slate-500">Lưu nháp bất kỳ lúc nào</p></div></div>
+    </div>
+    <div className="grid gap-0 lg:grid-cols-[220px_minmax(0,1fr)]">
+      <aside className="border-b border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/50 lg:border-b-0 lg:border-r">
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Cấu trúc tài liệu</p>
+        <ol className="mt-3 space-y-2 text-sm">{[[1, "Nguồn & định danh"], [2, "Mục tiêu & yêu cầu"], [3, "Phạm vi & tiêu chí"], [4, "Chi tiết bổ sung"]].map(([step, label]) => <li key={step}><button type="button" onClick={() => setActiveSection(step)} className={`w-full rounded-lg px-3 py-2 text-left transition ${activeSection === step ? "bg-violet-100 font-semibold text-violet-800 dark:bg-violet-950/50 dark:text-violet-200" : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"}`}>{step}. {label}</button></li>)}</ol>
+        <button type="button" onClick={() => document.getElementById("requirements-library")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="mt-3 flex w-full items-center justify-between rounded-lg border border-violet-200 bg-white px-3 py-2 text-left text-sm font-semibold text-violet-700 shadow-sm transition hover:border-violet-400 hover:bg-violet-50 dark:border-violet-900 dark:bg-slate-900 dark:text-violet-200 dark:hover:bg-violet-950/30"><span>Requirement đã lưu</span><span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs dark:bg-violet-950">{itemCount}</span></button>
+        <div className="mt-5 rounded-lg border border-dashed border-slate-300 p-3 text-xs leading-5 text-slate-600 dark:border-slate-700 dark:text-slate-300"><p className="font-semibold text-slate-800 dark:text-white">Mẹo soạn nhanh</p><p className="mt-1">Chỉ cần hoàn tất 6 trường cốt lõi. Các trường nâng cao có thể bổ sung khi QA lập Test Plan.</p></div>
+      </aside>
+      <main className="space-y-5 p-5 sm:p-6">
+        {activeSection === 1 && <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/40">
+          <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold">1. Nguồn & định danh</h3><p className="mt-1 text-xs text-slate-500">Thông tin truy vết được giữ lại cùng tài liệu, không lẫn với nội dung Requirement.</p></div>{intake.documentType === "Requirement" && <div className="inline-flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800"><button type="button" onClick={() => setEntryMode("manual")} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${entryMode === "manual" ? "bg-white text-violet-700 shadow-sm dark:bg-slate-700 dark:text-violet-200" : "text-slate-500"}`}>Soạn tay</button><button type="button" onClick={() => setEntryMode("document")} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${entryMode === "document" ? "bg-white text-violet-700 shadow-sm dark:bg-slate-700 dark:text-violet-200" : "text-slate-500"}`}>Tải tài liệu</button></div>}</div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4"><Field label="Loại đầu vào *"><Select value={intake.documentType} onChange={(event) => updateIntake("documentType", event.target.value)}><option value="Requirement">BRD / SRS / PRD / email</option><option value="UserStory">User Story / Product Backlog</option><option value="UseCase">Use Case / quy trình</option></Select></Field>{intake.documentType === "Requirement" && <><Field label="Tên nguồn *"><Input value={intake.title} onChange={(event) => updateIntake("title", event.target.value)} placeholder="BRD thanh toán / Email khách hàng" /></Field><Field label="Người cung cấp *"><Input value={intake.provider} onChange={(event) => updateIntake("provider", event.target.value)} placeholder="Khách hàng / PO / BA" /></Field><Field label="Ngày nhận *"><Input type="date" value={intake.receivedAt} onChange={(event) => updateIntake("receivedAt", event.target.value)} /></Field></>}</div>
+          {intake.documentType === "Requirement" && <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50/70 p-3 dark:border-sky-900 dark:bg-sky-950/20"><div className="grid gap-3 md:grid-cols-[240px_minmax(0,1fr)]"><Field label="Phạm vi tài liệu *"><Select value={intake.scopeLevel} onChange={(event) => updateIntake("scopeLevel", event.target.value)}><option value="System">Toàn hệ thống</option><option value="Module">Một module</option><option value="Feature">Một feature</option><option value="Flow">Một flow / hành trình</option></Select></Field><Field label={intake.scopeLevel === "System" ? "Tên hệ thống (tuỳ chọn)" : "Tên phạm vi *"} hint={intake.scopeLevel === "System" ? "Một tài liệu hệ thống có thể được tách thành nhiều Requirement, Module và Feature." : "Ví dụ: Checkout, Quản lý đơn hàng, Đặt món từ giỏ hàng."}><Input value={intake.scopeName} onChange={(event) => updateIntake("scopeName", event.target.value)} placeholder={intake.scopeLevel === "System" ? "FoodRush" : "Ví dụ: Checkout"} /></Field></div><p className="mt-2 text-xs leading-5 text-sky-800 dark:text-sky-200">Tài liệu là nguồn đầu vào; sau khi trích xuất, mỗi Requirement được lưu riêng để truy vết, xác nhận nghiệp vụ và thiết kế test.</p></div>}
+          {intake.documentType === "Requirement" && entryMode === "document" && <div className="mt-4 rounded-lg border border-dashed border-violet-300 bg-violet-50/50 p-4 dark:border-violet-900 dark:bg-violet-950/20"><p className="text-sm font-semibold">Tải BRD, SRS, PRD hoặc email đã xuất file</p><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Chọn tệp trước. Sau đó bổ sung thông tin nguồn để AI trích xuất Requirement nháp; PO/BA vẫn là người Baseline.</p><div className="mt-3 flex flex-wrap items-center gap-3"><label className="inline-flex h-9 cursor-pointer items-center rounded-lg bg-violet-600 px-3 text-xs font-semibold text-white hover:bg-violet-700"><FileUp className="mr-2 h-4 w-4" />Chọn PDF, DOC hoặc DOCX<input className="hidden" type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" disabled={importDocument.isPending} onChange={(event) => { const file = event.target.files?.[0]; if (file) { setSelectedDocument(file); if (!intake.title.trim()) updateIntake("title", file.name); } event.target.value = ""; }} /></label>{selectedDocument && <span className="max-w-sm truncate text-xs font-medium text-slate-700 dark:text-slate-200">Đã chọn: {selectedDocument.name}</span>}</div>{selectedDocument && <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-violet-200 bg-white/80 p-3 text-xs dark:border-violet-800 dark:bg-slate-950/40"><span className={sourceReady ? "text-slate-600 dark:text-slate-300" : "text-amber-700 dark:text-amber-300"}>{sourceReady ? "Sẵn sàng trích xuất. AI chỉ tạo bản nháp để bạn rà soát." : "Cần điền Tên nguồn, Người cung cấp và Ngày nhận ở phía trên trước khi trích xuất."}</span><Button size="sm" disabled={!sourceReady || importDocument.isPending} onClick={() => importDocument.mutate(selectedDocument)}>{importDocument.isPending ? "Đang trích xuất…" : "Trích xuất Requirement"}</Button></div>}</div>}
+        </section>}
+        {intake.documentType !== "Requirement" ? <section className="rounded-xl border border-violet-200 bg-violet-50/40 p-5 dark:border-violet-900 dark:bg-violet-950/20"><p className="text-sm font-semibold">Đã phân loại: {intake.documentType === "UserStory" ? "User Story / Product Backlog" : intake.documentType === "UseCase" ? "Use Case / quy trình nghiệp vụ" : "Bằng chứng kỹ thuật"}</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">Hệ thống không cố chuyển loại tài liệu này thành Requirement. Hãy tiếp tục trong luồng tương ứng bên dưới.</p><div className="mt-4">{alternateContent}</div></section> : entryMode === "manual" && <>
+          {activeSection === 2 && <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/40"><div className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-950/50 dark:text-violet-200">2</span><div><h3 className="font-semibold">Nhu cầu nghiệp vụ</h3><p className="text-xs text-slate-500">Viết như một tài liệu ngắn, không phải bảng dữ liệu.</p></div></div><div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_260px]"><Field label="Tên Requirement *"><Input className="h-11 text-base font-medium" value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="Ví dụ: Khách hàng có thể đặt đơn hàng" /></Field><div className="grid grid-cols-2 gap-2"><Field label="Loại"><Select value={form.type} onChange={(e) => update("type", e.target.value)}>{["Functional", "NonFunctional", "BusinessRule", "Integration"].map((item) => <option key={item}>{item}</option>)}</Select></Field><Field label="Ưu tiên"><Select value={form.priority} onChange={(e) => update("priority", e.target.value)}>{["Critical", "High", "Medium", "Low"].map((item) => <option key={item}>{item}</option>)}</Select></Field></div></div><div className="mt-4 grid gap-4 md:grid-cols-2"><Field label="Mục tiêu nghiệp vụ *" hint="Khách hàng nhận được giá trị gì?"><Textarea rows={4} value={form.objective} onChange={(e) => update("objective", e.target.value)} placeholder="Khách hàng có thể hoàn tất đặt hàng nhanh và biết đơn đã được ghi nhận." /></Field><Field label="Yêu cầu chi tiết *" hint="Hệ thống cần làm gì để đạt mục tiêu?"><Textarea rows={4} value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="Hệ thống phải cho phép khách hàng chọn sản phẩm, xác nhận thông tin và tạo đơn hàng." /></Field></div></section>}
+          {activeSection === 3 && <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/40"><div className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-950/50 dark:text-violet-200">3</span><div><h3 className="font-semibold">Phạm vi và tiêu chí chấp nhận</h3><p className="text-xs text-slate-500">Đây là cơ sở PO/BA xác nhận và QA đánh giá khả năng kiểm thử.</p></div></div><div className="mt-4 grid gap-4 md:grid-cols-2"><Field label="Ai sử dụng? *" hint="Mỗi vai trò một dòng"><Textarea rows={3} value={form.actors} onChange={(e) => update("actors", e.target.value)} placeholder={"Khách hàng\nNhân viên vận hành"} /></Field><Field label="Trong phạm vi *" hint="Mỗi hạng mục một dòng"><Textarea rows={3} value={form.inScope} onChange={(e) => update("inScope", e.target.value)} placeholder={"Tạo đơn hàng\nXác nhận trạng thái đơn"} /></Field></div><Field className="mt-4" label="Acceptance Criteria *" hint="Mỗi tiêu chí một dòng, ưu tiên Given / When / Then"><Textarea rows={5} value={form.acceptanceCriteria} onChange={(e) => update("acceptanceCriteria", e.target.value)} placeholder={"Given giỏ hàng hợp lệ\nWhen khách hàng xác nhận đặt hàng\nThen hệ thống tạo đơn và hiển thị mã đơn hàng"} /></Field></section>}
+          {activeSection === 4 && <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/30"><div className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-950/50 dark:text-violet-200">4</span><div><h3 className="font-semibold">Chi tiết bổ sung</h3><p className="text-xs text-slate-500">Tùy chọn. Chỉ bổ sung khi cần làm rõ phạm vi hoặc chuẩn bị kiểm thử.</p></div></div><div className="mt-4 grid gap-4 md:grid-cols-2"><Field label="Business rules"><Textarea rows={3} value={form.businessRules} onChange={(e) => update("businessRules", e.target.value)} placeholder="Mỗi quy tắc một dòng" /></Field><Field label="Ngoài phạm vi"><Textarea rows={3} value={form.outOfScope} onChange={(e) => update("outOfScope", e.target.value)} placeholder="Các hạng mục chưa xử lý ở phiên bản này" /></Field><Field label="Rủi ro / phụ thuộc"><Textarea rows={3} value={`${form.risks}${form.risks && form.dependencies ? "\n" : ""}${form.dependencies}`} onChange={(e) => { update("risks", e.target.value); update("dependencies", ""); }} /></Field><Field label="Dữ liệu test cần có / hạn chế"><Textarea rows={3} value={`${form.testDataRequirements}${form.testDataRequirements && form.dataRestrictions ? "\n" : ""}${form.dataRestrictions}`} onChange={(e) => { update("testDataRequirements", e.target.value); update("dataRestrictions", ""); }} placeholder="Không dùng PII, mật khẩu hoặc dữ liệu production" /></Field></div></section>}
+          <div className="flex items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-700"><Button variant="outline" disabled={activeSection === 1} onClick={() => setActiveSection((step) => Math.max(1, step - 1))}>Quay lại</Button><div className="flex items-center gap-2"><span className="text-xs text-slate-500">Bước {activeSection}/4</span>{activeSection < 4 && <Button variant="outline" onClick={() => setActiveSection((step) => Math.min(4, step + 1))}>Tiếp theo <ArrowRight className="h-4 w-4" /></Button>}</div></div>
+          <div className="sticky bottom-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-200 bg-white/95 p-3 shadow-lg backdrop-blur dark:border-violet-900 dark:bg-slate-950/95"><p className="text-xs text-slate-600 dark:text-slate-300">{canSave ? "Đủ nội dung cốt lõi. Lưu thành bản nháp để PO/BA rà soát." : `Còn ${6 - completed} phần cốt lõi cần hoàn tất.`}</p><Button disabled={!canSave || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? "Đang lưu…" : "Lưu Requirement nháp"}</Button></div>
+        </>}
+        <details className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+          <summary className="cursor-pointer font-semibold">Môi trường và tài liệu tham chiếu (tùy chọn)</summary>
+          <div className="mt-3 space-y-3">
+            <Field label="Ảnh giao diện / Figma / đặc tả API" hint="Dán liên kết và ghi chú thiết kế mong đợi hoặc ảnh chụp hiện trạng. Nội dung được lưu cùng bản nháp khi bạn lưu hoặc tải tài liệu.">
+              <Textarea rows={3} maxLength={1000} value={intake.reference} onChange={(event) => updateIntake("reference", event.target.value)} placeholder="Thiết kế mong đợi — https://… (màn hình đăng nhập)" />
+            </Field>
+            <div className="rounded-lg border border-dashed border-violet-300 bg-violet-50/50 p-3 dark:border-violet-900 dark:bg-violet-950/20">
+              <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-semibold text-slate-800 dark:text-white">Ảnh tham chiếu</p><p className="mt-0.5 text-xs text-slate-500">PNG, JPG hoặc WebP · tối đa 5 MB/ảnh. Ảnh được đính kèm khi bạn lưu Requirement.</p></div><label className="inline-flex h-9 cursor-pointer items-center rounded-lg bg-violet-600 px-3 text-xs font-semibold text-white hover:bg-violet-700"><FileUp className="mr-2 h-4 w-4" />Chọn ảnh<input className="hidden" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { const files = [...(event.target.files || [])].filter((file) => file.size <= 5 * 1024 * 1024); if (files.length !== event.target.files.length) toast.error("Mỗi ảnh tối đa 5 MB."); setReferenceImages((current) => [...current, ...files.map((file) => ({ file, preview: URL.createObjectURL(file) }))].slice(0, 5)); event.target.value = ""; }} /></label></div>
+              {referenceImages.length > 0 && <div className="mt-3 flex flex-wrap gap-3">{referenceImages.map((item, index) => <div key={`${item.file.name}-${index}`} className="relative h-20 w-28 overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-700"><img src={item.preview} alt={item.file.name} className="h-full w-full object-cover" /><button type="button" onClick={() => setReferenceImages((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="absolute right-1 top-1 rounded bg-slate-950/70 px-1.5 py-0.5 text-xs font-bold text-white" aria-label={`Xóa ${item.file.name}`}>×</button><p className="absolute inset-x-0 bottom-0 truncate bg-slate-950/70 px-1 py-0.5 text-[10px] text-white">{item.file.name}</p></div>)}</div>}
+            </div>
+            {evidenceContent && cloneElement(evidenceContent, { intakeOnly: true })}
+          </div>
+        </details>
+        <RequirementLibrary items={items} baselined={baselined} decide={decide} onNext={onNext} />
+      </main>
+    </div>
+  </Card>;
+}
+
+const requirementStatusLabel = {
+  Draft: "Bản nháp",
+  Reviewed: "Đã rà soát",
+  Baselined: "Đã chốt",
+  Rejected: "Từ chối",
+  Changed: "Có thay đổi",
+  Retired: "Ngừng áp dụng",
+};
+
+const requirementTone = (status) => status === "Baselined" ? "green" : status === "Rejected" || status === "Retired" ? "red" : status === "Draft" ? "slate" : "amber";
+
+function DetailList({ title, values }) {
+  const items = Array.isArray(values) ? values.filter(Boolean) : values ? [values] : [];
+  return <section className={`rounded-xl border p-4 ${items.length ? "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950" : "border-dashed border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-900/40"}`}><div className="flex items-center justify-between gap-3"><h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">{title}</h4>{!items.length && <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">Chưa có dữ liệu</span>}</div>{items.length ? <ul className="mt-2 space-y-2 text-sm leading-6 text-slate-700 dark:text-slate-200">{items.map((value, index) => <li key={`${title}-${index}`} className="flex gap-2"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500" /><span>{value}</span></li>)}</ul> : <p className="mt-2 text-sm leading-6 text-slate-400">Tài liệu nguồn chưa nêu rõ nội dung này; cần PO/BA bổ sung hoặc xác nhận.</p>}</section>;
+}
+
+function RequirementLibrary({ items, baselined, decide, onNext }) {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("All");
+  const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState(null);
+  const pageSize = 10;
+  const statusOptions = [
+    ["All", "Tất cả", items.length],
+    ["Draft", "Bản nháp", items.filter((item) => item.status === "Draft").length],
+    ["Baselined", "Đã chốt", baselined.length],
+    ["Changed", "Có thay đổi", items.filter((item) => item.status === "Changed").length],
+    ["Rejected", "Từ chối", items.filter((item) => item.status === "Rejected").length],
+  ];
+  const normalizedQuery = query.trim().toLocaleLowerCase("vi");
+  const filtered = items.filter((item) => {
+    const matchesStatus = status === "All" || item.status === status;
+    const haystack = [item.requirementId, item.title, item.description, item.source?.title, item.source?.provider, ...(item.actors || []), ...(item.inScope || [])].filter(Boolean).join(" ").toLocaleLowerCase("vi");
+    return matchesStatus && (!normalizedQuery || haystack.includes(normalizedQuery));
+  });
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const changeFilter = (nextStatus) => { setStatus(nextStatus); setPage(1); };
+  const changeQuery = (value) => { setQuery(value); setPage(1); };
+  const baseline = (item) => {
+    if (window.confirm(`Chốt ${item.requirementId || "Requirement này"} làm bản chuẩn? Sau khi chốt, mục này sẽ được dùng để sinh Use Case.`)) decide.mutate({ id: item._id, decision: "Baselined" });
+  };
+  const selectedDetails = selected ? [selected.objective, selected.description, selected.actors, selected.inScope, selected.outOfScope, selected.acceptanceCriteria, selected.businessRules, selected.nonFunctionalRequirements, selected.risks, selected.assumptions, selected.dependencies, selected.testDataRequirements, selected.dataRestrictions] : [];
+  const completedDetailCount = selectedDetails.filter((value) => Array.isArray(value) ? value.some(Boolean) : Boolean(value)).length;
+
+  return <section id="requirements-library" className="scroll-mt-5 border-t border-slate-200 pt-5 dark:border-slate-700">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-base font-semibold">Thư viện Requirement</h3><p className="mt-1 text-xs text-slate-500">{items.length} mục · {baselined.length} đã chốt làm bản chuẩn. Chọn một hàng để xem đầy đủ nội dung.</p></div>{baselined.length > 0 && <Button variant="outline" onClick={onNext}>Tiếp tục Use Case <ArrowRight className="h-4 w-4" /></Button>}</div>
+    {items.length ? <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 p-3 backdrop-blur dark:border-slate-700 dark:bg-slate-950/95">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <label className="relative block w-full xl:max-w-sm"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input value={query} onChange={(event) => changeQuery(event.target.value)} className="pl-9" placeholder="Tìm theo mã, tên, actor hoặc nguồn…" aria-label="Tìm Requirement" /></label>
+          <div className="flex gap-1 overflow-x-auto pb-1 xl:pb-0">{statusOptions.map(([value, label, count]) => <button key={value} type="button" onClick={() => changeFilter(value)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition ${status === value ? "bg-violet-600 text-white shadow-sm" : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"}`}>{label} <span className={status === value ? "text-violet-100" : "text-slate-400"}>{count}</span></button>)}</div>
+        </div>
+      </div>
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">{visible.map((item) => <button key={item._id} type="button" onClick={() => setSelected(item)} className="group grid w-full gap-3 p-4 text-left transition hover:bg-violet-50/60 focus:bg-violet-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-violet-500 dark:hover:bg-violet-950/20 md:grid-cols-[minmax(0,1fr)_150px_150px_28px] md:items-center">
+        <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-bold text-violet-700 dark:text-violet-300">{item.requirementId || "Chưa có mã"}</span><Badge tone={requirementTone(item.status)}>{requirementStatusLabel[item.status] || item.status}</Badge></div><p className="mt-1 truncate text-sm font-semibold text-slate-900 dark:text-white">{item.title}</p><p className="mt-1 line-clamp-1 text-xs text-slate-500">{item.description || item.objective || "Chưa có mô tả"}</p></div>
+        <div className="text-xs text-slate-500"><p className="font-medium text-slate-700 dark:text-slate-300">{item.source?.title || "Chưa rõ nguồn"}</p><p className="mt-1">{item.source?.provider || "Chưa có người cung cấp"}</p></div>
+        <div className="text-xs text-slate-500"><p>{item.type || "Requirement"} · {item.priority || "Medium"}</p><p className="mt-1">Cập nhật {formatDocumentDate(item.updatedAt)}</p></div>
+        <ChevronRight className="hidden h-5 w-5 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-violet-500 md:block" />
+      </button>)}</div>
+      {!visible.length && <div className="p-10 text-center"><Search className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-semibold">Không tìm thấy Requirement phù hợp</p><button type="button" onClick={() => { changeQuery(""); changeFilter("All"); }} className="mt-2 text-xs font-semibold text-violet-600 hover:underline">Xóa bộ lọc</button></div>}
+      {filtered.length > pageSize && <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/70 px-4 py-3 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900/60"><span>Hiển thị {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filtered.length)} trong {filtered.length} mục</span><div className="flex items-center gap-2"><Button size="sm" variant="outline" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" /> Trước</Button><span className="font-semibold text-slate-700 dark:text-slate-200">{currentPage}/{pageCount}</span><Button size="sm" variant="outline" disabled={currentPage === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Sau <ChevronRight className="h-4 w-4" /></Button></div></div>}
+    </div> : <p className="mt-3 rounded-lg border border-dashed p-4 text-sm text-slate-500">Chưa có Requirement. Bạn có thể soạn tay hoặc tải tài liệu ở phía trên.</p>}
+
+    {selected && <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-label={`Chi tiết ${selected.requirementId}`} onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
+      <div className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl dark:bg-slate-950">
+        <header className="border-b border-slate-200 p-5 dark:border-slate-800"><div className="flex items-start justify-between gap-4"><div><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-violet-700 dark:text-violet-300">{selected.requirementId || "Chưa có mã"}</span><Badge tone={requirementTone(selected.status)}>{requirementStatusLabel[selected.status] || selected.status}</Badge></div><h3 className="mt-2 text-xl font-bold text-slate-950 dark:text-white">{selected.title}</h3><p className="mt-2 text-xs text-slate-500">{selected.type || "Requirement"} · Ưu tiên {selected.priority || "Medium"} · Cập nhật {formatDocumentDate(selected.updatedAt)}</p></div><button type="button" onClick={() => setSelected(null)} className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white" aria-label="Đóng chi tiết"><X className="h-5 w-5" /></button></div></header>
+        <div className="flex-1 space-y-6 overflow-y-auto p-5">
+          <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">Nguồn</p><p className="mt-1 text-sm font-semibold">{selected.source?.title || "Chưa rõ nguồn"}</p><p className="mt-1 text-xs text-slate-500">{selected.source?.provider || "Chưa có người cung cấp"}{selected.source?.version ? ` · ${selected.source.version}` : ""}</p></div><div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">Phạm vi</p><p className="mt-1 text-sm font-semibold">{selected.scope?.name || selected.release || "Toàn hệ thống"}</p><p className="mt-1 text-xs text-slate-500">{selected.scope?.level || "System"}</p></div></div>
+          <div className={`rounded-xl border p-4 ${completedDetailCount >= 8 ? "border-emerald-200 bg-emerald-50/70 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-100" : "border-amber-200 bg-amber-50/70 text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100"}`}><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold">Độ đầy đủ: {completedDetailCount}/13 nhóm thông tin</p><span className="text-xs font-medium">{completedDetailCount >= 8 ? "Khá đầy đủ" : "Cần bổ sung trước khi chốt"}</span></div><p className="mt-1 text-xs leading-5 opacity-80">Hệ thống chỉ tách nội dung có trong tài liệu nguồn và không tự bịa phần còn thiếu. Các mục trống được hiển thị bên dưới để PO/BA dễ rà soát.</p></div>
+          <DetailList title="Mục tiêu nghiệp vụ" values={selected.objective} />
+          <DetailList title="Mô tả yêu cầu" values={selected.description} />
+          <DetailList title="Actor / vai trò" values={selected.actors} />
+          <DetailList title="Trong phạm vi" values={selected.inScope} />
+          <DetailList title="Ngoài phạm vi" values={selected.outOfScope} />
+          <DetailList title="Acceptance Criteria" values={selected.acceptanceCriteria} />
+          <DetailList title="Business rules" values={selected.businessRules} />
+          <DetailList title="Yêu cầu phi chức năng" values={selected.nonFunctionalRequirements} />
+          <DetailList title="Rủi ro" values={selected.risks} />
+          <DetailList title="Giả định" values={selected.assumptions} />
+          <DetailList title="Phụ thuộc" values={selected.dependencies} />
+          <DetailList title="Dữ liệu test cần có" values={selected.testDataRequirements} />
+          <DetailList title="Hạn chế dữ liệu" values={selected.dataRestrictions} />
+        </div>
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950"><p className="max-w-md text-xs leading-5 text-slate-500">“Đặt làm bản chuẩn” xác nhận Requirement đã sẵn sàng làm đầu vào chính thức cho Use Case và thiết kế kiểm thử.</p><div className="flex gap-2"><Button variant="outline" onClick={() => setSelected(null)}>Đóng</Button>{selected.status !== "Baselined" && <Button disabled={decide.isPending} onClick={() => baseline(selected)}>{decide.isPending ? "Đang cập nhật…" : "Đặt làm bản chuẩn"}</Button>}</div></footer>
+      </div>
+    </div>}
+  </section>;
+}
+
+function TechnicalEvidenceStep({ profile, github, integrations, git, setGit, analyzeGithub, activeProject, GitHubForm, updateProfile, onNext, intakeOnly = false }) {
+  const [url, setUrl] = useState(null);
+  const website = url ?? profile?.baseUrl ?? "";
+  if (!profile) return <Blocked title="Đang chuẩn bị phạm vi kiểm thử" description="Hệ thống đang tạo không gian liên kết tài liệu cho Project này." />;
+  return <Card className="p-5 sm:p-6">
+    <SectionTitle title="Môi trường và bằng chứng kỹ thuật" description="Tuỳ chọn. Repository giúp đối chiếu route, API, role và entity; không thay thế Requirement đã Baseline từ đề bài khách hàng." />
+    <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
+      <div className="rounded-lg border border-border p-3">
+        <p className="font-semibold">Website / Staging URL</p>
+        <p className="mt-1 break-all text-muted-foreground">{profile.environment?.targetUrl || profile.baseUrl || "Chưa có URL. Có thể chọn môi trường chạy ở bước Run Automation."}</p>
+        {updateProfile && <form className="mt-3 flex flex-wrap gap-2" onSubmit={(event) => {
+          event.preventDefault();
+          updateProfile.mutate({ baseUrl: website.trim() }, { onSuccess: () => setUrl(null) });
+        }}>
+          <Input aria-label="Website hoặc Staging URL" type="url" pattern="https?://.+" required value={website} onChange={(event) => setUrl(event.target.value)} placeholder="https://staging.example.com" />
+          <Button type="submit" disabled={updateProfile.isPending}>Lưu URL của Profile</Button>
+        </form>}
+      </div>
+      {!intakeOnly && <div className="rounded-lg border border-border p-3">
+        <p className="font-semibold">Ảnh giao diện / Figma / đặc tả API</p>
+        <p className="mt-1 text-muted-foreground">Có thể ghi liên kết tham chiếu trong nguồn Requirement. Dùng ảnh hoặc thiết kế để đối chiếu trạng thái giao diện và bổ sung kết quả mong đợi vào tiêu chí chấp nhận.</p>
+      </div>}
+    </div>
+    {profile.repository?.fullName && <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"><span className="font-semibold">Đã gắn bằng chứng:</span> {profile.repository.fullName}@{profile.repository.commitSha || profile.repository.ref}</div>}
+    <details className="mt-5 rounded-xl border border-slate-200 p-4 dark:border-slate-700"><summary className="cursor-pointer text-sm font-semibold">{profile.repository?.fullName ? "Cập nhật phân tích GitHub" : "Kết nối và phân tích GitHub"}</summary><div className="mt-5"><GitHubForm {...{ github, integrations, git, setGit, analyzeGithub, activeProject, profile }} /></div></details>
+    {!intakeOnly && <div className="mt-6 flex justify-end"><Button variant="outline" onClick={onNext}>{profile.repository?.fullName ? "Tiếp tục Use Case" : "Bỏ qua, tiếp tục Use Case"} <ArrowRight className="h-4 w-4" /></Button></div>}
+  </Card>;
+}
+
 function UseCaseStep({
+  intakeOnly = false,
+  reference = "",
   useCase,
   profile,
   setUseCase,
@@ -415,9 +700,10 @@ function UseCaseStep({
   addUseCase,
   approveUseCase,
   useCases,
+  requirements,
   onNext,
 }) {
-  const [mode, setMode] = useState("review");
+  const [mode, setMode] = useState(intakeOnly ? "source" : "review");
   const [originFilter, setOriginFilter] = useState("All");
   const [sortOrder, setSortOrder] = useState("newest");
   const [search, setSearch] = useState("");
@@ -427,8 +713,9 @@ function UseCaseStep({
   const update = (key, value) => setUseCase({ ...useCase, [key]: value });
   const items = useCases.data || [];
   const approved = items.filter((item) => item.status === "Approved");
+  const hasBaselineRequirements = (requirements?.data || []).some((item) => item.status === "Baselined");
   const importDocument = useMutation({
-    mutationFn: (file) => e2eApi.importUseCasesDocument(profile._id, file),
+    mutationFn: (file) => e2eApi.importUseCasesDocument(profile._id, file, reference),
     onSuccess: (result) => {
       toast.success(result.message || "Đã tạo Use Case nháp từ tài liệu");
       setMode("review");
@@ -444,7 +731,7 @@ function UseCaseStep({
     },
     onError: (error) => toast.error(error.message || "Không thể cập nhật nguồn tạo."),
   });
-  const canCreate = useCase.name && useCase.actor && useCase.summary && useCase.mainFlow && !addUseCase.isPending;
+  const canCreate = useCase.name && useCase.actor && useCase.scope && useCase.summary && useCase.mainFlow && !addUseCase.isPending;
   const filteredItems = items
     .filter((item) => {
       const term = search.trim().toLocaleLowerCase();
@@ -484,7 +771,7 @@ function UseCaseStep({
 
     {(mode === "source" || !items.length) && <div className="mt-4"><p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Chọn một cách bổ sung Use Case</p><div className="grid gap-3 md:grid-cols-3">
       {sourceOption("document", "Nhập từ tài liệu", "Tải PDF, DOC hoặc DOCX; AI chỉ trích xuất thành các bản nháp.", "Dùng khi đã có đặc tả")}
-      {sourceOption("ai", "Đề xuất từ Profile", "AI đọc System Profile để gợi ý hành trình còn thiếu.", "Dùng khi chưa có đặc tả")}
+      {!intakeOnly && sourceOption("ai", "Soạn nháp từ Requirement đã Baseline", "AI chuyển yêu cầu đã xác nhận thành hành trình nháp.", "Tài liệu dẫn xuất")}
       {sourceOption("manual", "Soạn thủ công", "QA tự khai báo một hành trình mới và các luồng của nó.", "Dùng cho ngoại lệ cụ thể")}
     </div></div>}
 
@@ -493,9 +780,9 @@ function UseCaseStep({
       <p className="mt-3 text-xs text-slate-500">Tài liệu gốc là nguồn tham khảo. Những chỗ thiếu sẽ được gắn “Cần QA xác nhận”; hệ thống không tự duyệt hoặc tự suy diễn chức năng.</p>
     </div>}
 
-    {mode === "ai" && <div className="mt-5 rounded-xl border border-sky-200 bg-sky-50/60 p-5 dark:border-sky-900 dark:bg-sky-950/20"><p className="text-sm font-semibold">Chưa có tài liệu?</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">AI dùng System Profile và nguồn đã chọn để đề xuất các hành trình. Kết quả vẫn là bản nháp để QA kiểm tra.</p><Button className="mt-4" disabled={suggestUseCases.isPending} onClick={() => suggestUseCases.mutate()}>{suggestUseCases.isPending ? "AI đang gợi ý…" : "Tạo Use Case nháp từ Profile"}</Button></div>}
+    {mode === "ai" && <div className="mt-5 rounded-xl border border-sky-200 bg-sky-50/60 p-5 dark:border-sky-900 dark:bg-sky-950/20"><p className="text-sm font-semibold">Sinh từ Requirement khách hàng đã Baseline</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">AI dùng Requirement đã xác nhận làm nguồn chính; System Profile và GitHub chỉ là bối cảnh/bằng chứng kỹ thuật bổ sung.</p>{!hasBaselineRequirements && <p className="mt-3 text-xs font-semibold text-amber-700 dark:text-amber-300">Hãy quay lại bước “Đề bài khách hàng” và Baseline ít nhất một Requirement trước.</p>}<Button className="mt-4" disabled={!hasBaselineRequirements || suggestUseCases.isPending} onClick={() => suggestUseCases.mutate()}>{suggestUseCases.isPending ? "AI đang gợi ý…" : "Tạo Use Case nháp từ Requirement"}</Button></div>}
 
-    {mode === "manual" && <div className="mt-5 rounded-xl border border-slate-200 p-4 dark:border-slate-700"><div className="grid gap-4 md:grid-cols-2"><Field label="Tên hành trình"><Input value={useCase.name} onChange={(e) => update("name", e.target.value)} placeholder="Đăng nhập thành công và vào trang chủ" /></Field><Field label="Actor"><Input value={useCase.actor} onChange={(e) => update("actor", e.target.value)} placeholder="Customer" /></Field><Field label="Mục tiêu / giá trị nghiệp vụ"><Textarea rows={3} value={useCase.summary} onChange={(e) => update("summary", e.target.value)} placeholder="Người dùng truy cập được trang chủ sau khi xác thực hợp lệ." /></Field><Field label="Luồng chính · mỗi dòng một bước"><Textarea rows={4} value={useCase.mainFlow} onChange={(e) => update("mainFlow", e.target.value)} placeholder={"A: Mở trang đăng nhập\nA: Nhập tài khoản hợp lệ\nS: Hệ thống xác thực và chuyển tới trang chủ"} /></Field></div><details className="mt-4"><summary className="cursor-pointer text-xs font-semibold text-violet-700 dark:text-violet-300">Bổ sung mã, rủi ro và các luồng ngoại lệ</summary><div className="mt-4 grid gap-4 md:grid-cols-3"><Field label="Mã Use Case"><Input value={useCase.code} onChange={(e) => update("code", e.target.value)} placeholder="UC-LOGIN-01" /></Field><Field label="Rủi ro"><Select value={useCase.risk} onChange={(e) => update("risk", e.target.value)}>{["Critical", "High", "Medium", "Low"].map((item) => <option key={item}>{item}</option>)}</Select></Field><Field label="Tiền điều kiện"><Textarea rows={3} value={useCase.preconditions || ""} onChange={(e) => update("preconditions", e.target.value)} /></Field><Field label="Luồng thay thế"><Textarea rows={3} value={useCase.alternateFlows || ""} onChange={(e) => update("alternateFlows", e.target.value)} /></Field><Field label="Luồng lỗi / ngoại lệ"><Textarea rows={3} value={useCase.exceptionFlows || ""} onChange={(e) => update("exceptionFlows", e.target.value)} /></Field></div></details><div className="mt-4 flex justify-end"><Button disabled={!canCreate} onClick={() => addUseCase.mutate()}>{addUseCase.isPending ? "Đang lưu…" : "Tạo Use Case nháp"}</Button></div></div>}
+    {mode === "manual" && <div className="mt-5 rounded-xl border border-slate-200 p-4 dark:border-slate-700"><div className="grid gap-4 md:grid-cols-2"><Field label="Tên hành trình"><Input value={useCase.name} onChange={(e) => update("name", e.target.value)} placeholder="Đăng nhập thành công và vào trang chủ" /></Field><Field label="Actor"><Input value={useCase.actor} onChange={(e) => update("actor", e.target.value)} placeholder="Customer" /></Field><Field label="Phạm vi Use Case *" hint="Feature hoặc ranh giới hành trình mà Use Case này bao phủ."><Input value={useCase.scope} onChange={(e) => update("scope", e.target.value)} placeholder="Ví dụ: Checkout / Đặt món từ giỏ hàng" /></Field><Field label="Mục tiêu / giá trị nghiệp vụ"><Textarea rows={3} value={useCase.summary} onChange={(e) => update("summary", e.target.value)} placeholder="Người dùng truy cập được trang chủ sau khi xác thực hợp lệ." /></Field><Field label="Luồng chính · mỗi dòng một bước"><Textarea rows={4} value={useCase.mainFlow} onChange={(e) => update("mainFlow", e.target.value)} placeholder={"A: Mở trang đăng nhập\nA: Nhập tài khoản hợp lệ\nS: Hệ thống xác thực và chuyển tới trang chủ"} /></Field></div><details className="mt-4"><summary className="cursor-pointer text-xs font-semibold text-violet-700 dark:text-violet-300">Bổ sung mã, rủi ro và các luồng ngoại lệ</summary><div className="mt-4 grid gap-4 md:grid-cols-3"><Field label="Mã Use Case"><Input value={useCase.code} onChange={(e) => update("code", e.target.value)} placeholder="UC-LOGIN-01" /></Field><Field label="Rủi ro"><Select value={useCase.risk} onChange={(e) => update("risk", e.target.value)}>{["Critical", "High", "Medium", "Low"].map((item) => <option key={item}>{item}</option>)}</Select></Field><Field label="Tiền điều kiện"><Textarea rows={3} value={useCase.preconditions || ""} onChange={(e) => update("preconditions", e.target.value)} /></Field><Field label="Luồng thay thế"><Textarea rows={3} value={useCase.alternateFlows || ""} onChange={(e) => update("alternateFlows", e.target.value)} /></Field><Field label="Luồng lỗi / ngoại lệ"><Textarea rows={3} value={useCase.exceptionFlows || ""} onChange={(e) => update("exceptionFlows", e.target.value)} /></Field></div></details><div className="mt-4 flex justify-end"><Button disabled={!canCreate} onClick={() => addUseCase.mutate(reference)}>{addUseCase.isPending ? "Đang lưu…" : "Tạo Use Case nháp"}</Button></div></div>}
 
     {!!items.length && <div className="mt-6 space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -612,7 +899,7 @@ function ScenarioTable({ title, value, actor, type = "main" }) {
 function registryOrigin(type, item) {
   if (type === "System Profile") return item.mode === "GitHubE2E" ? { label: "Phân tích GitHub", tone: "blue" } : { label: "Thiết lập thủ công", tone: "slate" };
   if (type === "Use Case") { const origin = getUseCaseOrigin(item); return { label: origin.label, tone: origin.tone }; }
-  if (type === "User Story") return item.source === "AI" ? { label: "AI", tone: "purple" } : item.source === "GitHub" ? { label: "GitHub", tone: "blue" } : { label: "Thủ công", tone: "slate" };
+  if (type === "User Story") return item.source === "AI" ? { label: "AI", tone: "purple" } : item.source === "GitHub" ? { label: "GitHub", tone: "blue" } : item.source === "ImportedDocument" ? { label: "Tài liệu User Story", tone: "blue" } : { label: "Thủ công", tone: "slate" };
   if (type === "Test Plan") return item.origin === "AI" ? { label: "AI", tone: "purple" } : item.origin === "Rule" ? { label: "Quy tắc hệ thống", tone: "blue" } : item.origin === "Board" ? { label: "Test Board", tone: "blue" } : item.origin === "Manual" ? { label: "Thủ công", tone: "slate" } : { label: "Chưa ghi nhận", tone: "amber" };
   if (type === "Test Suite") return item.origin === "SystemE2E" ? { label: "Tự tạo E2E", tone: "blue" } : item.origin === "Imported" ? { label: "Nhập dữ liệu", tone: "blue" } : { label: "Thủ công", tone: "slate" };
   const labels = { SystemE2E: "AI E2E từ Profile", UserStory: "AI từ User Story", UserStoryAndWeb: "AI từ User Story & Web", Manual: "Thủ công" };
@@ -795,43 +1082,97 @@ function UseCaseSpecificationCard({ item, approveUseCase, confirmOrigin }) {
   );
 }
 function UserStoryStep({
+  intakeOnly = false,
+  reference = "",
   project,
   profile,
+  intake,
   useCases,
+  requirements,
   stories,
   generateStory,
   StoryDraftCard,
   user,
   updateStory,
   submitStory,
+  qaReviewStory,
   download,
   onNext,
   setActiveStep,
 }) {
   const qc = useQueryClient();
   const [useCaseId, setUseCaseId] = useState("");
+  const documentKind = "UserStory";
+  const [mode, setMode] = useState("manual");
+  const emptyDraft = () => ({ title: "", externalId: "", version: "", actor: "", goal: "", benefit: "", description: "", criteria: "", priority: "Medium", storyPoints: "3", estimatedHours: "", labels: "", businessValue: "", inScope: "", outOfScope: "", nonFunctionalRequirements: "", risks: "", assumptions: "", dependencies: "", definitionOfReady: "", definitionOfDone: "", testDataRequirements: "", dataRestrictions: "", parentRequirements: [] });
+  const [draft, setDraft] = useState(emptyDraft);
+  const [importMeta, setImportMeta] = useState({ externalId: "", version: "", system: "File", effectiveAt: new Date().toISOString().slice(0, 10), parentRequirements: [] });
+  const intakeSystem = intake?.sourceSystem === "Jira" ? "Jira" : intake?.sourceSystem === "AzureDevOps" ? "AzureDevOps" : intake?.sourceSystem === "Customer" || intake?.sourceSystem === "ProductOwner" ? "Other" : "File";
+  const resolvedImportMeta = {
+    ...importMeta,
+    system: importMeta.system === "File" ? intakeSystem : importMeta.system,
+    externalId: importMeta.externalId || intake?.externalId || "",
+    version: importMeta.version || intake?.version || "",
+    effectiveAt: importMeta.effectiveAt || intake?.receivedAt || null,
+  };
   const approvedUseCases = (useCases.data || []).filter(
     (item) => item.status === "Approved",
   );
   const approvedStories = stories.filter(
     (item) => item.approvalStatus === "Approved",
   );
+  const createManual = useMutation({
+    mutationFn: () => requirementApi.createStory({
+      project,
+      reference,
+      title: draft.title.trim(),
+      description: draft.description.trim() || `As a ${draft.actor.trim()}, I want ${draft.goal.trim()}, so that ${draft.benefit.trim()}.`,
+      acceptanceCriteria: lines(draft.criteria).map((criteria) => ({ criteria })),
+      priority: draft.priority,
+      storyPoints: Number(draft.storyPoints) || 0,
+      estimatedHours: Number(draft.estimatedHours) || 0,
+      labels: lines(draft.labels),
+      businessValue: draft.businessValue.trim(),
+      inScope: lines(draft.inScope), outOfScope: lines(draft.outOfScope),
+      nonFunctionalRequirements: lines(draft.nonFunctionalRequirements), risks: lines(draft.risks),
+      assumptions: lines(draft.assumptions), dependencies: lines(draft.dependencies),
+      definitionOfReady: lines(draft.definitionOfReady), definitionOfDone: lines(draft.definitionOfDone),
+      testDataRequirements: lines(draft.testDataRequirements), dataRestrictions: lines(draft.dataRestrictions),
+      parentRequirements: draft.parentRequirements,
+      source: "Manual",
+      approvalStatus: "Draft",
+      externalReference: {
+        system: intakeSystem === "File" ? "Other" : intakeSystem,
+        externalId: draft.externalId.trim() || intake?.externalId || "",
+        version: draft.version.trim() || intake?.version || "",
+      },
+      e2e: { systemProfile: profile._id, requirements: draft.parentRequirements, definitionOfDone: lines(draft.definitionOfDone), assumptions: lines(draft.assumptions), dependencies: lines(draft.dependencies) },
+    }),
+    onSuccess: () => {
+      setDraft(emptyDraft());
+      toast.success("Đã lưu User Story nháp.");
+      qc.invalidateQueries({ queryKey: ["e2e-stories"] });
+    },
+    onError: (error) => toast.error(error.message),
+  });
   const upload = useMutation({
     mutationFn: async (file) => {
-      const result = await aiApi.suggestUserStoryDocument(project, file);
-      const suggestion = result.suggestion;
-      return requirementApi.createStory({
+      const result = await aiApi.suggestUserStoryDocument(project, file, documentKind);
+      const suggestions = result.suggestions || (result.suggestion ? [result.suggestion] : []);
+      return Promise.all(suggestions.map((suggestion) => requirementApi.createStory({
         ...suggestion,
         project,
-        source: "AI",
+      reference,
+        source: documentKind === "UserStory" ? "ImportedDocument" : "AI",
+        sourceDocument: documentKind === "UserStory" ? result.document : { fileName: file.name, documentType: "Requirement", extractedAt: new Date().toISOString() },
+        externalReference: documentKind === "UserStory" ? { system: resolvedImportMeta.system, externalId: suggestion.externalId || resolvedImportMeta.externalId, version: resolvedImportMeta.version, effectiveAt: resolvedImportMeta.effectiveAt || null } : undefined,
+        parentRequirements: documentKind === "UserStory" ? resolvedImportMeta.parentRequirements : [],
         approvalStatus: "Draft",
         e2e: { systemProfile: profile?._id || profile },
-      });
+      })));
     },
-    onSuccess: () => {
-      toast.success(
-        "AI đã tạo User Story nháp từ tài liệu tải lên. Hãy kiểm tra và gửi duyệt.",
-      );
+    onSuccess: (created) => {
+      toast.success(documentKind === "UserStory" ? `Đã trích xuất ${created.length} User Story từ tài liệu. Hãy kiểm tra trước khi gửi duyệt.` : "AI đã tạo User Story nháp từ tài liệu yêu cầu. Hãy kiểm tra và gửi duyệt.");
       qc.invalidateQueries({ queryKey: ["e2e-stories"] });
     },
     onError: (error) =>
@@ -840,23 +1181,27 @@ function UserStoryStep({
   return (
     <Card className="p-5">
       <SectionTitle
-        title="User Story · dùng tài liệu có sẵn hoặc AI gợi ý"
-        description="Tải requirement PDF, DOC hoặc DOCX để AI tạo User Story nháp; hoặc sinh trực tiếp từ Use Case đã duyệt. QA luôn cần kiểm tra trước khi gửi duyệt."
+        title="Chuẩn hóa User Story"
+        description="Thêm User Story từ backlog hoặc soạn bản nháp dựa trên nghiệp vụ đã duyệt."
       />
-      <div className="mt-5 grid gap-3 rounded-xl border border-dashed border-violet-300 bg-violet-50/40 p-4 dark:border-violet-900 dark:bg-violet-950/20 sm:grid-cols-[1fr_auto]">
-        <div>
-          <p className="text-sm font-semibold">
-            Có sẵn Requirement / User Story?
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            Tải PDF, DOC hoặc DOCX. Nội dung được dùng làm ngữ cảnh để AI đề
-            xuất bản nháp.
-          </p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {[["manual", "Tự nhập"], ["upload", "Tải tài liệu có sẵn"], ["ai", "AI soạn từ Use Case đã duyệt"]].filter(([key]) => !intakeOnly || key !== "ai").map(([key, label]) => (
+          <Button key={key} type="button" variant={mode === key ? "default" : "outline"} aria-pressed={mode === key} onClick={() => setMode(key)}>{label}</Button>
+        ))}
+      </div>
+      {mode === "manual" && <div className="mt-4 space-y-4">
+        <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 dark:border-violet-900 dark:bg-violet-950/20">
+          <p className="text-sm font-semibold">Nội dung cốt lõi</p><p className="mt-1 text-xs text-slate-500">Chỉ cần hoàn thành các trường này để lưu bản nháp. Những thông tin chi tiết có thể bổ sung sau.</p>
+          <div className="mt-4 grid gap-4 md:grid-cols-2"><Field className="md:col-span-2" label="Tiêu đề *"><Input maxLength={300} value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="US-ORDER-001 · Đặt món từ nhà hàng" /></Field><Field label="Với vai trò *"><Input value={draft.actor} onChange={(e) => setDraft({ ...draft, actor: e.target.value })} placeholder="Khách hàng" /></Field><Field label="Tôi muốn *"><Input value={draft.goal} onChange={(e) => setDraft({ ...draft, goal: e.target.value })} placeholder="chọn món và đặt hàng" /></Field><Field className="md:col-span-2" label="Để *"><Input value={draft.benefit} onChange={(e) => setDraft({ ...draft, benefit: e.target.value })} placeholder="nhận món phù hợp tại địa chỉ đã chọn." /></Field><Field className="md:col-span-2" label="Acceptance Criteria * · mỗi dòng một tiêu chí"><Textarea rows={4} value={draft.criteria} onChange={(e) => setDraft({ ...draft, criteria: e.target.value })} placeholder={"Given khách hàng đã chọn món hợp lệ\nWhen khách hàng xác nhận đặt hàng\nThen hệ thống tạo đơn và hiển thị mã đơn."} /></Field></div>
         </div>
+        <details className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"><summary className="cursor-pointer text-sm font-semibold text-violet-700 dark:text-violet-300">Bổ sung chi tiết: phạm vi, ưu tiên, truy vết, rủi ro và dữ liệu</summary><p className="mt-1 text-xs text-slate-500">Mở khi bạn cần làm rõ phạm vi hoặc chuẩn bị hồ sơ đầy đủ để review.</p><div className="mt-4 grid gap-4 md:grid-cols-2"><Field label="Phạm vi User Story" hint="Một lát cắt nhỏ có thể bàn giao và kiểm thử trong một feature hoặc flow."><Textarea rows={2} value={draft.inScope} onChange={(e) => setDraft({ ...draft, inScope: e.target.value })} placeholder="Ví dụ: Checkout — khách hàng áp mã voucher và xác nhận đơn hàng." /></Field><Field label="Mã nguồn / phiên bản"><div className="grid grid-cols-2 gap-2"><Input value={draft.externalId} onChange={(e) => setDraft({ ...draft, externalId: e.target.value })} placeholder="US-123" /><Input value={draft.version} onChange={(e) => setDraft({ ...draft, version: e.target.value })} placeholder="v1.0" /></div></Field><Field label="Ưu tiên · Story Point · Giờ ước tính"><div className="grid grid-cols-3 gap-2"><Select value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: e.target.value })}>{["Critical", "High", "Medium", "Low"].map((item) => <option key={item}>{item}</option>)}</Select><Select value={draft.storyPoints} onChange={(e) => setDraft({ ...draft, storyPoints: e.target.value })}>{["1", "2", "3", "5", "8", "13", "21"].map((item) => <option key={item} value={item}>{item} SP</option>)}</Select><Input type="number" min="0" step="0.5" value={draft.estimatedHours} onChange={(e) => setDraft({ ...draft, estimatedHours: e.target.value })} placeholder="Giờ" /></div></Field><Field label="Giá trị nghiệp vụ"><Textarea rows={2} value={draft.businessValue} onChange={(e) => setDraft({ ...draft, businessValue: e.target.value })} placeholder="Giảm thời gian đặt món, tăng tỷ lệ hoàn tất đơn." /></Field><Field className="md:col-span-2" label="Diễn giải bổ sung"><Textarea rows={2} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="Bổ sung bối cảnh nghiệp vụ nếu cần." /></Field><Field label="Requirement nguồn / truy vết"><Select multiple className="min-h-24" value={draft.parentRequirements} onChange={(event) => setDraft({ ...draft, parentRequirements: [...event.target.selectedOptions].map((item) => item.value) })}>{(requirements?.data || []).filter((item) => item.status === "Baselined").map((item) => <option key={item._id} value={item._id}>{item.requirementId} · {item.title}</option>)}</Select></Field><Field label="Definition of Ready"><Textarea rows={3} value={draft.definitionOfReady} onChange={(e) => setDraft({ ...draft, definitionOfReady: e.target.value })} placeholder="Requirement đã Baseline\nThiết kế/API liên quan đã rõ" /></Field><Field label="Tags · mỗi dòng một tag"><Input value={draft.labels} onChange={(e) => setDraft({ ...draft, labels: e.target.value })} placeholder="Order\nCustomer\nMVP" /></Field><Field label="Ngoài phạm vi"><Textarea rows={3} value={draft.outOfScope} onChange={(e) => setDraft({ ...draft, outOfScope: e.target.value })} /></Field><Field label="Yêu cầu phi chức năng"><Textarea rows={3} value={draft.nonFunctionalRequirements} onChange={(e) => setDraft({ ...draft, nonFunctionalRequirements: e.target.value })} placeholder="Phản hồi dưới 3 giây…" /></Field><Field label="Rủi ro"><Textarea rows={3} value={draft.risks} onChange={(e) => setDraft({ ...draft, risks: e.target.value })} /></Field><Field label="Giả định"><Textarea rows={3} value={draft.assumptions} onChange={(e) => setDraft({ ...draft, assumptions: e.target.value })} /></Field><Field label="Phụ thuộc"><Textarea rows={3} value={draft.dependencies} onChange={(e) => setDraft({ ...draft, dependencies: e.target.value })} /></Field><Field label="Dữ liệu test cần có"><Textarea rows={3} value={draft.testDataRequirements} onChange={(e) => setDraft({ ...draft, testDataRequirements: e.target.value })} /></Field><Field label="Dữ liệu cấm sử dụng"><Textarea rows={3} value={draft.dataRestrictions} onChange={(e) => setDraft({ ...draft, dataRestrictions: e.target.value })} placeholder="PII thật, mật khẩu, token, dữ liệu production" /></Field><Field className="md:col-span-2" label="Definition of Done"><Textarea rows={3} value={draft.definitionOfDone} onChange={(e) => setDraft({ ...draft, definitionOfDone: e.target.value })} placeholder="Acceptance Criteria được QA xác nhận\nKhông còn lỗi Critical/High\nTài liệu và bằng chứng đã cập nhật" /></Field></div></details>
+        <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-4 dark:border-slate-800"><p className="text-xs text-slate-500">Bạn có thể bổ sung phạm vi, truy vết và rủi ro sau khi lưu nháp.</p><Button disabled={!draft.title.trim() || !draft.actor.trim() || !draft.goal.trim() || !draft.benefit.trim() || !lines(draft.criteria).length || createManual.isPending} onClick={() => createManual.mutate()}>{createManual.isPending ? "Đang lưu…" : "Lưu User Story nháp"}</Button></div>
+      </div>}
+      {mode === "upload" && <div className="mt-5 rounded-xl border border-dashed border-violet-300 bg-violet-50/40 p-4 dark:border-violet-900 dark:bg-violet-950/20">
+        {documentKind === "UserStory" && <div className="mt-3 grid gap-3 rounded-lg border border-slate-200 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-900/70 md:grid-cols-2"><Field label="Nguồn hệ thống"><Select value={resolvedImportMeta.system} onChange={(event) => setImportMeta((value) => ({ ...value, system: event.target.value }))}>{["File", "Jira", "AzureDevOps", "Other"].map((item) => <option key={item}>{item}</option>)}</Select></Field><Field label="External ID / mã backlog"><Input value={resolvedImportMeta.externalId} onChange={(event) => setImportMeta((value) => ({ ...value, externalId: event.target.value }))} placeholder="PROJ-123 (nếu cả tệp có cùng mã)" /></Field><Field label="Phiên bản"><Input value={resolvedImportMeta.version} onChange={(event) => setImportMeta((value) => ({ ...value, version: event.target.value }))} placeholder="v2.1" /></Field><Field label="Ngày hiệu lực"><Input type="date" value={resolvedImportMeta.effectiveAt} onChange={(event) => setImportMeta((value) => ({ ...value, effectiveAt: event.target.value }))} /></Field><Field className="md:col-span-2" label="Requirement cha (tuỳ chọn)"><Select multiple className="min-h-24" value={resolvedImportMeta.parentRequirements} onChange={(event) => setImportMeta((value) => ({ ...value, parentRequirements: [...event.target.selectedOptions].map((item) => item.value) }))}>{(requirements?.data || []).filter((item) => item.status === "Baselined").map((item) => <option key={item._id} value={item._id}>{item.requirementId} · {item.title}</option>)}</Select></Field></div>}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-slate-600 dark:text-slate-300">Hỗ trợ PDF, DOC, DOCX · tối đa 10 MB · nội dung luôn cần được rà soát trước khi gửi duyệt.</p>
         <label className="inline-flex h-10 cursor-pointer items-center justify-center rounded-lg bg-violet-600 px-4 text-sm font-semibold text-white hover:bg-violet-700">
-          {upload.isPending
-            ? "AI đang đọc tài liệu…"
-            : "Tải tài liệu và nhờ AI"}
+          {upload.isPending ? "Đang xử lý tài liệu…" : "Tải và trích xuất User Story"}
           <input
             className="hidden"
             type="file"
@@ -870,6 +1215,9 @@ function UserStoryStep({
           />
         </label>
       </div>
+      </div>}
+      {mode === "ai" && <>
+      <p className="mt-4 text-sm text-slate-500">AI chuyển Use Case đã duyệt thành User Story nháp để rà soát và gửi duyệt.</p>
       {!approvedUseCases.length && (
         <div className="mt-4 rounded-lg border border-dashed p-3 text-xs leading-5 text-slate-500">
           Chưa có Use Case được duyệt để sinh User Story từ hành trình.{" "}
@@ -889,7 +1237,7 @@ function UserStoryStep({
           value={useCaseId}
           onChange={(e) => setUseCaseId(e.target.value)}
         >
-          <option value="">Không có tài liệu: chọn Use Case đã duyệt</option>
+          <option value="">Chọn Use Case đã duyệt</option>
           {approvedUseCases.map((item) => (
             <option key={item._id} value={item._id}>
               {item.code} · {item.name}
@@ -903,6 +1251,7 @@ function UserStoryStep({
           {generateStory.isPending ? "Đang sinh…" : "Nhờ AI sinh từ Use Case"}
         </Button>
       </div>
+      </>}
       <div className="mt-6 space-y-2">
         {stories.map((item) => (
           <StoryDraftCard
@@ -911,6 +1260,7 @@ function UserStoryStep({
             currentUser={user}
             updateStory={updateStory}
             submitStory={submitStory}
+            qaReviewStory={qaReviewStory}
             download={download}
           />
         ))}
@@ -2209,10 +2559,10 @@ function ExecutionStep({ project, profile, cases, plans, setActiveStep, requeste
     </Card>
   );
 }
-function Field({ label, children }) {
+function Field({ label, hint, className = "", children }) {
   return (
-    <label className="grid gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
-      <span>{label}</span>
+    <label className={`grid gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-200 ${className}`}>
+      <span>{label}{hint && <span className="mt-0.5 block text-xs font-normal leading-4 text-slate-500 dark:text-slate-400">{hint}</span>}</span>
       {children}
     </label>
   );

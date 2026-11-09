@@ -24,8 +24,17 @@ export default function DashboardPage() {
       eyebrow="Workspace overview"
       title={`Chào ${firstName}, hôm nay bạn muốn kiểm thử gì?`}
       description="Theo dõi tiến độ chất lượng, yêu cầu đang chờ và hoạt động gần nhất trên tất cả Project của bạn."
-      actions={<><Button variant="outline" asChild><Link to="/projects"><Plus className="h-4 w-4" />Project mới</Link></Button><Button asChild><Link to="/ai-generator"><Sparkles className="h-4 w-4" />Sinh Test Case</Link></Button></>}
+      actions={<><Button variant="outline" asChild><Link to="/projects"><Plus className="h-4 w-4" />Project mới</Link></Button><Button asChild><Link to="/ai-generator?step=requirement"><Sparkles className="h-4 w-4" />Bắt đầu kiểm thử</Link></Button></>}
     />
+
+    <Card className="border-violet-200 bg-gradient-to-r from-violet-50 via-white to-sky-50 p-4 dark:border-violet-900 dark:from-violet-950/30 dark:via-slate-950 dark:to-sky-950/20">
+      <SectionTitle title="Bắt đầu từ mục tiêu của bạn" description="Quy trình không bắt buộc phải đi đến bước chạy test. Chọn đúng công việc cần làm hôm nay; dữ liệu đã lưu luôn có thể tiếp tục ở lần sau." />
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <Link to="/ai-generator?step=requirement" className="rounded-xl border border-violet-300 bg-white/90 p-4 transition hover:border-violet-600 hover:shadow-sm dark:border-violet-800 dark:bg-slate-900/90"><Sparkles className="h-5 w-5 text-violet-600" /><p className="mt-3 text-sm font-bold">1. Tạo tài liệu kiểm thử</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">Bắt đầu bằng đề bài, tạo Use Case, User Story, Test Plan và Test Case. Có thể dừng sau khi tài liệu đã duyệt.</p></Link>
+        <Link to="/cycles" className="rounded-xl border border-slate-200 bg-white/90 p-4 transition hover:border-violet-400 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900/90"><Clock3 className="h-5 w-5 text-sky-600" /><p className="mt-3 text-sm font-bold">2. Lập kế hoạch tuần</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">Tạo Cycle/Sprint và sắp xếp các Test Case đã duyệt theo năng lực của tuần.</p></Link>
+        <Link to="/board" className="rounded-xl border border-slate-200 bg-white/90 p-4 transition hover:border-violet-400 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900/90"><PlayCircle className="h-5 w-5 text-emerald-600" /><p className="mt-3 text-sm font-bold">3. Thực thi & theo dõi</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">Chỉ mở khi cần chạy kiểm thử, cập nhật tiến độ, ghi nhận lỗi và kết quả.</p></Link>
+      </div>
+    </Card>
 
     {query.isLoading ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[1, 2, 3, 4].map((item) => <Skeleton key={item} className="h-32" />)}</div> : <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <MetricCard label="Projects đang theo dõi" value={counts.projects || 0} hint={`${counts.teams || 0} team · ${counts.members || 0} thành viên`} icon={FolderKanban} />

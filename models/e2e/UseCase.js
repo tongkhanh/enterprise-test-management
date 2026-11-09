@@ -4,6 +4,7 @@ const { Schema } = mongoose;
 const useCaseSchema = new Schema({
   project: { type: Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
   systemProfile: { type: Schema.Types.ObjectId, ref: 'SystemProfile', required: true, index: true },
+  requirements: [{ type: Schema.Types.ObjectId, ref: 'Requirement' }],
   code: { type: String, trim: true, maxlength: 80 }, name: { type: String, required: true, trim: true, maxlength: 300 },
   actor: { type: String, required: true, trim: true },
   scope: { type: String, default: '', maxlength: 500 }, level: { type: String, default: 'User-goal', maxlength: 100 },
@@ -17,6 +18,7 @@ const useCaseSchema = new Schema({
   status: { type: String, enum: ['Draft', 'PendingApproval', 'Approved', 'Rejected'], default: 'Draft', index: true },
   reviewNote: { type: String, default: '' }, approvedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null }, approvedAt: { type: Date, default: null },
   // Nguồn tạo giúp QA truy vết vì sao tài liệu xuất hiện và cần rà soát ở mức nào.
+  reference: { type: String, trim: true, maxlength: 1000, default: "" },
   origin: { type: String, enum: ['Manual', 'AIProfile', 'ImportedDocument'], default: null, index: true },
   originDetail: {
     fileName: { type: String, default: '' },

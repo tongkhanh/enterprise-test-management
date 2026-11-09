@@ -98,6 +98,7 @@ const exportCases = async (req, res) => {
     .populate('testSuite', 'name project')
     .populate('userStory', 'title acceptanceCriteria')
     .populate('e2e.useCase', 'name code')
+    .populate('e2e.requirements', 'requirementId title')
     .sort({ testCaseId: 1, createdAt: 1 })
     .lean();
   if (cases.length !== requestedIds.length) throw new AppError('Có Test Case không tồn tại hoặc không còn khả dụng.', 404);
