@@ -49,6 +49,15 @@ const testSuiteSchema = new Schema(
       required: [true, 'Dự án là bắt buộc'],
     },
 
+    // Giữ Test Suite thuộc đúng đợt tạo tài liệu E2E, tránh trộn
+    // Suite của lần làm việc cũ vào lần mới.
+    systemProfile: {
+      type: Schema.Types.ObjectId,
+      ref: 'SystemProfile',
+      default: null,
+      index: true,
+    },
+
     // Self-referencing: Tạo cấu trúc cây thư mục
     parentSuite: {
       type: Schema.Types.ObjectId,

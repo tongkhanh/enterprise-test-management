@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   Bug, CheckSquare2, ChevronLeft, FlaskConical, FolderKanban, Gauge,
-  Building2, Columns3, Repeat2, Settings, Sparkles, Trophy, UsersRound, X, TerminalSquare, ListTodo, Mail, FileBarChart,
+  Building2, Columns3, Repeat2, Settings, Sparkles, Trophy, UsersRound, X, TerminalSquare, ListTodo, Mail, FileBarChart, BookOpenCheck,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
@@ -20,7 +20,8 @@ const groups = [
   {
     label: 'Tài liệu kiểm thử',
     items: [
-      { label: 'Tạo & quản lý tài liệu', to: '/ai-generator?step=requirement', icon: Sparkles },
+      { label: 'Tạo tài liệu kiểm thử', to: '/ai-generator?step=requirement', icon: Sparkles },
+      { label: 'Thư viện Requirement', to: '/requirements', icon: BookOpenCheck },
     ],
   },
   {

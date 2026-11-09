@@ -2,6 +2,7 @@ const { User, UserStory, UserStoryDocument, Comment, DesignMockup, Notification,
 const { AppError, list, getById, send } = require('../utils/http');
 const { getAccessibleProjectIds, assertProjectAccess } = require('../services/projectAccessService');
 const { removeStoredDocument } = require('../services/documentExtractionService');
+const { evaluateUserStory, qualityErrorDetails } = require('../services/documentQualityService');
 
 const BUSINESS_ROLES = new Set(['Owner', 'Product_Owner', 'Business_Analyst']);
 const QA_REVIEW_ROLES = new Set(['Owner', 'QA_Manager']);
@@ -37,7 +38,7 @@ const listStories = async (req, res) => {
     const project = story.project;
     const creator = story.createdBy?._id || story.createdBy;
     const membership = membershipByCreator.get(`${project?._id || project}:${creator}`);
-    return { ...story, workflowContext: { workspace: project?.workspace || null, project: project || null, teams: membership?.teams || [] } };
+    return { ...story, quality: evaluateUserStory(story), workflowContext: { workspace: project?.workspace || null, project: project || null, teams: membership?.teams || [] } };
   });
   send(res, enriched, 200, { pagination: result.pagination });
 };
@@ -99,7 +100,8 @@ const submitApproval = async (req, res) => {
   const story = await getById(UserStory, req.params.id);
   await assertProjectAccess(req.user, story.project);
   if (!['Draft', 'Rejected'].includes(story.approvalStatus)) throw new AppError('User Story này không ở trạng thái bản nháp để gửi xác nhận nghiệp vụ.', 409);
-  if (!story.title?.trim() || !story.description?.trim() || !story.acceptanceCriteria?.length) throw new AppError('User Story phải có tiêu đề, mô tả và Acceptance Criteria trước khi gửi xác nhận nghiệp vụ.', 400);
+  const quality = evaluateUserStory(story);
+  if (!quality.canApprove) throw new AppError(`User Story chưa sẵn sàng gửi duyệt. Cần bổ sung: ${quality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(quality));
   story.approvalStatus = 'PendingApproval'; story.businessApprovalStatus = 'PendingBusinessConfirmation';
   story.reviewNote = '';
   await story.save();
@@ -131,6 +133,10 @@ const decideQaTestability = async (req, res) => {
   const decision = req.body.decision;
   if (!['Testable', 'NeedsClarification'].includes(decision)) throw new AppError('Quyết định QA không hợp lệ.', 400);
   if (decision === 'NeedsClarification' && !String(req.body.reviewNote || '').trim()) throw new AppError('Cần nêu nội dung cần làm rõ.', 400);
+  if (decision === 'Testable') {
+    const quality = evaluateUserStory(story);
+    if (!quality.canApprove) throw new AppError(`User Story chưa đủ khả năng kiểm thử. Cần bổ sung: ${quality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(quality));
+  }
   story.qaTestabilityStatus = decision; story.qaReviewedBy = req.user._id; story.qaReviewedAt = new Date(); story.qaReviewNote = String(req.body.reviewNote || '').trim().slice(0, 2000);
   story.approvalStatus = decision === 'Testable' ? 'Approved' : 'Draft'; story.status = decision === 'Testable' ? 'Ready' : 'Backlog';
   await story.save(); send(res, story);

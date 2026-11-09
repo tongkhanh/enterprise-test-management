@@ -6,6 +6,7 @@ const { AppError, assertObjectId, send } = require('../utils/http');
 const { assertProjectAccess, getAccessibleProjectIds } = require('../services/projectAccessService');
 const { exportArtifact } = require('../services/artifactExportService');
 const { extractDocumentText } = require('../services/documentExtractionService');
+const { evaluateUseCase, evaluateTestSuite, qualityErrorDetails } = require('../services/documentQualityService');
 const path = require('node:path');
 
 const json = (value) => JSON.stringify(value || {}, null, 2);
@@ -134,11 +135,39 @@ const profileForProject = async (req, id) => {
   return profile;
 };
 
+const workflowSteps = new Set(['requirement', 'evidence', 'usecase', 'story', 'plan', 'suite', 'testcase', 'review', 'agile', 'runtime', 'automation', 'execution', 'result']);
+const nextRunNumber = async (projectId) => {
+  const count = await SystemProfile.countDocuments({ project: projectId });
+  return count + 1;
+};
+const profileSummary = async (profile) => {
+  const id = profile._id;
+  const summarize = async (Model, match) => (await Model.aggregate([
+    { $match: match },
+    { $group: { _id: null, count: { $sum: 1 }, latestAt: { $max: '$updatedAt' } } },
+  ]))[0] || { count: 0, latestAt: null };
+  const [requirements, useCases, stories, plans, suites, testCases] = await Promise.all([
+    summarize(Requirement, { systemProfile: id }),
+    summarize(UseCase, { systemProfile: id }),
+    summarize(UserStory, { 'e2e.systemProfile': id }),
+    summarize(TestPlan, { systemProfile: id }),
+    summarize(TestSuite, { systemProfile: id }),
+    summarize(TestCase, { 'e2e.systemProfile': id }),
+  ]);
+  const summaries = { requirements, useCases, stories, plans, suites, testCases };
+  const artifactCounts = Object.fromEntries(Object.entries(summaries).map(([key, value]) => [key, value.count]));
+  const latestActivityAt = Object.values(summaries).reduce((latest, value) => value.latestAt && (!latest || value.latestAt > latest) ? value.latestAt : latest, profile.workflow?.lastActivityAt || profile.updatedAt);
+  return { ...profile.toObject(), workflowSummary: { artifactCounts, totalArtifacts: Object.values(artifactCounts).reduce((total, value) => total + value, 0), latestActivityAt } };
+};
+
 const listProfiles = async (req, res) => {
   const filter = {};
   if (req.query.project) { await assertProjectAccess(req.user, req.query.project); filter.project = req.query.project; }
   else { const ids = req.allowedProjectIds || await getAccessibleProjectIds(req.user); if (ids) filter.project = { $in: ids }; }
-  send(res, await SystemProfile.find(filter).sort('-updatedAt').populate('environment', 'name targetUrl status'));
+  const profiles = await SystemProfile.find(filter).sort({ 'workflow.lastActivityAt': -1, updatedAt: -1 }).populate('environment', 'name targetUrl status').populate('createdBy', 'fullName email');
+  const summaries = await Promise.all(profiles.map(profileSummary));
+  summaries.sort((left, right) => new Date(right.workflowSummary?.latestActivityAt || 0) - new Date(left.workflowSummary?.latestActivityAt || 0));
+  send(res, summaries);
 };
 
 // This remains an internal traceability boundary.  It is created on demand so
@@ -147,18 +176,77 @@ const ensureDefaultProfile = async (req, res) => {
   const projectId = req.body?.project;
   if (!projectId) throw new AppError('Project là bắt buộc.', 400);
   await assertProjectAccess(req.user, projectId);
-  let profile = await SystemProfile.findOne({ project: projectId, mode: 'SystemProfile', status: { $ne: 'Archived' } }).sort('createdAt');
+  let profile = await SystemProfile.findOne({ project: projectId, mode: 'SystemProfile', status: { $ne: 'Archived' }, $or: [{ 'workflow.status': 'Active' }, { 'workflow.status': { $exists: false } }] }).sort({ 'workflow.lastActivityAt': -1, createdAt: -1 });
   if (!profile) {
     const project = await Project.findById(projectId).select('name');
+    const runNumber = await nextRunNumber(projectId);
     profile = await SystemProfile.create({
       project: projectId,
-      name: `${project?.name || 'Project'} · Phạm vi kiểm thử`,
+      name: `Đợt ${runNumber} · ${project?.name || 'Project'}`,
       description: 'Phạm vi kiểm thử được tạo tự động từ đề bài khách hàng.',
       mode: 'SystemProfile', status: 'Ready', createdBy: req.user._id,
+      workflow: { runNumber, status: 'Active', lastStep: 'requirement', startedAt: new Date(), lastActivityAt: new Date() },
     });
     return send(res, profile, 201);
   }
   send(res, profile);
+};
+
+const startWorkflowRun = async (req, res) => {
+  const projectId = req.body?.project;
+  if (!projectId) throw new AppError('Project là bắt buộc.', 400);
+  await assertProjectAccess(req.user, projectId);
+  const project = await Project.findById(projectId).select('name');
+  if (!project) throw new AppError('Project không tồn tại.', 404);
+  const now = new Date();
+  await SystemProfile.updateMany(
+    { project: projectId, $or: [{ 'workflow.status': 'Active' }, { 'workflow.status': { $exists: false } }] },
+    { $set: { 'workflow.status': 'Paused', 'workflow.pausedAt': now, 'workflow.lastActivityAt': now } },
+  );
+  const runNumber = await nextRunNumber(projectId);
+  const profile = await SystemProfile.create({
+    project: projectId,
+    name: String(req.body?.name || `Đợt ${runNumber} · ${project.name}`).trim().slice(0, 200),
+    description: String(req.body?.description || 'Đợt tạo tài liệu E2E độc lập. Tài liệu của các đợt trước được giữ nguyên.').slice(0, 8000),
+    mode: 'SystemProfile', status: 'Ready', createdBy: req.user._id,
+    workflow: { runNumber, status: 'Active', lastStep: 'requirement', startedAt: now, lastActivityAt: now },
+  });
+  send(res, await profileSummary(profile), 201);
+};
+
+const updateWorkflowProgress = async (req, res) => {
+  const profile = await profileForProject(req, req.params.id);
+  const now = new Date();
+  if (req.body?.lastStep !== undefined) {
+    if (!workflowSteps.has(req.body.lastStep)) throw new AppError('Bước workflow không hợp lệ.', 400);
+    profile.workflow.lastStep = req.body.lastStep;
+  }
+  if (req.body?.status !== undefined) {
+    if (!['Active', 'Paused', 'Completed'].includes(req.body.status)) throw new AppError('Trạng thái đợt không hợp lệ.', 400);
+    if (req.body.status === 'Active') {
+      await SystemProfile.updateMany(
+        { project: profile.project, _id: { $ne: profile._id }, $or: [{ 'workflow.status': 'Active' }, { 'workflow.status': { $exists: false } }] },
+        { $set: { 'workflow.status': 'Paused', 'workflow.pausedAt': now, 'workflow.lastActivityAt': now } },
+      );
+    }
+    profile.workflow.status = req.body.status;
+    profile.workflow.pausedAt = req.body.status === 'Paused' ? now : null;
+    profile.workflow.completedAt = req.body.status === 'Completed' ? now : null;
+  }
+  if (req.body?.draft !== undefined) {
+    const step = req.body.draft?.step;
+    if (!workflowSteps.has(step)) throw new AppError('Bước lưu nháp không hợp lệ.', 400);
+    const data = req.body.draft?.data;
+    if (data !== null && (typeof data !== 'object' || Array.isArray(data))) throw new AppError('Dữ liệu nháp không hợp lệ.', 400);
+    if (data !== null && JSON.stringify(data).length > 100000) throw new AppError('Bản nháp vượt quá dung lượng cho phép.', 413);
+    const drafts = { ...(profile.workflow.drafts || {}) };
+    if (data === null) delete drafts[step]; else drafts[step] = data;
+    profile.workflow.drafts = drafts;
+    profile.markModified('workflow.drafts');
+  }
+  profile.workflow.lastActivityAt = now;
+  await profile.save();
+  send(res, await profileSummary(profile));
 };
 
 const createProfile = async (req, res) => {
@@ -170,7 +258,10 @@ const createProfile = async (req, res) => {
   validateBaseUrl(body.baseUrl);
   validateBaseUrl(body.referenceUrl);
   if (body.environment) { const environment = await TestEnvironment.findById(body.environment); if (!environment || String(environment.project) !== String(body.project)) throw new AppError('Environment phải thuộc Project đã chọn.', 409); }
-  const profile = await SystemProfile.create({ ...body, allowedHosts: normalizeList(body.allowedHosts), roles: Array.isArray(body.roles) ? body.roles.slice(0, 20) : [], createdBy: req.user._id, status: body.mode === 'SystemProfile' ? 'Ready' : 'Draft' });
+  const runNumber = await nextRunNumber(body.project);
+  const now = new Date();
+  await SystemProfile.updateMany({ project: body.project, $or: [{ 'workflow.status': 'Active' }, { 'workflow.status': { $exists: false } }] }, { $set: { 'workflow.status': 'Paused', 'workflow.pausedAt': now, 'workflow.lastActivityAt': now } });
+  const profile = await SystemProfile.create({ ...body, allowedHosts: normalizeList(body.allowedHosts), roles: Array.isArray(body.roles) ? body.roles.slice(0, 20) : [], createdBy: req.user._id, status: body.mode === 'SystemProfile' ? 'Ready' : 'Draft', workflow: { runNumber, status: 'Active', lastStep: 'requirement', startedAt: now, lastActivityAt: now } });
   send(res, profile, 201);
 };
 
@@ -219,16 +310,20 @@ const analyzeGithub = async (req, res) => {
 const listUseCases = async (req, res) => {
   const filter = {}; if (req.query.project) { await assertProjectAccess(req.user, req.query.project); filter.project = req.query.project; }
   if (req.query.systemProfile) filter.systemProfile = req.query.systemProfile;
-  send(res, await UseCase.find(filter).sort('-updatedAt').populate('systemProfile', 'name mode').populate('requirements', 'requirementId title status source').populate('createdBy', 'fullName email').populate('approvedBy', 'fullName'));
+  const rows = await UseCase.find(filter).sort('-updatedAt').populate('systemProfile', 'name mode').populate('requirements', 'requirementId title status source').populate('createdBy', 'fullName email').populate('approvedBy', 'fullName');
+  send(res, rows.map((item) => ({ ...item.toObject(), quality: evaluateUseCase(item) })));
 };
 const createUseCase = async (req, res) => {
   const body = req.body || {}; if (!body.systemProfile || !body.name || !body.actor) throw new AppError('systemProfile, name và actor là bắt buộc.', 400);
   const profile = await profileForProject(req, body.systemProfile);
-  send(res, await UseCase.create({ ...body, project: profile.project, origin: 'Manual', originDetail: {}, createdBy: req.user._id }), 201);
+  const requirements = body.requirements?.length ? body.requirements : await Requirement.find({ project: profile.project, systemProfile: profile._id, status: 'Baselined' }).distinct('_id');
+  send(res, await UseCase.create({ ...body, requirements, project: profile.project, origin: 'Manual', originDetail: {}, createdBy: req.user._id }), 201);
 };
 const updateUseCase = async (req, res) => {
   const item = await UseCase.findById(req.params.id); if (!item) throw new AppError('Use Case không tồn tại.', 404); await assertProjectAccess(req.user, item.project); req._auditBefore = item.toObject();
-  ['code', 'name', 'actor', 'scope', 'level', 'stakeholders', 'specialRequirements', 'summary', 'trigger', 'preconditions', 'mainFlow', 'alternateFlows', 'exceptionFlows', 'postconditions', 'businessRules', 'assumptions', 'dependencies', 'risk', 'evidence'].forEach((key) => { if (req.body[key] !== undefined) item[key] = req.body[key]; });
+  const contentFields = ['code', 'name', 'actor', 'scope', 'level', 'stakeholders', 'specialRequirements', 'summary', 'trigger', 'preconditions', 'mainFlow', 'alternateFlows', 'exceptionFlows', 'postconditions', 'businessRules', 'assumptions', 'dependencies', 'risk', 'evidence'];
+  const contentChanged = contentFields.some((key) => req.body[key] !== undefined);
+  contentFields.forEach((key) => { if (req.body[key] !== undefined) item[key] = req.body[key]; });
   if (req.body.origin !== undefined) {
     if (!['Manual', 'AIProfile', 'ImportedDocument'].includes(req.body.origin)) throw new AppError('Nguồn tạo Use Case không hợp lệ.', 400);
     item.origin = req.body.origin;
@@ -236,11 +331,17 @@ const updateUseCase = async (req, res) => {
   if (req.body.originDetail !== undefined && req.body.originDetail && typeof req.body.originDetail === 'object') {
     item.originDetail = { fileName: String(req.body.originDetail.fileName || '').slice(0, 255), extractionMethod: String(req.body.originDetail.extractionMethod || '').slice(0, 255) };
   }
+  if (contentChanged && item.status === 'Approved') { item.status = 'Draft'; item.reviewNote = ''; item.approvedBy = null; item.approvedAt = null; }
   await item.save(); send(res, item);
 };
 const decideUseCase = async (req, res) => {
   const item = await UseCase.findById(req.params.id); if (!item) throw new AppError('Use Case không tồn tại.', 404); await assertProjectAccess(req.user, item.project, { manage: true });
   const decision = req.body.decision; if (!['Approved', 'Rejected'].includes(decision)) throw new AppError('decision phải là Approved hoặc Rejected.', 400);
+  if (decision === 'Approved') {
+    if (!item.requirements?.length) item.requirements = await Requirement.find({ project: item.project, systemProfile: item.systemProfile, status: 'Baselined' }).distinct('_id');
+    const quality = evaluateUseCase(item);
+    if (!quality.canApprove) throw new AppError(`Use Case chưa sẵn sàng duyệt. Cần bổ sung: ${quality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(quality));
+  }
   item.status = decision; item.reviewNote = String(req.body.reviewNote || '').slice(0, 2000); item.approvedBy = decision === 'Approved' ? req.user._id : null; item.approvedAt = decision === 'Approved' ? new Date() : null; await item.save(); send(res, item);
 };
 const suggestUseCases = async (req, res) => {
@@ -329,8 +430,11 @@ const generateCases = async (req, res) => {
   const { testSuiteId, userStoryId, testPlanId } = req.body || {}; assertObjectId(testSuiteId, 'Test Suite ID'); assertObjectId(userStoryId, 'User Story ID');
   const useCase = await UseCase.findById(req.params.useCaseId).populate('systemProfile requirements'); const story = await UserStory.findById(userStoryId); const suite = await TestSuite.findById(testSuiteId);
   if (!useCase || !story || !suite) throw new AppError('Use Case, User Story hoặc Test Suite không tồn tại.', 404); await assertProjectAccess(req.user, useCase.project);
+  const suiteQuality = evaluateTestSuite(suite);
+  if (!suiteQuality.canApprove) throw new AppError(`Test Suite chưa sẵn sàng để sinh Test Case. Cần bổ sung: ${suiteQuality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(suiteQuality));
   if (useCase.status !== 'Approved' || story.approvalStatus !== 'Approved') throw new AppError('Use Case và User Story phải được duyệt trước khi sinh Test Case.', 409);
   if (String(suite.project) !== String(useCase.project) || String(story.project) !== String(useCase.project)) throw new AppError('Các đối tượng phải thuộc cùng Project.', 409);
+  if (suite.systemProfile && String(suite.systemProfile) !== String(useCase.systemProfile._id)) throw new AppError('Test Suite phải thuộc cùng đợt tạo tài liệu.', 409);
   if (story.e2e?.systemProfile && String(story.e2e.systemProfile) !== String(useCase.systemProfile._id)) throw new AppError('User Story phải thuộc System Profile của Use Case.', 409);
   if (story.e2e?.useCase && String(story.e2e.useCase) !== String(useCase._id)) throw new AppError('User Story không thuộc Use Case đã chọn.', 409);
   const plan = testPlanId ? await TestPlan.findById(testPlanId) : null;
@@ -362,9 +466,12 @@ const generateCasesFromStory = async (req, res) => {
   const story = await UserStory.findById(req.params.storyId); const suite = await TestSuite.findById(testSuiteId); const plan = await TestPlan.findById(testPlanId);
   if (!story || !suite || !plan) throw new AppError('User Story, Test Suite hoặc Test Plan không tồn tại.', 404);
   await assertProjectAccess(req.user, story.project);
+  const suiteQuality = evaluateTestSuite(suite);
+  if (!suiteQuality.canApprove) throw new AppError(`Test Suite chưa sẵn sàng để sinh Test Case. Cần bổ sung: ${suiteQuality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(suiteQuality));
   if (story.approvalStatus !== 'Approved' || story.businessApprovalStatus !== 'BusinessConfirmed' || story.qaTestabilityStatus !== 'Testable') throw new AppError('User Story cần được PO/BA xác nhận nghiệp vụ và QA xác nhận khả năng kiểm thử trước.', 409);
   const profileId = story.e2e?.systemProfile || plan.systemProfile;
   const profile = profileId ? await SystemProfile.findById(profileId) : null;
+  if (suite.systemProfile && String(suite.systemProfile) !== String(profileId)) throw new AppError('Test Suite phải thuộc cùng đợt tạo tài liệu.', 409);
   if (!profile || String(profile.project) !== String(story.project) || String(suite.project) !== String(story.project) || plan.kind !== 'TestPlan' || plan.approvalStatus !== 'Approved' || String(plan.project) !== String(story.project) || !(plan.userStories || []).some((id) => String(id) === String(story._id))) throw new AppError('Cần Test Plan đã duyệt, System Profile và Test Suite cùng Project có bao gồm User Story này.', 409);
   const environment = profile.environment ? await TestEnvironment.findById(profile.environment).select('targetUrl status') : null;
   const targetUrl = profile.environment ? (environment?.status === 'Ready' ? environment.targetUrl : '') : profile.baseUrl;
@@ -392,4 +499,4 @@ const exportE2EArtifact = async (req, res) => {
   const format = ['pdf', 'xlsx', 'csv', 'docx'].includes(req.query.format) ? req.query.format : 'docx'; const output = await exportArtifact(entry.title, item, format);
   res.setHeader('Content-Type', output.mime); res.setHeader('Content-Disposition', `attachment; filename="${type}-${item.code || item.testCaseId || item._id}.${output.ext}"`); res.send(output.buffer);
 };
-module.exports = { listProfiles, ensureDefaultProfile, createProfile, updateProfile, analyzeGithub, listUseCases, createUseCase, updateUseCase, decideUseCase, suggestUseCases, importUseCasesFromDocument, generateStory, generateCases, generateCasesFromStory, exportE2EArtifact, normalizeGeneratedStory, normalizeGeneratedTestCase, fallbackTestCases };
+module.exports = { listProfiles, ensureDefaultProfile, startWorkflowRun, updateWorkflowProgress, createProfile, updateProfile, analyzeGithub, listUseCases, createUseCase, updateUseCase, decideUseCase, suggestUseCases, importUseCasesFromDocument, generateStory, generateCases, generateCasesFromStory, exportE2EArtifact, normalizeGeneratedStory, normalizeGeneratedTestCase, fallbackTestCases };

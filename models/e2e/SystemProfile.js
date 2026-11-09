@@ -28,8 +28,21 @@ const systemProfileSchema = new Schema({
     selectedPaths: { type: [String], default: [] },
   },
   systemMap: { type: Schema.Types.Mixed, default: {} },
+  workflow: {
+    runNumber: { type: Number, min: 1, default: 1 },
+    status: { type: String, enum: ['Active', 'Paused', 'Completed'], default: 'Active', index: true },
+    lastStep: { type: String, default: 'requirement' },
+    startedAt: { type: Date, default: Date.now },
+    lastActivityAt: { type: Date, default: Date.now },
+    pausedAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null },
+    // Bản nháp form dang dở theo từng bước. Chúng không được tính là
+    // tài liệu cho tới khi người dùng bấm lưu/tạo artifact.
+    drafts: { type: Schema.Types.Mixed, default: {} },
+  },
   status: { type: String, enum: ['Draft', 'Analyzing', 'Ready', 'Failed', 'Archived'], default: 'Draft' },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
 }, { timestamps: true, collection: 'system_profiles' });
 systemProfileSchema.index({ project: 1, mode: 1, status: 1 });
+systemProfileSchema.index({ project: 1, 'workflow.runNumber': -1 });
 module.exports = mongoose.model('SystemProfile', systemProfileSchema);

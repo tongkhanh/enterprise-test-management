@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const {
-  TestSuite, TestCase, SharedTestData, ReviewRequest, Notification,
+  TestSuite, TestCase, SharedTestData, ReviewRequest, Notification, SystemProfile,
   User, Project, ProjectMembership, BoardItem,
 } = require('../models');
 const { AppError, list, getById, send } = require('../utils/http');
@@ -10,6 +10,7 @@ const { upsertApprovedBoardItem, markBoardItemNeedsReview } = require('../servic
 const { recordProjectActivity } = require('../services/projectActivityService');
 const { getWorkspaceRole } = require('../services/workspaceAccessService');
 const { exportTestCases } = require('../services/artifactExportService');
+const { evaluateTestSuite, evaluateTestCase, qualityErrorDetails } = require('../services/documentQualityService');
 
 const accessibleSuiteFilter = async (req) => {
   if (req.query.project) {
@@ -22,7 +23,7 @@ const accessibleSuiteFilter = async (req) => {
 
 const listSuites = async (req, res) => {
   const suites = await TestSuite.find(await accessibleSuiteFilter(req)).sort('order name').populate('createdBy', 'fullName');
-  const nodes = suites.map((suite) => ({ ...suite.toObject(), children: [] }));
+  const nodes = suites.map((suite) => ({ ...suite.toObject(), quality: evaluateTestSuite(suite), children: [] }));
   const map = new Map(nodes.map((node) => [String(node._id), node]));
   const tree = [];
   nodes.forEach((node) => {
@@ -38,6 +39,10 @@ const createSuite = async (req, res) => {
   if (req.body.parentSuite) {
     const parent = await getById(TestSuite, req.body.parentSuite);
     if (String(parent.project) !== String(req.body.project)) throw new AppError('Suite cha phải thuộc cùng Project.', 400);
+  }
+  if (req.body.systemProfile) {
+    const profile = await SystemProfile.findById(req.body.systemProfile).select('project');
+    if (!profile || String(profile.project) !== String(req.body.project)) throw new AppError('System Profile phải thuộc cùng Project.', 400);
   }
   send(res, await TestSuite.create({ ...req.body, createdBy: req.user._id }), 201);
 };
@@ -75,7 +80,7 @@ const listCases = async (req, res) => {
       { path: 'sharedTestData', select: 'name category data' },
     ],
   });
-  send(res, result.data, 200, { pagination: result.pagination });
+  send(res, result.data.map((item) => ({ ...item.toObject(), quality: evaluateTestCase(item) })), 200, { pagination: result.pagination });
 };
 
 const getCase = async (req, res) => {
@@ -84,7 +89,7 @@ const getCase = async (req, res) => {
     { path: 'sharedTestData' }, { path: 'createdBy', select: 'fullName email' },
   ]);
   await assertProjectAccess(req.user, testCase.testSuite.project);
-  send(res, testCase);
+  send(res, { ...testCase.toObject(), quality: evaluateTestCase(testCase) });
 };
 
 // A QA workbook represents a selected set of cases.  It deliberately accepts
@@ -198,6 +203,8 @@ const listReviews = async (req, res) => {
 
 const submitReview = async (req, res) => {
   const testCase = await getById(TestCase, req.params.id);
+  const quality = evaluateTestCase(testCase);
+  if (!quality.canApprove) throw new AppError(`Test Case chưa sẵn sàng gửi review. Cần bổ sung: ${quality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(quality));
   if (!req.body.reviewer) throw new AppError('Vui lòng chọn QA Manager.', 400);
   if (String(req.body.reviewer) === String(req.user._id) || String(req.body.reviewer) === String(testCase.createdBy)) {
     throw new AppError('Người tạo hoặc người gửi không thể tự duyệt Test Case của mình.', 409);
@@ -237,6 +244,10 @@ const decideReview = async (req, res) => {
   if (String(testCase.createdBy) === String(req.user._id)) throw new AppError('Người tạo không thể tự duyệt Test Case.', 409);
   const suite = await getById(TestSuite, testCase.testSuite);
   await assertProjectAccess(req.user, suite.project);
+  if (approved) {
+    const quality = evaluateTestCase(testCase);
+    if (!quality.canApprove) throw new AppError(`Test Case chưa sẵn sàng duyệt. Cần bổ sung: ${quality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(quality));
+  }
 
   const session = await mongoose.startSession();
   let boardItem = null;

@@ -27,6 +27,7 @@ import {
 } from "@/api/client";
 import { Badge, Button, Card, Input, Select, Textarea } from "@/components/ui";
 import { PageHeader, SectionTitle } from "@/components/common/PageKit";
+import { DocumentQualityBadge, DocumentQualityNotice } from "@/components/common/DocumentQuality";
 import AutomationLabPage from "@/features/automation/AutomationLabPage";
 
 const statusTone = {
@@ -34,6 +35,10 @@ const statusTone = {
   PendingApproval: "amber",
   Approved: "green",
   Rejected: "red",
+  Baselined: "green",
+  NeedsReview: "amber",
+  Changed: "amber",
+  Retired: "red",
 };
 const runtimeUrlForProfile = (profile) =>
   profile?.environment
@@ -84,6 +89,9 @@ export default function QAWorkflow(props) {
     setProject,
     currentProfile,
     profiles,
+    startWorkflowRun,
+    updateWorkflowProgress,
+    selectProfile,
     updateProfile,
     environments,
     useCases,
@@ -160,6 +168,16 @@ export default function QAWorkflow(props) {
         : "",
     runtime: currentProfile?.environment?.status === "Ready" ? "Sẵn sàng" : "",
   };
+  const artifactStepCounts = {
+    requirement: props.requirements?.data?.length || 0,
+    evidence: currentProfile?.repository?.fullName ? 1 : 0,
+    usecase: useCases.data?.length || 0,
+    story: currentStories.length,
+    plan: testPlans.length,
+    suite: suites.data?.length || 0,
+    testcase: currentCases.length,
+  };
+  const savedDocumentCount = Object.entries(artifactStepCounts).filter(([id]) => id !== "evidence").reduce((total, [, count]) => total + count, 0);
   const content = {
     evidence: (
       <TechnicalEvidenceStep
@@ -171,6 +189,7 @@ export default function QAWorkflow(props) {
         analyzeGithub={props.analyzeGithub}
         activeProject={activeProject}
         GitHubForm={props.GitHubForm}
+        requirements={props.requirements}
         updateProfile={updateProfile}
         onNext={() => setActiveStep("usecase")}
       />
@@ -321,6 +340,7 @@ export default function QAWorkflow(props) {
       <DocumentRegister
         profile={currentProfile}
         profiles={profiles.data || []}
+        requirements={props.requirements?.data || []}
         useCases={useCases.data || []}
         stories={currentStories}
         plans={testPlans}
@@ -334,6 +354,9 @@ export default function QAWorkflow(props) {
       <RequirementStep
         profile={currentProfile}
         requirements={props.requirements}
+        draft={currentProfile?.workflow?.drafts?.requirement}
+        onDraftSave={(data) => updateWorkflowProgress.mutate({ lastStep: "requirement", draft: { step: "requirement", data } })}
+        onDraftClear={() => updateWorkflowProgress.mutate({ draft: { step: "requirement", data: null } })}
         intake={intake}
         setIntake={setIntake}
         evidenceContent={content.evidence}
@@ -348,6 +371,15 @@ export default function QAWorkflow(props) {
         eyebrow="QA delivery workflow"
         title="Luồng E2E theo quy trình QA"
         description="Chọn đúng mục tiêu cho lần làm việc này. Mọi tài liệu được lưu độc lập, nên bạn có thể dừng và quay lại bất cứ lúc nào."
+      />
+      <WorkflowRunPanel
+        profile={currentProfile}
+        profiles={profiles.data || []}
+        liveCounts={{ requirements: props.requirements?.data?.length || 0, useCases: useCases.data?.length || 0, stories: currentStories.length, plans: testPlans.length, suites: suites.data?.length || 0, testCases: currentCases.length }}
+        selectProfile={selectProfile}
+        setActiveStep={setActiveStep}
+        startWorkflowRun={startWorkflowRun}
+        updateWorkflowProgress={updateWorkflowProgress}
       />
       <Card className="overflow-hidden border-slate-200 shadow-sm dark:border-slate-700">
         <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-700 sm:flex-row sm:items-end sm:justify-between">
@@ -407,9 +439,9 @@ export default function QAWorkflow(props) {
           ))}
         </nav>
         <div className="border-t border-slate-200 px-4 py-3 dark:border-slate-700">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><div><p className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
             Các bước trong {phase.label}
-          </p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{phaseStopPoint}. Bạn luôn có thể mở lại từ Danh mục tài liệu.</p></div><Button size="sm" variant={activeStep === "documents" ? "default" : "outline"} onClick={() => setActiveStep("documents")}>Danh mục tài liệu</Button></div>
+          </p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{phaseStopPoint}. Bạn luôn có thể mở lại từ Danh mục tài liệu.</p></div><Button className="min-h-11 bg-violet-700 px-4 text-white shadow-md hover:bg-violet-800" onClick={() => setActiveStep("documents")}><FileCheck2 className="h-4 w-4" /> Danh mục tài liệu <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">{savedDocumentCount}</span></Button></div>
           <nav
             aria-label={`Các bước: ${phase.label}`}
             className="flex flex-wrap gap-2"
@@ -441,6 +473,13 @@ export default function QAWorkflow(props) {
                 );
               })}
           </nav>
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-700 dark:bg-slate-900/70">
+            <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">Tiến độ và tài liệu đã lưu trong đợt này</p><p className="text-xs text-slate-500">Bước cuối: <strong className="text-violet-700 dark:text-violet-300">{steps.find(([id]) => id === (currentProfile?.workflow?.lastStep || activeStep))?.[1]}</strong></p></div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+              {[['requirement', 'Requirement'], ['evidence', 'GitHub'], ['usecase', 'Use Case'], ['story', 'User Story'], ['plan', 'Test Plan'], ['suite', 'Test Suite'], ['testcase', 'Test Case']].map(([id, label]) => { const count = artifactStepCounts[id] || 0; const stoppedHere = (currentProfile?.workflow?.lastStep || activeStep) === id; return <button key={id} type="button" onClick={() => setActiveStep(id)} className={`rounded-lg border p-3 text-left transition ${stoppedHere ? "border-violet-500 bg-violet-50 ring-1 ring-violet-300 dark:bg-violet-950/30" : count ? "border-emerald-200 bg-white dark:border-emerald-900 dark:bg-slate-900" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}><div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold">{label}</span>{stoppedHere && <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700 dark:bg-violet-950 dark:text-violet-200">Dừng ở đây</span>}</div><p className={`mt-2 text-xs ${count ? "font-semibold text-emerald-700 dark:text-emerald-300" : "text-slate-500"}`}>{count ? `${count} ${id === 'evidence' ? 'bằng chứng' : 'tài liệu'} đã lưu` : "Chưa có tài liệu đã lưu"}</p></button>; })}
+            </div>
+            <p className="mt-3 text-xs text-slate-500">Chỉ nội dung đã bấm Lưu/Tạo mới được tính là tài liệu. Form Requirement đang nhập dở được tự động lưu riêng và sẽ khôi phục khi quay lại.</p>
+          </div>
         </div>
       </Card>
       {activeStep === "documents" || currentProfile || activeStep === "requirement" ? (
@@ -456,20 +495,74 @@ export default function QAWorkflow(props) {
   );
 }
 
-function RequirementStep({ profile, requirements, intake, setIntake, onNext, alternateContent, evidenceContent }) {
+function WorkflowRunPanel({ profile, profiles, liveCounts, selectProfile, setActiveStep, startWorkflowRun, updateWorkflowProgress }) {
+  const workflow = profile?.workflow || {};
+  const summary = profile?.workflowSummary || {};
+  const counts = { ...(summary.artifactCounts || {}), ...(liveCounts || {}) };
+  const status = workflow.status || "Active";
+  const lastStep = workflow.lastStep || "requirement";
+  const lastStepLabel = steps.find(([id]) => id === lastStep)?.[1] || "Nguồn yêu cầu";
+  const statusLabel = { Active: "Đang thực hiện", Paused: "Tạm dừng", Completed: "Đã hoàn tất" }[status] || status;
+  const tone = status === "Active" ? "green" : status === "Completed" ? "blue" : "amber";
+  const startNewRun = () => {
+    if (window.confirm("Bắt đầu một đợt mới từ bước Nguồn yêu cầu? Đợt hiện tại và toàn bộ tài liệu đã sinh sẽ được giữ nguyên để tra cứu.")) startWorkflowRun.mutate();
+  };
+  if (!profile) return null;
+  return <Card className="border-violet-200 bg-gradient-to-r from-violet-50 via-white to-sky-50 p-5 dark:border-violet-900 dark:from-violet-950/30 dark:via-slate-900 dark:to-sky-950/20">
+    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2"><span className="text-xs font-bold uppercase tracking-wide text-violet-700 dark:text-violet-300">Đợt tạo tài liệu</span><Badge tone={tone}>{statusLabel}</Badge></div>
+        <div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-center">
+          <Select className="max-w-xl" value={profile._id} onChange={(event) => selectProfile(event.target.value)} aria-label="Chọn đợt tạo tài liệu">
+            {profiles.map((item, index) => <option key={item._id} value={item._id}>{`#${item.workflow?.runNumber || profiles.length - index} · ${item.name} · ${formatDocumentDate(item.workflow?.startedAt || item.createdAt)}`}</option>)}
+          </Select>
+          <p className="text-sm text-slate-600 dark:text-slate-300">Dừng ở <strong className="text-slate-900 dark:text-white">{lastStepLabel}</strong> · Hoạt động {formatDocumentDate(summary.latestActivityAt || workflow.lastActivityAt || profile.updatedAt)}</p>
+        </div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          {[["Requirement", counts.requirements], ["Use Case", counts.useCases], ["User Story", counts.stories], ["Test Plan", counts.plans], ["Test Suite", counts.suites], ["Test Case", counts.testCases]].map(([label, value]) => <div key={label} className="rounded-lg border border-white bg-white/80 px-3 py-2 shadow-sm dark:border-slate-700 dark:bg-slate-900/70"><p className="text-lg font-bold">{value || 0}</p><p className="text-[11px] text-slate-500">{label}</p></div>)}
+        </div>
+      </div>
+      <div className="flex shrink-0 flex-wrap gap-2">
+        {status !== "Active" && <Button variant="outline" disabled={updateWorkflowProgress.isPending} onClick={() => { setActiveStep(lastStep); updateWorkflowProgress.mutate({ status: "Active", lastStep }); }}>Tiếp tục từ {lastStepLabel}</Button>}
+        {status === "Active" && <Button variant="outline" disabled={updateWorkflowProgress.isPending} onClick={() => updateWorkflowProgress.mutate({ status: "Paused", lastStep })}>Tạm dừng tại đây</Button>}
+        <Button disabled={startWorkflowRun.isPending} onClick={startNewRun}>{startWorkflowRun.isPending ? "Đang tạo…" : "Bắt đầu đợt mới"}</Button>
+      </div>
+    </div>
+    <p className="mt-3 text-xs text-slate-500">Mỗi đợt là một phạm vi độc lập. Bắt đầu đợt mới không xoá, ghi đè hay trộn tài liệu của đợt cũ.</p>
+  </Card>;
+}
+
+function RequirementStep({ profile, requirements, intake, setIntake, draft, onDraftSave, onDraftClear, onNext, alternateContent, evidenceContent }) {
   const blank = () => ({ requirementId: "", title: "", type: "Functional", priority: "Medium", release: "", description: "", objective: "", actors: "", inScope: "", outOfScope: "", businessRules: "", acceptanceCriteria: "", nonFunctionalRequirements: "", risks: "", assumptions: "", dependencies: "", testDataRequirements: "", dataRestrictions: "", source: { type: "ManualCustomerBrief", title: "", provider: "", receivedAt: new Date().toISOString().slice(0, 10), version: "", reference: "", section: "" } });
-  const [form, setForm] = useState(blank);
+  const [form, setForm] = useState(() => ({ ...blank(), ...(draft?.form || {}) }));
   const [mode, setMode] = useState("modern");
   const [referenceImages, setReferenceImages] = useState([]);
+  const draftSnapshot = useRef({ form, intake });
+  draftSnapshot.current = { form, intake };
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const updateIntake = (key, value) => setIntake((current) => ({ ...current, [key]: value, ...(key === "documentType" ? { reference: "" } : {}) }));
+  useEffect(() => {
+    setForm({ ...blank(), ...(draft?.form || {}) });
+    if (draft?.intake) setIntake((current) => ({ ...current, ...draft.intake }));
+  }, [profile?._id]);
+  useEffect(() => {
+    const hasDraftContent = Boolean(form.title || form.description || form.objective || intake.title || intake.provider || intake.scopeName);
+    if (!profile?._id || !hasDraftContent) return undefined;
+    const timer = window.setTimeout(() => onDraftSave?.({ form, intake, savedAt: new Date().toISOString() }), 900);
+    return () => window.clearTimeout(timer);
+  }, [form, intake, profile?._id]);
+  useEffect(() => () => {
+    const snapshot = draftSnapshot.current;
+    const hasDraftContent = Boolean(snapshot.form.title || snapshot.form.description || snapshot.form.objective || snapshot.intake.title || snapshot.intake.provider || snapshot.intake.scopeName);
+    if (hasDraftContent) onDraftSave?.({ ...snapshot, savedAt: new Date().toISOString() });
+  }, [profile?._id]);
   const mutation = useMutation({
     mutationFn: async () => {
       const created = await e2eApi.createRequirement({ ...form, source, scope: { level: intake.scopeLevel, name: intake.scopeName }, systemProfile: profile._id, actors: lines(form.actors), inScope: lines(form.inScope), outOfScope: lines(form.outOfScope), businessRules: lines(form.businessRules), acceptanceCriteria: lines(form.acceptanceCriteria), nonFunctionalRequirements: lines(form.nonFunctionalRequirements), risks: lines(form.risks), assumptions: lines(form.assumptions), dependencies: lines(form.dependencies), testDataRequirements: lines(form.testDataRequirements), dataRestrictions: lines(form.dataRestrictions) });
       await Promise.all(referenceImages.map(({ file }) => e2eApi.uploadRequirementImage(created._id, file)));
       return created;
     },
-    onSuccess: () => { toast.success(referenceImages.length ? "Đã lưu Requirement và đính kèm ảnh tham chiếu." : "Đã lưu Requirement nháp từ đề bài khách hàng."); setForm(blank()); setReferenceImages([]); requirements.refetch(); },
+    onSuccess: () => { toast.success(referenceImages.length ? "Đã lưu Requirement và đính kèm ảnh tham chiếu." : "Đã lưu Requirement nháp từ đề bài khách hàng."); setForm(blank()); setReferenceImages([]); onDraftClear?.(); requirements.refetch(); },
     onError: (error) => toast.error(error.message),
   });
   const importDocument = useMutation({
@@ -488,7 +581,7 @@ function RequirementStep({ profile, requirements, intake, setIntake, onNext, alt
   const source = { ...form.source, title: intake.title, provider: intake.provider, receivedAt: intake.receivedAt, version: intake.version, reference: intake.reference };
   const scopeReady = intake.scopeLevel === "System" || intake.scopeName.trim();
   const canSave = form.title && form.description && form.objective && lines(form.actors).length && lines(form.inScope).length && lines(form.acceptanceCriteria).length && source.title.trim() && source.provider.trim() && source.receivedAt && scopeReady;
-  if (mode === "modern") return <ModernRequirementEditor {...{ intake, updateIntake, form, update, source, canSave, mutation, importDocument, items, baselined, decide, onNext, alternateContent, evidenceContent, referenceImages, setReferenceImages }} />;
+  if (mode === "modern") return <ModernRequirementEditor {...{ profile, intake, updateIntake, form, update, source, canSave, mutation, importDocument, items, baselined, decide, onNext, alternateContent, evidenceContent, referenceImages, setReferenceImages, draft }} />;
   return <Card className="p-5 sm:p-6">
     <SectionTitle title="Nhập nguồn yêu cầu" description="Chọn loại đầu vào để nhập ngay tại đây. Yêu cầu mô tả hành vi mong đợi. URL kiểm thử, thiết kế giao diện và mã nguồn giúp đối chiếu khi thiết kế hoặc chạy test." />
     <section className="mt-5 rounded-xl border border-violet-200 bg-violet-50/40 p-4 dark:border-violet-900 dark:bg-violet-950/20">
@@ -518,23 +611,24 @@ function RequirementStep({ profile, requirements, intake, setIntake, onNext, alt
   </Card>;
 }
 
-function ModernRequirementEditor({ intake, updateIntake, form, update, source, canSave, mutation, importDocument, items, baselined, decide, onNext, alternateContent, evidenceContent, referenceImages, setReferenceImages }) {
+function ModernRequirementEditor({ profile, intake, updateIntake, form, update, source, canSave, mutation, importDocument, items, baselined, decide, onNext, alternateContent, evidenceContent, referenceImages, setReferenceImages, draft }) {
   const [entryMode, setEntryMode] = useState("manual");
   const [activeSection, setActiveSection] = useState(1);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const completed = [form.title, form.description, form.objective, form.actors, form.inScope, form.acceptanceCriteria].filter(Boolean).length;
   const itemCount = items.length;
+  const libraryUrl = `/requirements?${new URLSearchParams({ project: String(profile?.project?._id || profile?.project || ""), profile: String(profile?._id || "") }).toString()}`;
   const sourceReady = source.title.trim() && source.provider.trim() && source.receivedAt;
   return <Card className="overflow-hidden p-0">
     <div className="border-b border-violet-100 bg-gradient-to-r from-violet-50 via-white to-sky-50 px-5 py-5 dark:border-violet-900/50 dark:from-violet-950/30 dark:via-slate-950 dark:to-sky-950/20 sm:px-6">
       <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-700 dark:text-violet-300">Requirement workspace</p>
-      <div className="mt-2 flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-xl font-bold text-slate-950 dark:text-white">Nguồn tài liệu đầu vào</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">Nhập hoặc tải nguồn nghiệp vụ đã có. Với ứng dụng đang chạy, bổ sung URL và bằng chứng kỹ thuật. Tạo tài liệu dẫn xuất tại bước Use Case hoặc User Story.</p></div><div className="rounded-xl border border-violet-200 bg-white/80 px-3 py-2 text-right text-xs shadow-sm dark:border-violet-800 dark:bg-slate-900/70"><p className="font-semibold text-violet-800 dark:text-violet-200">{completed}/6 nội dung cốt lõi</p><p className="mt-1 text-slate-500">Lưu nháp bất kỳ lúc nào</p></div></div>
+      <div className="mt-2 flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-xl font-bold text-slate-950 dark:text-white">Nguồn tài liệu đầu vào</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">Nhập hoặc tải nguồn nghiệp vụ đã có. Với ứng dụng đang chạy, bổ sung URL và bằng chứng kỹ thuật. Tạo tài liệu dẫn xuất tại bước Use Case hoặc User Story.</p></div><div className="rounded-xl border border-violet-200 bg-white/80 px-3 py-2 text-right text-xs shadow-sm dark:border-violet-800 dark:bg-slate-900/70"><p className="font-semibold text-violet-800 dark:text-violet-200">{completed}/6 nội dung cốt lõi</p><p className="mt-1 text-slate-500">{draft?.savedAt ? `Đã khôi phục bản nhập dở ${formatDocumentDate(draft.savedAt)}` : "Nội dung nhập dở được tự động lưu"}</p></div></div>
     </div>
     <div className="grid gap-0 lg:grid-cols-[220px_minmax(0,1fr)]">
       <aside className="border-b border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/50 lg:border-b-0 lg:border-r">
         <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Cấu trúc tài liệu</p>
         <ol className="mt-3 space-y-2 text-sm">{[[1, "Nguồn & định danh"], [2, "Mục tiêu & yêu cầu"], [3, "Phạm vi & tiêu chí"], [4, "Chi tiết bổ sung"]].map(([step, label]) => <li key={step}><button type="button" onClick={() => setActiveSection(step)} className={`w-full rounded-lg px-3 py-2 text-left transition ${activeSection === step ? "bg-violet-100 font-semibold text-violet-800 dark:bg-violet-950/50 dark:text-violet-200" : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"}`}>{step}. {label}</button></li>)}</ol>
-        <button type="button" onClick={() => document.getElementById("requirements-library")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="mt-3 flex w-full items-center justify-between rounded-lg border border-violet-200 bg-white px-3 py-2 text-left text-sm font-semibold text-violet-700 shadow-sm transition hover:border-violet-400 hover:bg-violet-50 dark:border-violet-900 dark:bg-slate-900 dark:text-violet-200 dark:hover:bg-violet-950/30"><span>Requirement đã lưu</span><span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs dark:bg-violet-950">{itemCount}</span></button>
+        <Link to={libraryUrl} className="mt-3 flex w-full items-center justify-between rounded-lg border border-violet-200 bg-white px-3 py-2 text-left text-sm font-semibold text-violet-700 shadow-sm transition hover:border-violet-400 hover:bg-violet-50 dark:border-violet-900 dark:bg-slate-900 dark:text-violet-200 dark:hover:bg-violet-950/30"><span>Mở Thư viện Requirement</span><span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs dark:bg-violet-950">{itemCount}</span></Link>
         <div className="mt-5 rounded-lg border border-dashed border-slate-300 p-3 text-xs leading-5 text-slate-600 dark:border-slate-700 dark:text-slate-300"><p className="font-semibold text-slate-800 dark:text-white">Mẹo soạn nhanh</p><p className="mt-1">Chỉ cần hoàn tất 6 trường cốt lõi. Các trường nâng cao có thể bổ sung khi QA lập Test Plan.</p></div>
       </aside>
       <main className="space-y-5 p-5 sm:p-6">
@@ -549,7 +643,7 @@ function ModernRequirementEditor({ intake, updateIntake, form, update, source, c
           {activeSection === 3 && <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/40"><div className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-950/50 dark:text-violet-200">3</span><div><h3 className="font-semibold">Phạm vi và tiêu chí chấp nhận</h3><p className="text-xs text-slate-500">Đây là cơ sở PO/BA xác nhận và QA đánh giá khả năng kiểm thử.</p></div></div><div className="mt-4 grid gap-4 md:grid-cols-2"><Field label="Ai sử dụng? *" hint="Mỗi vai trò một dòng"><Textarea rows={3} value={form.actors} onChange={(e) => update("actors", e.target.value)} placeholder={"Khách hàng\nNhân viên vận hành"} /></Field><Field label="Trong phạm vi *" hint="Mỗi hạng mục một dòng"><Textarea rows={3} value={form.inScope} onChange={(e) => update("inScope", e.target.value)} placeholder={"Tạo đơn hàng\nXác nhận trạng thái đơn"} /></Field></div><Field className="mt-4" label="Acceptance Criteria *" hint="Mỗi tiêu chí một dòng, ưu tiên Given / When / Then"><Textarea rows={5} value={form.acceptanceCriteria} onChange={(e) => update("acceptanceCriteria", e.target.value)} placeholder={"Given giỏ hàng hợp lệ\nWhen khách hàng xác nhận đặt hàng\nThen hệ thống tạo đơn và hiển thị mã đơn hàng"} /></Field></section>}
           {activeSection === 4 && <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/30"><div className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-950/50 dark:text-violet-200">4</span><div><h3 className="font-semibold">Chi tiết bổ sung</h3><p className="text-xs text-slate-500">Tùy chọn. Chỉ bổ sung khi cần làm rõ phạm vi hoặc chuẩn bị kiểm thử.</p></div></div><div className="mt-4 grid gap-4 md:grid-cols-2"><Field label="Business rules"><Textarea rows={3} value={form.businessRules} onChange={(e) => update("businessRules", e.target.value)} placeholder="Mỗi quy tắc một dòng" /></Field><Field label="Ngoài phạm vi"><Textarea rows={3} value={form.outOfScope} onChange={(e) => update("outOfScope", e.target.value)} placeholder="Các hạng mục chưa xử lý ở phiên bản này" /></Field><Field label="Rủi ro / phụ thuộc"><Textarea rows={3} value={`${form.risks}${form.risks && form.dependencies ? "\n" : ""}${form.dependencies}`} onChange={(e) => { update("risks", e.target.value); update("dependencies", ""); }} /></Field><Field label="Dữ liệu test cần có / hạn chế"><Textarea rows={3} value={`${form.testDataRequirements}${form.testDataRequirements && form.dataRestrictions ? "\n" : ""}${form.dataRestrictions}`} onChange={(e) => { update("testDataRequirements", e.target.value); update("dataRestrictions", ""); }} placeholder="Không dùng PII, mật khẩu hoặc dữ liệu production" /></Field></div></section>}
           <div className="flex items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-700"><Button variant="outline" disabled={activeSection === 1} onClick={() => setActiveSection((step) => Math.max(1, step - 1))}>Quay lại</Button><div className="flex items-center gap-2"><span className="text-xs text-slate-500">Bước {activeSection}/4</span>{activeSection < 4 && <Button variant="outline" onClick={() => setActiveSection((step) => Math.min(4, step + 1))}>Tiếp theo <ArrowRight className="h-4 w-4" /></Button>}</div></div>
-          <div className="sticky bottom-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-200 bg-white/95 p-3 shadow-lg backdrop-blur dark:border-violet-900 dark:bg-slate-950/95"><p className="text-xs text-slate-600 dark:text-slate-300">{canSave ? "Đủ nội dung cốt lõi. Lưu thành bản nháp để PO/BA rà soát." : `Còn ${6 - completed} phần cốt lõi cần hoàn tất.`}</p><Button disabled={!canSave || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? "Đang lưu…" : "Lưu Requirement nháp"}</Button></div>
+          <div className="sticky bottom-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-200 bg-white/95 p-3 shadow-lg backdrop-blur dark:border-violet-900 dark:bg-slate-950/95"><p className="text-xs text-slate-600 dark:text-slate-300">{canSave ? "Đủ nội dung cốt lõi. Lưu thành tài liệu nháp để PO/BA rà soát." : `Còn ${6 - completed} phần cốt lõi; phần đang nhập vẫn được tự động lưu.`}</p><Button disabled={!canSave || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? "Đang lưu…" : "Lưu Requirement nháp"}</Button></div>
         </>}
         <details className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
           <summary className="cursor-pointer font-semibold">Môi trường và tài liệu tham chiếu (tùy chọn)</summary>
@@ -564,7 +658,7 @@ function ModernRequirementEditor({ intake, updateIntake, form, update, source, c
             {evidenceContent && cloneElement(evidenceContent, { intakeOnly: true })}
           </div>
         </details>
-        <RequirementLibrary items={items} baselined={baselined} decide={decide} onNext={onNext} />
+        <RequirementLibraryPreview items={items} baselined={baselined} libraryUrl={libraryUrl} />
       </main>
     </div>
   </Card>;
@@ -586,12 +680,28 @@ function DetailList({ title, values }) {
   return <section className={`rounded-xl border p-4 ${items.length ? "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950" : "border-dashed border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-900/40"}`}><div className="flex items-center justify-between gap-3"><h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">{title}</h4>{!items.length && <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">Chưa có dữ liệu</span>}</div>{items.length ? <ul className="mt-2 space-y-2 text-sm leading-6 text-slate-700 dark:text-slate-200">{items.map((value, index) => <li key={`${title}-${index}`} className="flex gap-2"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500" /><span>{value}</span></li>)}</ul> : <p className="mt-2 text-sm leading-6 text-slate-400">Tài liệu nguồn chưa nêu rõ nội dung này; cần PO/BA bổ sung hoặc xác nhận.</p>}</section>;
 }
 
-function RequirementLibrary({ items, baselined, decide, onNext }) {
+function RequirementLibraryPreview({ items, baselined, libraryUrl }) {
+  const recent = [...items].sort((left, right) => new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0)).slice(0, 5);
+  const draftCount = items.filter((item) => item.status === "Draft").length;
+  const changedCount = items.filter((item) => item.status === "Changed").length;
+  return <section className="border-t border-slate-200 pt-5 dark:border-slate-700">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-base font-semibold">Requirement đã lưu</h3><p className="mt-1 text-xs text-slate-500">Tóm tắt đợt hiện tại. Việc rà soát, Baseline và Từ chối được thực hiện trong Thư viện riêng.</p></div><Button asChild><Link to={libraryUrl}>Mở Thư viện Requirement <ArrowRight className="h-4 w-4" /></Link></Button></div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-3"><div className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"><p className="text-2xl font-bold">{items.length}</p><p className="text-xs text-slate-500">Tổng Requirement</p></div><div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/20"><p className="text-2xl font-bold text-amber-800 dark:text-amber-200">{draftCount + changedCount}</p><p className="text-xs text-amber-700 dark:text-amber-300">Cần rà soát</p></div><div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900 dark:bg-emerald-950/20"><p className="text-2xl font-bold text-emerald-800 dark:text-emerald-200">{baselined.length}</p><p className="text-xs text-emerald-700 dark:text-emerald-300">Đã Baseline</p></div></div>
+    {recent.length ? <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700"><div className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:bg-slate-800">5 mục cập nhật gần nhất</div>{recent.map((item) => <Link key={item._id} to={`${libraryUrl}&requirement=${item._id}`} className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 text-sm transition last:border-0 hover:bg-violet-50 dark:border-slate-800 dark:hover:bg-violet-950/20"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-bold text-violet-700 dark:text-violet-300">{item.requirementId}</span><Badge tone={requirementTone(item.status)}>{requirementStatusLabel[item.status] || item.status}</Badge><DocumentQualityBadge quality={item.quality} /></div><p className="mt-1 truncate font-semibold">{item.title}</p></div><span className="shrink-0 text-xs font-semibold text-violet-700 dark:text-violet-300">Mở <ChevronRight className="inline h-4 w-4" /></span></Link>)}</div> : <p className="mt-4 rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-slate-700">Chưa có Requirement đã lưu. Nội dung form đang nhập dở vẫn được tự động lưu trong đợt này.</p>}
+  </section>;
+}
+
+export function RequirementLibrary({ items, baselined, decide, onNext, initialRequirementId = "" }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("All");
   const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState(null);
-  const pageSize = 10;
+  const [pageSize, setPageSize] = useState(5);
+  const [sortBy, setSortBy] = useState("updated");
+  const [selected, setSelected] = useState(() => items.find((item) => item._id === initialRequirementId) || null);
+  useEffect(() => {
+    if (initialRequirementId) setSelected(items.find((item) => item._id === initialRequirementId) || null);
+  }, [initialRequirementId, items]);
+  const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const statusOptions = [
     ["All", "Tất cả", items.length],
     ["Draft", "Bản nháp", items.filter((item) => item.status === "Draft").length],
@@ -604,43 +714,62 @@ function RequirementLibrary({ items, baselined, decide, onNext }) {
     const matchesStatus = status === "All" || item.status === status;
     const haystack = [item.requirementId, item.title, item.description, item.source?.title, item.source?.provider, ...(item.actors || []), ...(item.inScope || [])].filter(Boolean).join(" ").toLocaleLowerCase("vi");
     return matchesStatus && (!normalizedQuery || haystack.includes(normalizedQuery));
+  }).sort((left, right) => {
+    if (sortBy === "priority") return ({ Critical: 0, High: 1, Medium: 2, Low: 3 }[left.priority] ?? 4) - ({ Critical: 0, High: 1, Medium: 2, Low: 3 }[right.priority] ?? 4);
+    if (sortBy === "created") return new Date(right.createdAt || 0) - new Date(left.createdAt || 0);
+    return new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0);
   });
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const changeFilter = (nextStatus) => { setStatus(nextStatus); setPage(1); };
   const changeQuery = (value) => { setQuery(value); setPage(1); };
+  const openDetails = (item) => { setReviewConfirmed(false); setSelected(item); };
   const baseline = (item) => {
-    if (window.confirm(`Chốt ${item.requirementId || "Requirement này"} làm bản chuẩn? Sau khi chốt, mục này sẽ được dùng để sinh Use Case.`)) decide.mutate({ id: item._id, decision: "Baselined" });
+    if (window.confirm(`Chốt ${item.requirementId || "Requirement này"} làm bản chuẩn? Sau khi chốt, mục này sẽ được dùng để sinh Use Case.`)) decide.mutate({ id: item._id, decision: "Baselined" }, { onSuccess: () => { setSelected(null); setReviewConfirmed(false); } });
+  };
+  const reject = (item) => {
+    if (window.confirm(`Từ chối ${item.requirementId || "Requirement này"}? Mục này sẽ không được dùng để sinh Use Case.`)) decide.mutate({ id: item._id, decision: "Rejected" }, { onSuccess: () => { setSelected(null); setReviewConfirmed(false); } });
   };
   const selectedDetails = selected ? [selected.objective, selected.description, selected.actors, selected.inScope, selected.outOfScope, selected.acceptanceCriteria, selected.businessRules, selected.nonFunctionalRequirements, selected.risks, selected.assumptions, selected.dependencies, selected.testDataRequirements, selected.dataRestrictions] : [];
   const completedDetailCount = selectedDetails.filter((value) => Array.isArray(value) ? value.some(Boolean) : Boolean(value)).length;
+  const missingBaselineFields = selected ? [
+    !selected.title && "tiêu đề",
+    !selected.description && "mô tả",
+    !selected.objective && "mục tiêu",
+    !selected.actors?.length && "actor",
+    !selected.inScope?.length && "phạm vi",
+    !selected.acceptanceCriteria?.length && "Acceptance Criteria",
+  ].filter(Boolean) : [];
+  const canBaselineSelected = missingBaselineFields.length === 0;
 
   return <section id="requirements-library" className="scroll-mt-5 border-t border-slate-200 pt-5 dark:border-slate-700">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-base font-semibold">Thư viện Requirement</h3><p className="mt-1 text-xs text-slate-500">{items.length} mục · {baselined.length} đã chốt làm bản chuẩn. Chọn một hàng để xem đầy đủ nội dung.</p></div>{baselined.length > 0 && <Button variant="outline" onClick={onNext}>Tiếp tục Use Case <ArrowRight className="h-4 w-4" /></Button>}</div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-base font-semibold">Thư viện Requirement</h3><p className="mt-1 text-xs text-slate-500">{items.length} mục · {baselined.length} đã chốt. Mở Xem chi tiết và đọc nội dung trước khi Baseline hoặc Từ chối.</p></div>{baselined.length > 0 && <Button variant="outline" onClick={onNext}>Tiếp tục Use Case <ArrowRight className="h-4 w-4" /></Button>}</div>
     {items.length ? <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40">
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 p-3 backdrop-blur dark:border-slate-700 dark:bg-slate-950/95">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <label className="relative block w-full xl:max-w-sm"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input value={query} onChange={(event) => changeQuery(event.target.value)} className="pl-9" placeholder="Tìm theo mã, tên, actor hoặc nguồn…" aria-label="Tìm Requirement" /></label>
-          <div className="flex gap-1 overflow-x-auto pb-1 xl:pb-0">{statusOptions.map(([value, label, count]) => <button key={value} type="button" onClick={() => changeFilter(value)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition ${status === value ? "bg-violet-600 text-white shadow-sm" : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"}`}>{label} <span className={status === value ? "text-violet-100" : "text-slate-400"}>{count}</span></button>)}</div>
+          <div className="flex flex-wrap items-center gap-2"><Select className="h-9 min-w-36 text-xs" value={sortBy} onChange={(event) => { setSortBy(event.target.value); setPage(1); }} aria-label="Sắp xếp Requirement"><option value="updated">Mới cập nhật</option><option value="created">Mới tạo</option><option value="priority">Theo ưu tiên</option></Select><Select className="h-9 w-28 text-xs" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }} aria-label="Số Requirement mỗi trang"><option value="5">5 / trang</option><option value="10">10 / trang</option><option value="20">20 / trang</option></Select></div>
         </div>
+        <div className="mt-3 flex gap-1 overflow-x-auto pb-1">{statusOptions.map(([value, label, count]) => <button key={value} type="button" onClick={() => changeFilter(value)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition ${status === value ? "bg-violet-600 text-white shadow-sm" : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"}`}>{label} <span className={status === value ? "text-violet-100" : "text-slate-400"}>{count}</span></button>)}</div>
       </div>
-      <div className="divide-y divide-slate-100 dark:divide-slate-800">{visible.map((item) => <button key={item._id} type="button" onClick={() => setSelected(item)} className="group grid w-full gap-3 p-4 text-left transition hover:bg-violet-50/60 focus:bg-violet-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-violet-500 dark:hover:bg-violet-950/20 md:grid-cols-[minmax(0,1fr)_150px_150px_28px] md:items-center">
-        <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-bold text-violet-700 dark:text-violet-300">{item.requirementId || "Chưa có mã"}</span><Badge tone={requirementTone(item.status)}>{requirementStatusLabel[item.status] || item.status}</Badge></div><p className="mt-1 truncate text-sm font-semibold text-slate-900 dark:text-white">{item.title}</p><p className="mt-1 line-clamp-1 text-xs text-slate-500">{item.description || item.objective || "Chưa có mô tả"}</p></div>
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">{visible.map((item) => <button key={item._id} type="button" onClick={() => openDetails(item)} className="group grid w-full gap-3 px-3 py-3 text-left transition hover:bg-violet-50/60 focus:bg-violet-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-violet-500 dark:hover:bg-violet-950/20 md:grid-cols-[minmax(0,1fr)_150px_150px_96px] md:items-center">
+        <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-bold text-violet-700 dark:text-violet-300">{item.requirementId || "Chưa có mã"}</span><Badge tone={requirementTone(item.status)}>{requirementStatusLabel[item.status] || item.status}</Badge><DocumentQualityBadge quality={item.quality} /></div><p className="mt-1 truncate text-sm font-semibold text-slate-900 dark:text-white">{item.title}</p><p className="mt-1 line-clamp-1 text-xs text-slate-500">{item.description || item.objective || "Chưa có mô tả"}</p></div>
         <div className="text-xs text-slate-500"><p className="font-medium text-slate-700 dark:text-slate-300">{item.source?.title || "Chưa rõ nguồn"}</p><p className="mt-1">{item.source?.provider || "Chưa có người cung cấp"}</p></div>
-        <div className="text-xs text-slate-500"><p>{item.type || "Requirement"} · {item.priority || "Medium"}</p><p className="mt-1">Cập nhật {formatDocumentDate(item.updatedAt)}</p></div>
-        <ChevronRight className="hidden h-5 w-5 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-violet-500 md:block" />
+        <div className="text-xs text-slate-500"><p>{item.type || "Requirement"} · {item.priority || "Medium"}</p><p className="mt-1">Tạo {formatDocumentDate(item.createdAt)}</p><p className="mt-0.5">Cập nhật {formatDocumentDate(item.updatedAt)}</p></div>
+        <span className="inline-flex items-center justify-end gap-1 text-xs font-semibold text-violet-700 dark:text-violet-300">Xem chi tiết <ChevronRight className="h-4 w-4 transition group-hover:translate-x-0.5" /></span>
       </button>)}</div>
       {!visible.length && <div className="p-10 text-center"><Search className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-semibold">Không tìm thấy Requirement phù hợp</p><button type="button" onClick={() => { changeQuery(""); changeFilter("All"); }} className="mt-2 text-xs font-semibold text-violet-600 hover:underline">Xóa bộ lọc</button></div>}
-      {filtered.length > pageSize && <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/70 px-4 py-3 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900/60"><span>Hiển thị {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filtered.length)} trong {filtered.length} mục</span><div className="flex items-center gap-2"><Button size="sm" variant="outline" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" /> Trước</Button><span className="font-semibold text-slate-700 dark:text-slate-200">{currentPage}/{pageCount}</span><Button size="sm" variant="outline" disabled={currentPage === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Sau <ChevronRight className="h-4 w-4" /></Button></div></div>}
+      {filtered.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/70 px-4 py-3 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900/60"><span>Hiển thị {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filtered.length)} trong {filtered.length} mục</span><div className="flex items-center gap-2"><Button size="sm" variant="outline" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" /> Trước</Button><span className="font-semibold text-slate-700 dark:text-slate-200">{currentPage}/{pageCount}</span><Button size="sm" variant="outline" disabled={currentPage === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Sau <ChevronRight className="h-4 w-4" /></Button></div></div>}
     </div> : <p className="mt-3 rounded-lg border border-dashed p-4 text-sm text-slate-500">Chưa có Requirement. Bạn có thể soạn tay hoặc tải tài liệu ở phía trên.</p>}
 
     {selected && <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-label={`Chi tiết ${selected.requirementId}`} onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
       <div className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl dark:bg-slate-950">
-        <header className="border-b border-slate-200 p-5 dark:border-slate-800"><div className="flex items-start justify-between gap-4"><div><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-violet-700 dark:text-violet-300">{selected.requirementId || "Chưa có mã"}</span><Badge tone={requirementTone(selected.status)}>{requirementStatusLabel[selected.status] || selected.status}</Badge></div><h3 className="mt-2 text-xl font-bold text-slate-950 dark:text-white">{selected.title}</h3><p className="mt-2 text-xs text-slate-500">{selected.type || "Requirement"} · Ưu tiên {selected.priority || "Medium"} · Cập nhật {formatDocumentDate(selected.updatedAt)}</p></div><button type="button" onClick={() => setSelected(null)} className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white" aria-label="Đóng chi tiết"><X className="h-5 w-5" /></button></div></header>
+        <header className="border-b border-slate-200 p-5 dark:border-slate-800"><div className="flex items-start justify-between gap-4"><div><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-violet-700 dark:text-violet-300">{selected.requirementId || "Chưa có mã"}</span><Badge tone={requirementTone(selected.status)}>{requirementStatusLabel[selected.status] || selected.status}</Badge></div><h3 className="mt-2 text-xl font-bold text-slate-950 dark:text-white">{selected.title}</h3><p className="mt-2 text-xs text-slate-500">{selected.type || "Requirement"} · Ưu tiên {selected.priority || "Medium"} · Tạo {formatDocumentDate(selected.createdAt)} · Cập nhật {formatDocumentDate(selected.updatedAt)}</p></div><button type="button" onClick={() => setSelected(null)} className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white" aria-label="Đóng chi tiết"><X className="h-5 w-5" /></button></div></header>
         <div className="flex-1 space-y-6 overflow-y-auto p-5">
           <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">Nguồn</p><p className="mt-1 text-sm font-semibold">{selected.source?.title || "Chưa rõ nguồn"}</p><p className="mt-1 text-xs text-slate-500">{selected.source?.provider || "Chưa có người cung cấp"}{selected.source?.version ? ` · ${selected.source.version}` : ""}</p></div><div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">Phạm vi</p><p className="mt-1 text-sm font-semibold">{selected.scope?.name || selected.release || "Toàn hệ thống"}</p><p className="mt-1 text-xs text-slate-500">{selected.scope?.level || "System"}</p></div></div>
           <div className={`rounded-xl border p-4 ${completedDetailCount >= 8 ? "border-emerald-200 bg-emerald-50/70 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-100" : "border-amber-200 bg-amber-50/70 text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100"}`}><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold">Độ đầy đủ: {completedDetailCount}/13 nhóm thông tin</p><span className="text-xs font-medium">{completedDetailCount >= 8 ? "Khá đầy đủ" : "Cần bổ sung trước khi chốt"}</span></div><p className="mt-1 text-xs leading-5 opacity-80">Hệ thống chỉ tách nội dung có trong tài liệu nguồn và không tự bịa phần còn thiếu. Các mục trống được hiển thị bên dưới để PO/BA dễ rà soát.</p></div>
+          {!canBaselineSelected && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-900 dark:border-rose-900 dark:bg-rose-950/20 dark:text-rose-100"><p className="text-sm font-semibold">Chưa thể Baseline Requirement này</p><p className="mt-1 text-xs leading-5">Cần bổ sung: {missingBaselineFields.join(", ")}. {selected.reviewNote || "PO/BA cần hoàn thiện nội dung có thể kiểm thử trước khi chốt."}</p></div>}
           <DetailList title="Mục tiêu nghiệp vụ" values={selected.objective} />
           <DetailList title="Mô tả yêu cầu" values={selected.description} />
           <DetailList title="Actor / vai trò" values={selected.actors} />
@@ -655,15 +784,30 @@ function RequirementLibrary({ items, baselined, decide, onNext }) {
           <DetailList title="Dữ liệu test cần có" values={selected.testDataRequirements} />
           <DetailList title="Hạn chế dữ liệu" values={selected.dataRestrictions} />
         </div>
-        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950"><p className="max-w-md text-xs leading-5 text-slate-500">“Đặt làm bản chuẩn” xác nhận Requirement đã sẵn sàng làm đầu vào chính thức cho Use Case và thiết kế kiểm thử.</p><div className="flex gap-2"><Button variant="outline" onClick={() => setSelected(null)}>Đóng</Button>{selected.status !== "Baselined" && <Button disabled={decide.isPending} onClick={() => baseline(selected)}>{decide.isPending ? "Đang cập nhật…" : "Đặt làm bản chuẩn"}</Button>}</div></footer>
+        <footer className="border-t border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950"><label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-900"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-violet-600" checked={reviewConfirmed} onChange={(event) => setReviewConfirmed(event.target.checked)} /><span><strong>Tôi đã đọc nội dung chi tiết</strong><span className="mt-0.5 block text-xs text-slate-500">Xác nhận trước khi Baseline hoặc Từ chối Requirement.</span></span></label><div className="mt-3 flex flex-wrap items-center justify-between gap-3"><p className="max-w-md text-xs leading-5 text-slate-500">{canBaselineSelected ? "Baseline cho phép dùng Requirement làm đầu vào chính thức để sinh Use Case." : `Nút Baseline bị khóa vì còn thiếu ${missingBaselineFields.join(", ")}.`}</p><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setSelected(null)}>Đóng</Button>{selected.status !== "Baselined" && <><Button variant="outline" disabled={!reviewConfirmed || decide.isPending} onClick={() => reject(selected)}>Từ chối</Button><Button disabled={!reviewConfirmed || !canBaselineSelected || decide.isPending} onClick={() => baseline(selected)}>{decide.isPending ? "Đang cập nhật…" : "Baseline Requirement"}</Button></>}</div></div></footer>
       </div>
     </div>}
   </section>;
 }
 
-function TechnicalEvidenceStep({ profile, github, integrations, git, setGit, analyzeGithub, activeProject, GitHubForm, updateProfile, onNext, intakeOnly = false }) {
+function TechnicalEvidenceStep({ profile, github, integrations, git, setGit, analyzeGithub, activeProject, GitHubForm, requirements, updateProfile, onNext, intakeOnly = false }) {
   const [url, setUrl] = useState(null);
+  const [designReference, setDesignReference] = useState(null);
+  const [selectedRequirement, setSelectedRequirement] = useState("");
+  const imageInputRef = useRef(null);
   const website = url ?? profile?.baseUrl ?? "";
+  const figmaUrl = designReference ?? profile?.referenceUrl ?? "";
+  const requirementItems = requirements?.data || [];
+  const selectedRequirementId = selectedRequirement || requirementItems[0]?._id || "";
+  const selectedRequirementItem = requirementItems.find((item) => item._id === selectedRequirementId);
+  const uploadEvidence = useMutation({
+    mutationFn: async (files) => Promise.all(files.map((file) => e2eApi.uploadRequirementImage(selectedRequirementId, file))),
+    onSuccess: (_, files) => {
+      toast.success(`Đã gắn ${files.length} ảnh tham chiếu vào ${selectedRequirementItem?.requirementId || "Requirement"}.`);
+      requirements?.refetch?.();
+    },
+    onError: (error) => toast.error(error.message),
+  });
   if (!profile) return <Blocked title="Đang chuẩn bị phạm vi kiểm thử" description="Hệ thống đang tạo không gian liên kết tài liệu cho Project này." />;
   return <Card className="p-5 sm:p-6">
     <SectionTitle title="Môi trường và bằng chứng kỹ thuật" description="Tuỳ chọn. Repository giúp đối chiếu route, API, role và entity; không thay thế Requirement đã Baseline từ đề bài khách hàng." />
@@ -679,9 +823,28 @@ function TechnicalEvidenceStep({ profile, github, integrations, git, setGit, ana
           <Button type="submit" disabled={updateProfile.isPending}>Lưu URL của Profile</Button>
         </form>}
       </div>
-      {!intakeOnly && <div className="rounded-lg border border-border p-3">
+      {!intakeOnly && <div className="rounded-lg border border-violet-200 bg-violet-50/30 p-3 dark:border-violet-900 dark:bg-violet-950/20">
         <p className="font-semibold">Ảnh giao diện / Figma / đặc tả API</p>
-        <p className="mt-1 text-muted-foreground">Có thể ghi liên kết tham chiếu trong nguồn Requirement. Dùng ảnh hoặc thiết kế để đối chiếu trạng thái giao diện và bổ sung kết quả mong đợi vào tiêu chí chấp nhận.</p>
+        <p className="mt-1 text-muted-foreground">Lưu link Figma trên Profile hoặc gắn PNG, JPG, WebP xuất từ Figma vào một Requirement đã lưu.</p>
+        <form className="mt-3 flex flex-col gap-2 sm:flex-row" onSubmit={(event) => { event.preventDefault(); updateProfile.mutate({ referenceUrl: figmaUrl.trim() }, { onSuccess: () => setDesignReference(null) }); }}>
+          <Input aria-label="Liên kết Figma hoặc đặc tả API" type="url" pattern="https?://.+" value={figmaUrl} onChange={(event) => setDesignReference(event.target.value)} placeholder="https://www.figma.com/design/…" />
+          <Button type="submit" variant="outline" disabled={!figmaUrl.trim() || updateProfile.isPending}>Lưu link</Button>
+        </form>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+          <Select aria-label="Requirement nhận ảnh tham chiếu" value={selectedRequirementId} onChange={(event) => setSelectedRequirement(event.target.value)} disabled={!requirementItems.length}>
+            {!requirementItems.length && <option value="">Chưa có Requirement đã lưu</option>}
+            {requirementItems.map((item) => <option key={item._id} value={item._id}>{item.requirementId} · {item.title}</option>)}
+          </Select>
+          <input ref={imageInputRef} className="sr-only" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" multiple onChange={(event) => {
+            const selectedFiles = [...(event.target.files || [])];
+            const validFiles = selectedFiles.filter((file) => file.size <= 5 * 1024 * 1024).slice(0, 5);
+            if (validFiles.length !== selectedFiles.length) toast.error("Chỉ nhận tối đa 5 ảnh PNG, JPG hoặc WebP, mỗi ảnh không quá 5 MB.");
+            if (validFiles.length && selectedRequirementId) uploadEvidence.mutate(validFiles);
+            event.target.value = "";
+          }} />
+          <Button type="button" disabled={!selectedRequirementId || uploadEvidence.isPending} onClick={() => imageInputRef.current?.click()}><FileUp className="h-4 w-4" />{uploadEvidence.isPending ? "Đang tải…" : "Thêm ảnh / Figma export"}</Button>
+        </div>
+        {!requirementItems.length ? <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">Hãy lưu ít nhất một Requirement trước khi gắn ảnh. Link Figma vẫn có thể lưu ngay.</p> : <p className="mt-2 text-xs text-slate-500">{selectedRequirementItem?.attachments?.length || 0} ảnh đã gắn vào Requirement đang chọn.</p>}
       </div>}
     </div>
     {profile.repository?.fullName && <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"><span className="font-semibold">Đã gắn bằng chứng:</span> {profile.repository.fullName}@{profile.repository.commitSha || profile.repository.ref}</div>}
@@ -898,6 +1061,7 @@ function ScenarioTable({ title, value, actor, type = "main" }) {
 
 function registryOrigin(type, item) {
   if (type === "System Profile") return item.mode === "GitHubE2E" ? { label: "Phân tích GitHub", tone: "blue" } : { label: "Thiết lập thủ công", tone: "slate" };
+  if (type === "Requirement") return item.source?.type === "ImportedCustomerDocument" ? { label: "Tài liệu khách hàng", tone: "blue" } : { label: "Nguồn yêu cầu", tone: "slate" };
   if (type === "Use Case") { const origin = getUseCaseOrigin(item); return { label: origin.label, tone: origin.tone }; }
   if (type === "User Story") return item.source === "AI" ? { label: "AI", tone: "purple" } : item.source === "GitHub" ? { label: "GitHub", tone: "blue" } : item.source === "ImportedDocument" ? { label: "Tài liệu User Story", tone: "blue" } : { label: "Thủ công", tone: "slate" };
   if (type === "Test Plan") return item.origin === "AI" ? { label: "AI", tone: "purple" } : item.origin === "Rule" ? { label: "Quy tắc hệ thống", tone: "blue" } : item.origin === "Board" ? { label: "Test Board", tone: "blue" } : item.origin === "Manual" ? { label: "Thủ công", tone: "slate" } : { label: "Chưa ghi nhận", tone: "amber" };
@@ -906,7 +1070,7 @@ function registryOrigin(type, item) {
   return { label: labels[item.generatedFrom] || "Chưa ghi nhận", tone: item.generatedFrom === "Manual" ? "slate" : item.generatedFrom ? "purple" : "amber" };
 }
 
-function DocumentRegister({ profile, profiles, useCases, stories, plans, suites, cases, setActiveStep }) {
+function DocumentRegister({ profile, profiles, requirements, useCases, stories, plans, suites, cases, setActiveStep }) {
   const [typeFilter, setTypeFilter] = useState("All");
   const [sourceFilter, setSourceFilter] = useState("All");
   const [search, setSearch] = useState("");
@@ -914,7 +1078,8 @@ function DocumentRegister({ profile, profiles, useCases, stories, plans, suites,
   const [pageSize, setPageSize] = useState(20);
   const profileId = String(profile?._id || "");
   const records = [
-    ...profiles.map((item) => ({ id: item._id, type: "System Profile", name: item.name, status: item.status, item, step: "profile" })),
+    ...profiles.filter((item) => String(item._id) === profileId).map((item) => ({ id: item._id, type: "System Profile", name: item.name, status: item.status, item, step: "requirement" })),
+    ...requirements.map((item) => ({ id: item._id, type: "Requirement", name: `${item.requirementId || "Requirement"} · ${item.title}`, status: item.status, item, step: "requirement" })),
     ...useCases.map((item) => ({ id: item._id, type: "Use Case", name: item.name, status: item.status, item, step: "usecase" })),
     ...stories.map((item) => ({ id: item._id, type: "User Story", name: item.title, status: item.approvalStatus, item, step: "story" })),
     ...plans.map((item) => ({ id: item._id, type: "Test Plan", name: item.name, status: item.approvalStatus, item, step: "plan" })),
@@ -928,14 +1093,14 @@ function DocumentRegister({ profile, profiles, useCases, stories, plans, suites,
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageRows = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const typeCount = Object.fromEntries(["System Profile", "Use Case", "User Story", "Test Plan", "Test Suite", "Test Case"].map((type) => [type, records.filter((record) => record.type === type).length]));
+  const typeCount = Object.fromEntries(["System Profile", "Requirement", "Use Case", "User Story", "Test Plan", "Test Suite", "Test Case"].map((type) => [type, records.filter((record) => record.type === type).length]));
   const sourceOptions = [...new Set(records.map((record) => record.source.label))];
   return <Card className="p-5">
     <SectionTitle title="Danh mục tài liệu" description="Một nơi để tra cứu và quản lý toàn bộ tài liệu thuộc Profile hiện tại. Danh sách gọn, có tìm kiếm, nguồn tạo và lịch sử ngày tháng; mở đúng bước để chỉnh sửa nội dung." />
     {!profileId ? <p className="mt-5 rounded-lg border border-dashed p-4 text-sm text-slate-500">Chọn System Profile trước để xem danh mục tài liệu theo phạm vi.</p> : <>
-      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">{Object.entries(typeCount).map(([type, count]) => <button type="button" key={type} onClick={() => { setTypeFilter(type); setPage(1); }} className={`rounded-xl border p-3 text-left ${typeFilter === type ? "border-violet-400 bg-violet-50 dark:border-violet-800 dark:bg-violet-950/30" : "border-slate-200 dark:border-slate-700"}`}><p className="text-xl font-bold">{count}</p><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{type}</p></button>)}</div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-7">{Object.entries(typeCount).map(([type, count]) => <button type="button" key={type} onClick={() => { setTypeFilter(type); setPage(1); }} className={`rounded-xl border p-3 text-left ${typeFilter === type ? "border-violet-400 bg-violet-50 dark:border-violet-800 dark:bg-violet-950/30" : "border-slate-200 dark:border-slate-700"}`}><p className="text-xl font-bold">{count}</p><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{type}</p></button>)}</div>
       <div className="mt-5 flex flex-wrap gap-2"><Input className="h-9 w-64 text-xs" value={search} placeholder="Tìm tên, mã hoặc Test Case ID…" onChange={(event) => { setSearch(event.target.value); setPage(1); }} /><Select className="h-9 min-w-40 text-xs" value={typeFilter} onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }}><option value="All">Tất cả loại tài liệu</option>{Object.keys(typeCount).map((type) => <option key={type} value={type}>{type}</option>)}</Select><Select className="h-9 min-w-44 text-xs" value={sourceFilter} onChange={(event) => { setSourceFilter(event.target.value); setPage(1); }}><option value="All">Tất cả nguồn tạo</option>{sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}</Select></div>
-      <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700"><table className="min-w-[1050px] w-full text-left text-sm"><thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-800"><tr><th className="px-3 py-3">Tài liệu</th><th className="px-3 py-3">Loại</th><th className="px-3 py-3">Nguồn</th><th className="px-3 py-3">Trạng thái</th><th className="px-3 py-3">Người tạo</th><th className="px-3 py-3">Ngày tạo</th><th className="px-3 py-3">Cập nhật</th><th className="px-3 py-3 text-right">Thao tác</th></tr></thead><tbody>{pageRows.map((record) => <tr key={`${record.type}-${record.id}`} className="border-t border-slate-200 dark:border-slate-700"><td className="max-w-96 px-3 py-3 font-semibold">{record.name || "Chưa đặt tên"}</td><td className="px-3 py-3 text-xs">{record.type}</td><td className="px-3 py-3"><Badge tone={record.source.tone}>{record.source.label}</Badge></td><td className="px-3 py-3"><Badge tone={statusTone[record.status] || "slate"}>{record.status || "—"}</Badge></td><td className="px-3 py-3 text-xs">{record.item.createdBy?.fullName || "Không rõ"}</td><td className="whitespace-nowrap px-3 py-3 text-xs">{formatDocumentDate(record.item.createdAt)}</td><td className="whitespace-nowrap px-3 py-3 text-xs">{formatDocumentDate(record.item.updatedAt)}</td><td className="px-3 py-3 text-right"><Button size="sm" variant="outline" onClick={() => setActiveStep(record.step)}>Mở</Button></td></tr>)}</tbody></table></div>
+      <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700"><table className="min-w-[1050px] w-full text-left text-sm"><thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-800"><tr><th className="px-3 py-3">Tài liệu</th><th className="px-3 py-3">Loại</th><th className="px-3 py-3">Nguồn</th><th className="px-3 py-3">Trạng thái</th><th className="px-3 py-3">Chất lượng</th><th className="px-3 py-3">Người tạo</th><th className="px-3 py-3">Ngày tạo</th><th className="px-3 py-3">Cập nhật</th><th className="px-3 py-3 text-right">Thao tác</th></tr></thead><tbody>{pageRows.map((record) => <tr key={`${record.type}-${record.id}`} className="border-t border-slate-200 dark:border-slate-700"><td className="max-w-96 px-3 py-3 font-semibold">{record.name || "Chưa đặt tên"}</td><td className="px-3 py-3 text-xs">{record.type}</td><td className="px-3 py-3"><Badge tone={record.source.tone}>{record.source.label}</Badge></td><td className="px-3 py-3"><Badge tone={statusTone[record.status] || "slate"}>{record.status || "—"}</Badge></td><td className="px-3 py-3"><DocumentQualityBadge quality={record.item.quality} /></td><td className="px-3 py-3 text-xs">{record.item.createdBy?.fullName || "Không rõ"}</td><td className="whitespace-nowrap px-3 py-3 text-xs">{formatDocumentDate(record.item.createdAt)}</td><td className="whitespace-nowrap px-3 py-3 text-xs">{formatDocumentDate(record.item.updatedAt)}</td><td className="px-3 py-3 text-right"><Button size="sm" variant="outline" onClick={() => setActiveStep(record.step)}>Mở</Button></td></tr>)}</tbody></table></div>
       {!pageRows.length && <p className="mt-4 rounded-lg border border-dashed p-4 text-sm text-slate-500">Không có tài liệu khớp điều kiện lọc.</p>}
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs"><span>{filtered.length} tài liệu · Trang {currentPage}/{totalPages}</span><div className="flex items-center gap-2"><Select className="h-8 w-28 text-xs" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value="10">10 / trang</option><option value="20">20 / trang</option><option value="50">50 / trang</option></Select><Button size="sm" variant="outline" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Trước</Button><Button size="sm" variant="outline" disabled={currentPage === totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Sau</Button></div></div>
     </>}
@@ -967,6 +1132,7 @@ function UseCaseSpecificationCard({ item, approveUseCase, confirmOrigin }) {
               {item.status}
             </Badge>
             <Badge tone={origin.tone}>{origin.label}</Badge>
+            <DocumentQualityBadge quality={item.quality} />
             <Badge
               tone={
                 item.risk === "Critical"
@@ -1036,6 +1202,7 @@ function UseCaseSpecificationCard({ item, approveUseCase, confirmOrigin }) {
           </Select>
         </div>
       )}
+      <div className="mt-3"><DocumentQualityNotice quality={item.quality} action="duyệt Use Case" /></div>
       <details className="mt-4 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
         <summary className="cursor-pointer text-sm font-semibold text-violet-700 dark:text-violet-300">
           Mở đặc tả và luồng xử lý
@@ -1072,7 +1239,7 @@ function UseCaseSpecificationCard({ item, approveUseCase, confirmOrigin }) {
           <Button
             size="sm"
             onClick={() => approveUseCase.mutate(item._id)}
-            disabled={approveUseCase.isPending}
+            disabled={approveUseCase.isPending || item.quality?.canApprove === false}
           >
             Duyệt Use Case
           </Button>
@@ -1758,6 +1925,7 @@ function TestPlanning({
   const approvedStories = stories.filter(
     (item) => item.approvalStatus === "Approved",
   );
+  const canSubmitPlan = approvedStories.length > 0 && form.name.trim() && form.scope.trim() && form.strategy.trim() && form.environment.trim();
   const suggest = useMutation({
     mutationFn: () =>
       executionApi.suggestPlanFromRequirements({
@@ -1891,9 +2059,7 @@ function TestPlanning({
       <Button
         className="mt-4"
         disabled={
-          !approvedStories.length ||
-          !form.name ||
-          !form.scope ||
+          !canSubmitPlan ||
           create.isPending
         }
         onClick={() => create.mutate()}
@@ -1911,7 +2077,7 @@ function TestPlanning({
               <Button
                 className="ml-3"
                 size="sm"
-                disabled={approve.isPending}
+                disabled={approve.isPending || item.quality?.canApprove === false}
                 onClick={() => approve.mutate(item._id)}
               >
                 Duyệt Test Plan
@@ -1955,8 +2121,9 @@ function SuiteStep({ suites, createSuite, blocked, onNext, setActiveStep }) {
       <div className="mt-5 space-y-2">
         {(suites.data || []).map((item) => (
           <div key={item._id} className="rounded-lg border p-3 text-sm">
-            <strong>{item.name}</strong>
+            <div className="flex flex-wrap items-center justify-between gap-2"><strong>{item.name}</strong><DocumentQualityBadge quality={item.quality} /></div>
             <p className="mt-1 text-xs text-slate-500">{item.description}</p>
+            <div className="mt-2"><DocumentQualityNotice quality={item.quality} action="dùng Test Suite" /></div>
           </div>
         ))}
       </div>
@@ -2018,7 +2185,7 @@ function CaseStep({
           onChange={(e) => update("suiteId", e.target.value)}
         >
           <option value="">Test Suite</option>
-          {(suites.data || []).map((item) => (
+          {(suites.data || []).filter((item) => item.quality?.canApprove !== false).map((item) => (
             <option key={item._id} value={item._id}>
               {item.name}
             </option>
@@ -2678,9 +2845,7 @@ function TestPlanDocument({
                 "Bản kế hoạch kiểm thử đang được hoàn thiện."}
             </p>
           </div>
-          <Badge tone={statusTone[approval] || "slate"}>
-            {isDraft ? "Bản nháp để rà soát" : approval}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2"><Badge tone={statusTone[approval] || "slate"}>{isDraft ? "Bản nháp để rà soát" : approval}</Badge><DocumentQualityBadge quality={plan.quality} /></div>
         </div>
         <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
           <div>
@@ -2702,6 +2867,7 @@ function TestPlanDocument({
         </dl>
       </header>
       <div className="space-y-4 p-5">
+        <DocumentQualityNotice quality={plan.quality} action="duyệt Test Plan" />
         <PlanSection title="1. Mục tiêu kiểm thử" value={plan.objectives} />
         <PlanSection title="2. Phạm vi kiểm thử" value={plan.scope} />
         <div className="grid gap-4 lg:grid-cols-2">
@@ -2781,7 +2947,7 @@ function TestPlanDocument({
           </Button>
         )}
         {!isDraft && approval === "PendingApproval" && (
-          <Button size="sm" disabled={approving} onClick={onApprove}>
+          <Button size="sm" disabled={approving || plan.quality?.canApprove === false} onClick={onApprove}>
             Duyệt Feature Test Plan
           </Button>
         )}
@@ -2805,6 +2971,7 @@ function TestPlanningDocumentEditor({ activeProject, profile, stories, items, on
   const toggleStory = (storyId) => setSelectedStoryIds((current) => current.includes(String(storyId)) ? current.filter((id) => id !== String(storyId)) : [...current, String(storyId)]);
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const preview = { planId: "", name: form.name, description: "Bản nháp Test Plan. QA cần rà soát trước khi gửi duyệt.", scope: form.scope, objectives: planLines(form.objectives), testItems: planLines(form.testItems), outOfScope: planLines(form.outOfScope), testStrategy: form.strategy, entryCriteria: planLines(form.entryCriteria), exitCriteria: planLines(form.exitCriteria), testData: form.data, environment: form.environment, risks: planRisks(form.risks), deliverables: planLines(form.deliverables), approvalStatus: "Draft" };
+  const canSubmitPlan = Boolean(form.name.trim() && form.scope.trim() && planLines(form.objectives).length && form.strategy.trim() && planLines(form.entryCriteria).length && planLines(form.exitCriteria).length && form.environment.trim() && storiesForPlan.length);
   const suggest = useMutation({
     mutationFn: async () => {
       setGenerationError("");
@@ -2829,7 +2996,7 @@ function TestPlanningDocumentEditor({ activeProject, profile, stories, items, on
       <details className="mt-5 rounded-xl border border-slate-200 p-4 dark:border-slate-700"><summary className="cursor-pointer text-sm font-semibold">Phạm vi nguồn · {selectedStories.length || approvedStories.length}/{approvedStories.length} User Story</summary><p className="mt-1 text-xs text-slate-500">Mặc định dùng tất cả User Story đã duyệt. Mở phần này chỉ khi cần bỏ bớt hoặc thêm phạm vi.</p><div className="mt-3 grid gap-2 md:grid-cols-2">{approvedStories.map((story) => <label key={story._id} className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-100 p-2 text-xs hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"><input className="mt-0.5 accent-violet-700" type="checkbox" checked={selectedStoryIds.length ? selectedStoryIds.includes(String(story._id)) : true} onChange={() => { if (!selectedStoryIds.length) setSelectedStoryIds(approvedStories.map((item) => String(item._id))); toggleStory(story._id); }} /><span>{story.title}</span></label>)}</div><div className="mt-3 flex gap-3 text-xs"><button type="button" className="font-semibold text-violet-700 underline" onClick={() => setSelectedStoryIds(approvedStories.map((item) => String(item._id)))}>Chọn tất cả</button><button type="button" className="underline" onClick={() => setSelectedStoryIds([])}>Dùng tất cả</button></div></details>
       <div className="mt-5 grid gap-3 md:grid-cols-2"><button type="button" className={`rounded-xl border p-4 text-left transition ${screen === "start" ? "border-violet-400 bg-violet-50/60 ring-1 ring-violet-200 dark:border-violet-900 dark:bg-violet-950/20" : "border-slate-200 hover:border-violet-300 dark:border-slate-700"}`} onClick={() => suggest.mutate()} disabled={suggest.isPending}><p className="text-sm font-semibold">{suggest.isPending ? "AI đang lập kế hoạch…" : "Tạo nhanh từ User Story"}</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">AI soạn phạm vi, chiến lược, rủi ro và tiêu chí.</p></button><button type="button" className={`rounded-xl border p-4 text-left transition ${screen === "edit" ? "border-violet-400 bg-violet-50/60 ring-1 ring-violet-200 dark:border-violet-900 dark:bg-violet-950/20" : "border-slate-200 hover:border-violet-300 dark:border-slate-700"}`} onClick={() => { generationRequest.current?.abort(); setGenerationError(""); setPlanOrigin("Manual"); setScreen("edit"); }}><p className="text-sm font-semibold">Tự soạn Test Plan</p><p className="mt-1 text-xs leading-5 text-slate-500">Tự nhập hoặc điều chỉnh toàn bộ nội dung.</p></button></div>
       {suggest.isPending && <div role="status" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-violet-200 bg-violet-50 p-4 text-sm dark:border-violet-900 dark:bg-violet-950/30"><p>Đang chờ AI tạo bản nháp. Bạn có thể hủy để tự soạn; kết quả sẽ hiển thị ở phần tóm tắt khi hoàn tất.</p><Button variant="outline" onClick={() => generationRequest.current?.abort()}>Hủy tạo AI</Button></div>}{generationError && <div role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/20 dark:text-red-200"><p>{generationError}</p><p className="mt-1">Bấm Tạo nhanh từ User Story để thử lại hoặc chọn Tự soạn Test Plan. Nội dung đang nhập vẫn được giữ.</p></div>}{screen === "edit" && !suggest.isPending && <div className="mt-5 rounded-xl border border-slate-200 p-4 dark:border-slate-700"><div className="grid gap-4 md:grid-cols-2"><Field label="Tên Feature Test Plan"><Input value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="Feature Test Plan · Nộp bài tập lớn" /></Field><Field label="Môi trường"><Input value={form.environment} onChange={(e) => update("environment", e.target.value)} placeholder="Staging · Chrome" /></Field><Field label="Mục tiêu · mỗi dòng một mục"><Textarea rows={3} value={form.objectives} onChange={(e) => update("objectives", e.target.value)} /></Field><Field label="Phạm vi kiểm thử"><Textarea rows={3} value={form.scope} onChange={(e) => update("scope", e.target.value)} /></Field></div><details className="mt-4"><summary className="cursor-pointer text-xs font-semibold text-violet-700 dark:text-violet-300">Mở nội dung chi tiết khi cần</summary><div className="mt-4 grid gap-4 md:grid-cols-2"><Field label="Hạng mục kiểm thử"><Textarea rows={3} value={form.testItems} onChange={(e) => update("testItems", e.target.value)} /></Field><Field label="Ngoài phạm vi"><Textarea rows={3} value={form.outOfScope} onChange={(e) => update("outOfScope", e.target.value)} /></Field><Field label="Chiến lược"><Textarea rows={3} value={form.strategy} onChange={(e) => update("strategy", e.target.value)} /></Field><Field label="Dữ liệu kiểm thử"><Textarea rows={3} value={form.data} onChange={(e) => update("data", e.target.value)} /></Field><Field label="Tiêu chí bắt đầu"><Textarea rows={3} value={form.entryCriteria} onChange={(e) => update("entryCriteria", e.target.value)} /></Field><Field label="Tiêu chí kết thúc"><Textarea rows={3} value={form.exitCriteria} onChange={(e) => update("exitCriteria", e.target.value)} /></Field><Field label="Rủi ro | giảm thiểu | phụ trách"><Textarea rows={3} value={form.risks} onChange={(e) => update("risks", e.target.value)} /></Field><Field label="Deliverables"><Textarea rows={3} value={form.deliverables} onChange={(e) => update("deliverables", e.target.value)} /></Field></div></details><div className="mt-4 flex justify-end"><Button disabled={!form.name || !form.scope} onClick={() => setScreen("preview")}>Xem bản tóm tắt</Button></div></div>}
-      {screen === "preview" && <div className="mt-5 rounded-xl border border-violet-200 bg-violet-50/40 p-4 dark:border-violet-900 dark:bg-violet-950/20"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-semibold">{preview.name || "Test Plan chưa đặt tên"}</p><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Bản nháp, chưa gửi duyệt.</p></div><Button size="sm" variant="outline" onClick={() => setScreen("edit")}>Chỉnh sửa</Button></div><div className="mt-4">{summary(preview)}</div><details className="mt-4 rounded-lg border border-violet-200 bg-white/80 p-3 dark:border-violet-900 dark:bg-slate-950/30"><summary className="cursor-pointer text-xs font-semibold">Xem toàn bộ nội dung tài liệu</summary><TestPlanDocument plan={preview} project={activeProject} isDraft onEdit={() => setScreen("edit")} /></details><div className="mt-4 flex justify-end"><Button disabled={!form.name || !form.scope || create.isPending} onClick={() => create.mutate()}>{create.isPending ? "Đang gửi…" : "Gửi QA Manager duyệt"}</Button></div></div>}
+      {screen === "preview" && <div className="mt-5 rounded-xl border border-violet-200 bg-violet-50/40 p-4 dark:border-violet-900 dark:bg-violet-950/20"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-semibold">{preview.name || "Test Plan chưa đặt tên"}</p><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Bản nháp, chưa gửi duyệt.</p></div><Button size="sm" variant="outline" onClick={() => setScreen("edit")}>Chỉnh sửa</Button></div><div className="mt-4">{summary(preview)}</div>{!canSubmitPlan && <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 dark:border-rose-900 dark:bg-rose-950/20 dark:text-rose-100">Cần đủ tên, phạm vi, mục tiêu, chiến lược, entry criteria, exit criteria, môi trường và User Story nguồn trước khi gửi duyệt.</div>}<details className="mt-4 rounded-lg border border-violet-200 bg-white/80 p-3 dark:border-violet-900 dark:bg-slate-950/30"><summary className="cursor-pointer text-xs font-semibold">Xem toàn bộ nội dung tài liệu</summary><TestPlanDocument plan={preview} project={activeProject} isDraft onEdit={() => setScreen("edit")} /></details><div className="mt-4 flex justify-end"><Button disabled={!canSubmitPlan || create.isPending} onClick={() => create.mutate()}>{create.isPending ? "Đang gửi…" : "Gửi QA Manager duyệt"}</Button></div></div>}
     </>}
     {!!items.length && <div className="mt-6 border-t border-slate-200 pt-5 dark:border-slate-700"><p className="text-sm font-semibold">Test Plan đã tạo ({items.length})</p><div className="mt-3 space-y-3">{items.map((item) => <details key={item._id} className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"><summary className="cursor-pointer list-none"><div className="flex flex-wrap items-center justify-between gap-2"><div><Badge tone={statusTone[item.approvalStatus] || "slate"}>{item.approvalStatus}</Badge><p className="mt-2 text-sm font-semibold">{item.name}</p></div><span className="text-xs font-semibold text-violet-700 dark:text-violet-300">Xem chi tiết</span></div><div className="mt-3">{summary(item)}</div></summary><div className="mt-4 border-t pt-4 dark:border-slate-700"><TestPlanDocument plan={item} project={activeProject} approving={approve.isPending} onApprove={() => approve.mutate(item._id)} /></div></details>)}</div></div>}
   </Card>;

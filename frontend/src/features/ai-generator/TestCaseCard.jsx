@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { AlertTriangle, Check, ChevronDown, ChevronUp, Clock3, Code2, Edit3, ListChecks, Send, XCircle } from 'lucide-react'
 import { Badge, Button, Dialog, Input, Select, Textarea } from '@/components/ui'
 import { idOf } from '@/lib/utils'
+import { DocumentQualityBadge, DocumentQualityNotice } from '@/components/common/DocumentQuality'
 
 const priorityTone = { Critical: 'red', High: 'amber', Medium: 'blue', Low: 'green' }
 const lines = (value) => Array.isArray(value) ? value.filter(Boolean) : String(value || '').split('\n').map((item) => item.trim()).filter(Boolean)
@@ -13,16 +14,17 @@ export default function TestCaseCard({ testCase, canApprove, canSubmitReview, pe
   const [expanded, setExpanded] = useState(testCase.generatedFrom === 'SystemE2E'); const [editOpen, setEditOpen] = useState(false); const [reviewOpen, setReviewOpen] = useState(false)
   const statusTone = { Draft: 'purple', NeedsReview: 'amber', Approved: 'green', Active: 'green', Rejected: 'red' }
   return <article className="overflow-hidden rounded-2xl border border-border bg-white shadow-panel transition hover:-translate-y-0.5 hover:shadow-lg">
-    <div className="p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><Badge tone={statusTone[testCase.status] || 'slate'}>{testCase.status || 'Draft'}</Badge><Badge tone={priorityTone[testCase.priority]}>{testCase.priority}</Badge><span className="text-[11px] text-muted-foreground">TC · {idOf(testCase).slice(-6).toUpperCase()}</span></div><h3 className="mt-3 text-base font-bold leading-6">{testCase.title}</h3><p className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">{testCase.description || 'Test Case được AI sinh từ User Story và website.'}</p></div><button className="rounded-xl p-2 text-slate-400 hover:bg-muted hover:text-slate-700" onClick={() => setExpanded(!expanded)}>{expanded ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}</button></div>
+    <div className="p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><Badge tone={statusTone[testCase.status] || 'slate'}>{testCase.status || 'Draft'}</Badge><Badge tone={priorityTone[testCase.priority]}>{testCase.priority}</Badge><DocumentQualityBadge quality={testCase.quality} /><span className="text-[11px] text-muted-foreground">TC · {idOf(testCase).slice(-6).toUpperCase()}</span></div><h3 className="mt-3 text-base font-bold leading-6">{testCase.title}</h3><p className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">{testCase.description || 'Test Case được AI sinh từ User Story và website.'}</p></div><button className="rounded-xl p-2 text-slate-400 hover:bg-muted hover:text-slate-700" onClick={() => setExpanded(!expanded)}>{expanded ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}</button></div>
       <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t pt-4 text-xs text-muted-foreground"><span className="flex items-center gap-1.5"><ListChecks className="h-3.5 w-3.5" />{testCase.testSteps?.length || 0} steps</span><span className="flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5" />{testCase.estimatedTime || 0} phút</span><span className="flex items-center gap-1.5"><Code2 className="h-3.5 w-3.5" />Playwright DSL</span></div>
+      <div className="mt-3"><DocumentQualityNotice quality={testCase.quality} action="gửi/duyệt Test Case" /></div>
     </div>
     {expanded && <TestCaseSheetPreview testCase={testCase} />}
     <div className="flex flex-wrap items-center gap-2 p-4">
       <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} disabled={busy || testCase.status === 'NeedsReview' || (!testCase.e2e?.systemProfile && ['Approved', 'Active'].includes(testCase.status))}><Edit3 className="h-3.5 w-3.5" />Sửa</Button>
       {pendingReview && canApprove ? <>
-        <Button size="sm" disabled={busy} onClick={() => onDecision(pendingReview, 'Approved')}><Check className="h-3.5 w-3.5" />Duyệt</Button>
+        <Button size="sm" disabled={busy || testCase.quality?.canApprove === false} onClick={() => onDecision(pendingReview, 'Approved')}><Check className="h-3.5 w-3.5" />Duyệt</Button>
         <Button variant="danger" size="sm" disabled={busy} onClick={() => onDecision(pendingReview, 'Rejected')}><XCircle className="h-3.5 w-3.5" />Từ chối</Button>
-      </> : canSubmitReview && ['Draft', 'Rejected'].includes(testCase.status || 'Draft') ? <Button size="sm" className="ml-auto" onClick={() => setReviewOpen(true)} disabled={busy}><Send className="h-3.5 w-3.5" />Gửi duyệt</Button> : testCase.status === 'NeedsReview' ? <span className="ml-auto flex items-center gap-1 text-[10px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5" />Đang chờ QA Manager xử lý</span> : null}
+      </> : canSubmitReview && ['Draft', 'Rejected'].includes(testCase.status || 'Draft') ? <Button size="sm" className="ml-auto" onClick={() => setReviewOpen(true)} disabled={busy || testCase.quality?.canApprove === false}><Send className="h-3.5 w-3.5" />Gửi duyệt</Button> : testCase.status === 'NeedsReview' ? <span className="ml-auto flex items-center gap-1 text-[10px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5" />Đang chờ QA Manager xử lý</span> : null}
     </div>
     <EditTestCaseDialog key={idOf(testCase)} open={editOpen} onOpenChange={setEditOpen} testCase={testCase} onSave={onEdit} busy={busy} />
     <ReviewDialog open={reviewOpen} onOpenChange={setReviewOpen} testCase={testCase} reviewers={reviewers} onSubmit={onSubmitReview} busy={busy} />

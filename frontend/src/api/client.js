@@ -280,6 +280,10 @@ export const e2eApi = {
         }));
       }
     },
+  startWorkflowRun: (project, body = {}) =>
+    api.post("/system-profiles/start-run", { project, ...body }).then(data),
+  updateWorkflowProgress: (id, body) =>
+    api.patch(`/system-profiles/${id}/progress`, body).then(data),
   createProfile: (body) => api.post("/system-profiles", body).then(data),
   updateProfile: (id, body) =>
     api.patch(`/system-profiles/${id}`, body).then(data),

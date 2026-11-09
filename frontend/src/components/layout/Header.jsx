@@ -10,7 +10,7 @@ import { useWorkspaceStore } from '@/store/workspaceStore'
 
 const routes = [
   ['/dashboard', 'Tổng quan'], ['/projects', 'Projects'], ['/teams', 'Teams & Members'], ['/cycles', 'Cycles & Planning'],
-  ['/ai-generator', 'AI Test Generator'], ['/approvals', 'Approval Inbox'], ['/board', 'Test Board'],
+  ['/ai-generator', 'AI Test Generator'], ['/requirements', 'Thư viện Requirement'], ['/approvals', 'Approval Inbox'], ['/board', 'Test Board'],
   ['/bugs', 'Bug Tracking'], ['/gamification', 'Gamification'], ['/settings', 'Settings'],
 ]
 

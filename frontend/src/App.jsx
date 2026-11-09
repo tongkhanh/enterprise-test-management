@@ -14,6 +14,7 @@ import ProjectWorkspacePage from '@/features/projects/ProjectWorkspaceHubPage'
 import TeamsPage from '@/features/teams/TeamDirectoryPage'
 import CyclesPage from '@/features/cycles/CyclesPage'
 import E2EStudioPage from '@/features/e2e/E2EStudioPage'
+import RequirementLibraryPage from '@/features/e2e/RequirementLibraryPage'
 import ApprovalInboxPage from '@/features/approvals/ApprovalInboxPage'
 import KanbanBoardPage from '@/features/board/KanbanBoardPage'
 import BugTrackingPage from '@/features/bugs/BugTrackingPage'
@@ -67,6 +68,7 @@ export default function App() {
         <Route path="cycles" element={<CyclesPage />} />
         <Route path="issues" element={<AgileIssuesPage />} />
         <Route path="ai-generator" element={<E2EStudioPage />} />
+        <Route path="requirements" element={<RequirementLibraryPage />} />
         <Route path="approvals" element={<ApprovalInboxPage />} />
         <Route path="automation" element={<AutomationLabPage />} />
         <Route path="bugs" element={<BugTrackingPage />} />

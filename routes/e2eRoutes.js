@@ -8,6 +8,8 @@ const { uploadRequirement, uploadRequirementImage } = require('../middleware/doc
 router.use(protect);
 router.get('/system-profiles', authorizeWorkspaceList('ai:use'), asyncHandler(c.listProfiles));
 router.post('/system-profiles/ensure', authorize('ai:use'), auditLog('CREATE', 'SystemProfile'), asyncHandler(c.ensureDefaultProfile));
+router.post('/system-profiles/start-run', authorize('ai:use'), auditLog('CREATE', 'WorkflowRun'), asyncHandler(c.startWorkflowRun));
+router.patch('/system-profiles/:id/progress', authorize('ai:use'), auditLog('UPDATE', 'WorkflowRun'), asyncHandler(c.updateWorkflowProgress));
 router.get('/requirements', authorizeWorkspaceList('ai:use'), asyncHandler(basis.listRequirements));
 router.post('/requirements', authorize('ai:use'), auditLog('CREATE', 'Requirement'), asyncHandler(basis.createRequirement));
 router.patch('/requirements/:id', authorize('ai:use'), auditLog('UPDATE', 'Requirement'), asyncHandler(basis.updateRequirement));

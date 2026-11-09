@@ -8,6 +8,7 @@ const { exportArtifact } = require('../services/artifactExportService');
 const ai = require('../services/aiService');
 const { resolveCaseRuntime } = require('../services/e2eRuntimeService');
 const { validateTestCase } = require('../services/automationScriptService');
+const { evaluateTestPlan, qualityErrorDetails } = require('../services/documentQualityService');
 
 const ensureProjectAccess = async (req, projectId) => {
   const { project } = await assertProjectAccess(req.user, projectId);
@@ -17,7 +18,7 @@ const ensureProjectAccess = async (req, projectId) => {
 const listPlans = async (req, res) => {
   const projectIds = req.allowedProjectIds || await getAccessibleProjectIds(req.user);
   const result = await list(TestPlan, req, { baseFilter: { project: { $in: projectIds } }, filters: ['project', 'release', 'status', 'assignee'], searchFields: ['name', 'description', 'scope'], populate: [{ path: 'testCases', select: 'title priority status' }, { path: 'createdBy assignee', select: 'fullName' }, { path: 'release', select: 'name version' }] });
-  send(res, result.data, 200, { pagination: result.pagination });
+  send(res, result.data.map((item) => ({ ...item.toObject(), quality: evaluateTestPlan(item) })), 200, { pagination: result.pagination });
 };
 const createPlan = async (req, res) => {
   await ensureProjectAccess(req, req.body.project);
@@ -33,6 +34,10 @@ const createPlan = async (req, res) => {
     req.body.origin = req.body.origin === 'AI' ? 'AI' : 'Manual';
     req.body.approvalStatus = 'PendingApproval';
     req.body.status = 'Draft';
+  }
+  if (req.body.approvalStatus === 'PendingApproval') {
+    const quality = evaluateTestPlan(req.body);
+    if (!quality.canApprove) throw new AppError(`Test Plan chưa sẵn sàng gửi duyệt. Cần bổ sung: ${quality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(quality));
   }
   send(res, await TestPlan.create({ ...req.body, createdBy: req.user._id }), 201);
 };
@@ -98,6 +103,10 @@ const decidePlan = async (req, res) => {
   if (!['Approved', 'Rejected'].includes(req.body.decision)) throw new AppError('decision phải là Approved hoặc Rejected.', 400);
   if (plan.approvalStatus !== 'PendingApproval') throw new AppError('Test Plan không ở trạng thái chờ duyệt.', 409);
   if (req.body.decision === 'Rejected' && !String(req.body.reviewNote || '').trim()) throw new AppError('Cần nhập lý do từ chối.', 400);
+  if (req.body.decision === 'Approved') {
+    const quality = evaluateTestPlan(plan);
+    if (!quality.canApprove) throw new AppError(`Test Plan chưa sẵn sàng duyệt. Cần bổ sung: ${quality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(quality));
+  }
   plan.approvalStatus = req.body.decision; plan.reviewNote = String(req.body.reviewNote || '').trim().slice(0, 2000);
   plan.approvedBy = req.body.decision === 'Approved' ? req.user._id : null; plan.approvedAt = req.body.decision === 'Approved' ? new Date() : null; plan.status = req.body.decision === 'Approved' ? 'Active' : 'Draft'; await plan.save(); send(res, plan);
 };
@@ -137,7 +146,7 @@ const createPlanFromApproved = async (req, res) => {
   })));
   send(res, { plan, run, executions }, 201, { message: `Đã tạo Test Plan với ${cases.length} Test Case Approved.` });
 };
-const updatePlan = async (req, res) => { const item = await getById(TestPlan, req.params.id); await ensureProjectAccess(req, item.project); req._auditBefore = item.toObject(); Object.assign(item, req.body); await item.save(); send(res, item); };
+const updatePlan = async (req, res) => { const item = await getById(TestPlan, req.params.id); await ensureProjectAccess(req, item.project); req._auditBefore = item.toObject(); const wasApproved = item.approvalStatus === 'Approved'; Object.assign(item, req.body); if (wasApproved) { item.approvalStatus = 'Draft'; item.status = 'Draft'; item.reviewNote = ''; item.approvedBy = null; item.approvedAt = null; } await item.save(); send(res, item); };
 const exportPlan = async (req, res) => {
   const plan = await TestPlan.findById(req.params.id)
     .populate('testCases release cycle assignee createdBy approvedBy')

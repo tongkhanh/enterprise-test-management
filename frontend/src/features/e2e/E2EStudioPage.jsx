@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
+import { DocumentQualityBadge, DocumentQualityNotice } from "@/components/common/DocumentQuality";
 import {
   automationLabApi,
   catalogApi,
@@ -211,6 +212,25 @@ export default function E2EStudioPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["system-profiles", activeProject] }),
     onError: (error) => toast.error(error.message),
   });
+  const startWorkflowRun = useMutation({
+    mutationFn: () => e2eApi.startWorkflowRun(activeProject),
+    onSuccess: (result) => {
+      setSelectedProfile(result._id);
+      setActiveStep("requirement");
+      setCaseTarget({ useCaseId: "", storyId: "", suiteId: "" });
+      setUseCase(blankUseCase);
+      toast.success(`Đã bắt đầu đợt ${result.workflow?.runNumber || "mới"}. Tài liệu cũ vẫn được giữ nguyên.`);
+      qc.invalidateQueries({ queryKey: ["system-profiles", activeProject] });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const updateWorkflowProgress = useMutation({
+    mutationFn: (body) => e2eApi.updateWorkflowProgress(currentProfile._id, body),
+    onSuccess: (_, variables) => {
+      if (!variables?.draft) qc.invalidateQueries({ queryKey: ["system-profiles", activeProject] });
+    },
+    onError: (error) => toast.error(error.message),
+  });
   useEffect(() => {
     if (activeProject && profiles.isSuccess && !(profiles.data || []).length && !ensureTestScope.isPending && ensuredScopeProject.current !== activeProject) {
       ensuredScopeProject.current = activeProject;
@@ -269,7 +289,6 @@ export default function E2EStudioPage() {
   );
   const currentCases = (e2eCases.data || []).filter(
     (item) =>
-      item.generatedFrom === "SystemE2E" &&
       String(item.e2e?.systemProfile?._id || item.e2e?.systemProfile || "") ===
         String(currentProfile?._id || ""),
   );
@@ -278,6 +297,12 @@ export default function E2EStudioPage() {
       String(item.e2e?.systemProfile?._id || item.e2e?.systemProfile || "") ===
       String(currentProfile?._id || ""),
   );
+  const currentSuites = (suites.data || []).filter(
+    (item) =>
+      String(item.systemProfile?._id || item.systemProfile || "") ===
+      String(currentProfile?._id || ""),
+  );
+  const scopedSuites = { ...suites, data: currentSuites };
   const reviewers = (members.data || []).filter(
     (item) =>
       item.projectRole === "QA_Manager" &&
@@ -517,6 +542,7 @@ export default function E2EStudioPage() {
         description:
           "Test Suite tự tạo cho các E2E journey trong System Profile.",
         origin: "SystemE2E",
+        systemProfile: currentProfile?._id || null,
       }),
     onSuccess: (result) => {
       setCaseTarget((item) => ({ ...item, suiteId: result._id }));
@@ -630,6 +656,7 @@ export default function E2EStudioPage() {
     setProfileEditor("edit");
     setProfileMode(item.mode || "SystemProfile");
     setProfile(profileToForm(item));
+    setActiveStep(item.workflow?.lastStep || "requirement");
     setCaseTarget({ useCaseId: "", storyId: "", suiteId: "" });
     setUseCase(blankUseCase);
   };
@@ -638,8 +665,19 @@ export default function E2EStudioPage() {
       setProfile(profileToForm(currentProfile));
       setProfileMode(currentProfile.mode || "SystemProfile");
       setProfileEditor("edit");
+      if (!search.get("step")) setActiveStep(currentProfile.workflow?.lastStep || "requirement");
     }
   }, [currentProfile?._id]);
+  useEffect(() => {
+    if (
+      currentProfile?._id &&
+      currentProfile.workflow?.status === "Active" &&
+      activeStep !== "documents" &&
+      workflowStepIds.has(activeStep) &&
+      currentProfile.workflow?.lastStep !== activeStep &&
+      !updateWorkflowProgress.isPending
+    ) updateWorkflowProgress.mutate({ lastStep: activeStep });
+  }, [activeStep, currentProfile?._id, currentProfile?.workflow?.status]);
   const _storyRevision = reviseStory;
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
@@ -677,6 +715,8 @@ export default function E2EStudioPage() {
         setProject,
         currentProfile,
         profiles,
+        startWorkflowRun,
+        updateWorkflowProgress,
         profile,
         setProfile,
         profileEditor,
@@ -707,7 +747,7 @@ export default function E2EStudioPage() {
         updateStory,
         submitStory,
         qaReviewStory,
-        suites,
+        suites: scopedSuites,
         caseTarget,
         setCaseTarget,
         createSuite,
@@ -1863,6 +1903,7 @@ function StoryDraftCard({
             {item.source === "ImportedDocument" && <Badge tone="blue">Tài liệu User Story</Badge>}
             <Badge tone={item.businessApprovalStatus === "BusinessConfirmed" ? "green" : item.businessApprovalStatus === "BusinessRejected" ? "red" : item.businessApprovalStatus === "PendingBusinessConfirmation" ? "amber" : "slate"}>Nghiệp vụ: {item.businessApprovalStatus === "BusinessConfirmed" ? "đã xác nhận" : item.businessApprovalStatus === "PendingBusinessConfirmation" ? "chờ PO/BA" : item.businessApprovalStatus === "BusinessRejected" ? "từ chối" : "chưa xác nhận"}</Badge>
             <Badge tone={item.qaTestabilityStatus === "Testable" ? "green" : item.qaTestabilityStatus === "NeedsClarification" ? "amber" : "slate"}>QA: {item.qaTestabilityStatus === "Testable" ? "có thể test" : item.qaTestabilityStatus === "NeedsClarification" ? "cần làm rõ" : "chưa rà soát"}</Badge>
+            <DocumentQualityBadge quality={item.quality} />
           </div>
           <span className="text-xs font-semibold text-violet-600">
             Mở để xem / sửa
@@ -1902,6 +1943,7 @@ function StoryDraftCard({
       >
         {editable ? (
           <div className="grid gap-4">
+            <DocumentQualityNotice quality={item.quality} action="gửi duyệt User Story" />
             <div className="grid gap-4 sm:grid-cols-[1fr_150px_110px]">
               <Field label="Tiêu đề" required>
                 <Input
@@ -2039,7 +2081,7 @@ function TestCaseStep({
   const suiteItems = suites.data || [];
   const validSelection =
     approvedStories.some((item) => item._id === caseTarget.storyId) &&
-    suiteItems.some((item) => item._id === caseTarget.suiteId) &&
+    suiteItems.some((item) => item._id === caseTarget.suiteId && item.quality?.canApprove !== false) &&
     (!caseTarget.useCaseId || approvedUseCases.some((item) => item._id === caseTarget.useCaseId));
   const projectId = currentProfile.project?._id || currentProfile.project;
   return (
@@ -2129,7 +2171,7 @@ function TestCaseStep({
               <option value="">Chọn nhóm kiểm thử</option>
               {suiteItems.map((item) => (
                 <option key={item._id} value={item._id}>
-                  {item.name}
+                  {item.name}{item.quality?.canApprove === false ? " · cần bổ sung" : ""}
                 </option>
               ))}
             </Select>
