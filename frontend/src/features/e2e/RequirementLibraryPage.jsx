@@ -33,6 +33,32 @@ export default function RequirementLibraryPage() {
     },
     onError: (error) => toast.error(error.message),
   });
+  const update = useMutation({
+    mutationFn: ({ id, body }) => e2eApi.updateRequirement(id, body),
+    onSuccess: () => {
+      toast.success("Đã lưu nội dung bổ sung và tính lại Quality Gate.");
+      requirements.refetch();
+      profiles.refetch();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const supplementDocument = useMutation({
+    mutationFn: ({ file, source, scope }) => e2eApi.importRequirements(activeProfile._id, {
+      type: "CustomerDocument",
+      title: source?.title || file.name,
+      provider: source?.provider || "PO/BA bổ sung",
+      receivedAt: source?.receivedAt || new Date().toISOString(),
+      version: source?.version || "",
+      reference: source?.reference || "",
+      section: source?.section || "",
+    }, file, scope || { level: "System", name: activeProfile.name || "Toàn hệ thống" }),
+    onSuccess: (result) => {
+      toast.success(result.message || "Đã đối chiếu tài liệu mới và bổ sung các trường còn thiếu.");
+      requirements.refetch();
+      profiles.refetch();
+    },
+    onError: (error) => toast.error(error.message),
+  });
   const items = requirements.data || [];
   const baselined = items.filter((item) => item.status === "Baselined");
   const workflowUrl = `/ai-generator?${new URLSearchParams({ project: String(activeProject || ""), profile: String(activeProfile?._id || ""), step: "requirement" }).toString()}`;
@@ -57,7 +83,7 @@ export default function RequirementLibraryPage() {
       </div>
     </Card>
     {!activeProfile ? <Card className="p-8 text-center text-sm text-slate-500">Chọn Project và đợt tạo tài liệu để mở thư viện.</Card> : <Card className="p-5 sm:p-6">
-      <RequirementLibrary items={items} baselined={baselined} decide={decide} initialRequirementId={search.get("requirement") || ""} onNext={() => navigate(`/ai-generator?${new URLSearchParams({ project: String(activeProject), profile: String(activeProfile._id), step: "usecase" }).toString()}`)} />
+      <RequirementLibrary items={items} baselined={baselined} decide={decide} update={update} supplementDocument={supplementDocument} initialRequirementId={search.get("requirement") || ""} onNext={() => navigate(`/ai-generator?${new URLSearchParams({ project: String(activeProject), profile: String(activeProfile._id), step: "usecase" }).toString()}`)} />
     </Card>}
   </div>;
 }

@@ -95,8 +95,9 @@ const updateRequirement = async (req, res) => {
   await assertProjectAccess(req.user, item.project); req._auditBefore = item.toObject();
   if (item.status === 'Baselined') { item.status = 'Changed'; item.baselinedBy = null; item.baselinedAt = null; }
   const source = req.body.source ? normalizeSource(req.body.source) : item.source;
-  const data = normalize({ ...item.toObject(), ...req.body, source }, { source }); validate(data);
-  Object.assign(item, data); await item.save(); send(res, item);
+  const data = normalize({ ...item.toObject(), ...req.body, source }, { source });
+  if (!data.title || !data.description) throw new AppError('Bản nháp Requirement cần có ít nhất tiêu đề và mô tả.', 400);
+  Object.assign(item, data); await item.save(); send(res, { ...item.toObject(), quality: evaluateRequirement(item) });
 };
 
 const decideRequirement = async (req, res) => {

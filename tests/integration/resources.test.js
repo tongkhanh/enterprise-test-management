@@ -22,25 +22,26 @@ test('isolated API: RBAC, dataset encryption/masking, schedules, signed webhook,
     const role = await insert(m.Role, { name: 'User', permissions: [] });
     const owner = await insert(m.User, { fullName: 'Owner', email: `${suffix}-owner@example.com`, passwordHash: 'unused', role: role._id });
     const guest = await insert(m.User, { fullName: 'Guest', email: `${suffix}-guest@example.com`, passwordHash: 'unused', role: role._id });
+    const outsider = await insert(m.User, { fullName: 'Outsider', email: `${suffix}-outsider@example.com`, passwordHash: 'unused', role: role._id });
     const workspace = await insert(m.Workspace, { name: 'Test Workspace', slug: `test-${suffix}`, owner: owner._id });
     const project = await insert(m.Project, { name: 'Test Project', key: 'TEST', workspace: workspace._id });
     await insert(m.WorkspaceMembership, { workspace: workspace._id, user: guest._id, role: 'Guest' });
     const env = await insert(m.TestEnvironment, { project: project._id, name: 'Local test', status: 'Ready', targetUrl: 'http://127.0.0.1:8080', createdBy: owner._id });
     const tokens = {};
-    for (const user of [owner, guest]) {
+    for (const user of [owner, guest, outsider]) {
       const session = await insert(m.UserSession, { user: user._id, token: suffix, ipAddress: '127.0.0.1', expiresAt: new Date(Date.now() + 600000) });
       tokens[String(user._id)] = jwt.sign({ id: user._id, sessionId: session._id }, process.env.JWT_SECRET);
     }
     const request = (route, user, method = 'GET', body) => fetch(base + '/api/v1' + route, { method, headers: { Authorization: `Bearer ${tokens[String(user._id)]}`, 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
     const payload = { project: String(project._id), name: 'data', format: 'json', content: '[{"email":"qa@example.com","password":"secret-test"}]' };
-    assert.equal((await request('/automation-datasets', guest, 'POST', payload)).status, 403);
+    assert.equal((await request('/automation-datasets', outsider, 'POST', payload)).status, 403);
     const created = await request('/automation-datasets', owner, 'POST', payload); assert.equal(created.status, 201);
     const data = (await created.json()).data; owned.push([Dataset, data._id]); assert.equal(data.encryptedRows, undefined);
     const preview = await request(`/automation-datasets/${data._id}/preview`, guest); assert.equal(preview.status, 200); assert.equal((await preview.json()).data[0].password, '[REDACTED]');
-    assert.equal((await request('/automation-schedules', guest, 'POST', { project: String(project._id) })).status, 403);
+    assert.equal((await request('/automation-schedules', outsider, 'POST', { project: String(project._id) })).status, 403);
     const schedule = await request('/automation-schedules', owner, 'POST', { project: String(project._id), environment: String(env._id), name: 'Nightly', cron: '0 2 * * *' });
     assert.equal(schedule.status, 201); const scheduleData = (await schedule.json()).data; owned.push([Schedule, scheduleData._id]);
-    assert.equal((await request(`/automation-schedules/${scheduleData._id}`, guest, 'PATCH', { active: false })).status, 403);
+    assert.equal((await request(`/automation-schedules/${scheduleData._id}`, outsider, 'PATCH', { active: false })).status, 403);
     assert.equal((await request(`/automation-schedules/${scheduleData._id}`, owner, 'PATCH', { active: false })).status, 200);
     const integration = await insert(m.IntegrationConnection, { provider: 'GitHub', displayName: 'Test', workspace: workspace._id, project: project._id, createdBy: owner._id, webhookSecretCiphertext: encryptCredential('sign-secret') });
     const raw = '{ "test": true }'; const signature = 'sha256=' + crypto.createHmac('sha256', 'sign-secret').update(raw).digest('hex');

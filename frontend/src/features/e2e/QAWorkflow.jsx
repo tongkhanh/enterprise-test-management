@@ -691,16 +691,24 @@ function RequirementLibraryPreview({ items, baselined, libraryUrl }) {
   </section>;
 }
 
-export function RequirementLibrary({ items, baselined, decide, onNext, initialRequirementId = "" }) {
+export function RequirementLibrary({ items, baselined, decide, update, supplementDocument, onNext, initialRequirementId = "" }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("All");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
   const [sortBy, setSortBy] = useState("updated");
   const [selected, setSelected] = useState(() => items.find((item) => item._id === initialRequirementId) || null);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState(null);
+  const supplementInputRef = useRef(null);
   useEffect(() => {
     if (initialRequirementId) setSelected(items.find((item) => item._id === initialRequirementId) || null);
   }, [initialRequirementId, items]);
+  useEffect(() => {
+    if (!selected?._id) return;
+    const fresh = items.find((item) => item._id === selected._id);
+    if (fresh && fresh.updatedAt !== selected.updatedAt) setSelected(fresh);
+  }, [items, selected?._id, selected?.updatedAt]);
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const statusOptions = [
     ["All", "Tất cả", items.length],
@@ -724,7 +732,24 @@ export function RequirementLibrary({ items, baselined, decide, onNext, initialRe
   const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const changeFilter = (nextStatus) => { setStatus(nextStatus); setPage(1); };
   const changeQuery = (value) => { setQuery(value); setPage(1); };
-  const openDetails = (item) => { setReviewConfirmed(false); setSelected(item); };
+  const openDetails = (item) => { setReviewConfirmed(false); setEditing(false); setEditForm(null); setSelected(item); };
+  const startEditing = (item) => {
+    const textList = (value) => Array.isArray(value) ? value.join("\n") : String(value || "");
+    setReviewConfirmed(false);
+    setEditForm({
+      title: item.title || "", type: item.type || "Functional", priority: item.priority || "Medium", release: item.release || "",
+      description: item.description || "", objective: item.objective || "", actors: textList(item.actors), inScope: textList(item.inScope), outOfScope: textList(item.outOfScope),
+      acceptanceCriteria: textList(item.acceptanceCriteria), businessRules: textList(item.businessRules), nonFunctionalRequirements: textList(item.nonFunctionalRequirements),
+      risks: textList(item.risks), assumptions: textList(item.assumptions), dependencies: textList(item.dependencies), testDataRequirements: textList(item.testDataRequirements), dataRestrictions: textList(item.dataRestrictions),
+    });
+    setEditing(true);
+  };
+  const saveEdits = () => {
+    const arrayFields = ["actors", "inScope", "outOfScope", "acceptanceCriteria", "businessRules", "nonFunctionalRequirements", "risks", "assumptions", "dependencies", "testDataRequirements", "dataRestrictions"];
+    const body = { ...editForm, scope: selected.scope };
+    arrayFields.forEach((field) => { body[field] = lines(editForm[field]); });
+    update.mutate({ id: selected._id, body }, { onSuccess: (saved) => { setSelected(saved); setEditing(false); setEditForm(null); } });
+  };
   const baseline = (item) => {
     if (window.confirm(`Chốt ${item.requirementId || "Requirement này"} làm bản chuẩn? Sau khi chốt, mục này sẽ được dùng để sinh Use Case.`)) decide.mutate({ id: item._id, decision: "Baselined" }, { onSuccess: () => { setSelected(null); setReviewConfirmed(false); } });
   };
@@ -744,7 +769,9 @@ export function RequirementLibrary({ items, baselined, decide, onNext, initialRe
   const canBaselineSelected = missingBaselineFields.length === 0;
 
   return <section id="requirements-library" className="scroll-mt-5 border-t border-slate-200 pt-5 dark:border-slate-700">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-base font-semibold">Thư viện Requirement</h3><p className="mt-1 text-xs text-slate-500">{items.length} mục · {baselined.length} đã chốt. Mở Xem chi tiết và đọc nội dung trước khi Baseline hoặc Từ chối.</p></div>{baselined.length > 0 && <Button variant="outline" onClick={onNext}>Tiếp tục Use Case <ArrowRight className="h-4 w-4" /></Button>}</div>
+    <input ref={supplementInputRef} className="sr-only" type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => { const file = event.target.files?.[0]; const referenceItem = selected || items[0]; if (file) supplementDocument.mutate({ file, source: referenceItem?.source, scope: referenceItem?.scope }); event.target.value = ""; }} />
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-base font-semibold">Thư viện Requirement</h3><p className="mt-1 text-xs text-slate-500">{items.length} mục · {baselined.length} đã chốt. Mở chi tiết để bổ sung thủ công hoặc tải một BRD/SRS đầy đủ hơn.</p></div><div className="flex flex-wrap gap-2"><Button disabled={supplementDocument.isPending} onClick={() => supplementInputRef.current?.click()}><FileUp className="h-4 w-4" />{supplementDocument.isPending ? "Đang đối chiếu tài liệu…" : "Tải BRD/SRS đầy đủ hơn"}</Button>{baselined.length > 0 && <Button variant="outline" onClick={onNext}>Tiếp tục Use Case <ArrowRight className="h-4 w-4" /></Button>}</div></div>
+    <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50/70 p-4 text-sm text-sky-950 dark:border-sky-900 dark:bg-sky-950/20 dark:text-sky-100"><p className="font-semibold">Có tài liệu mới đầy đủ hơn?</p><p className="mt-1 text-xs leading-5 opacity-80">Tải lại BRD/SRS mới. Hệ thống đối chiếu theo mã Requirement, bổ sung trường còn thiếu và giữ nguyên nội dung đã được PO/BA chỉnh sửa. Requirement đã Baseline không bị ghi đè.</p></div>
     {items.length ? <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40">
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 p-3 backdrop-blur dark:border-slate-700 dark:bg-slate-950/95">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -765,26 +792,37 @@ export function RequirementLibrary({ items, baselined, decide, onNext, initialRe
 
     {selected && <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[1px]" role="dialog" aria-modal="true" aria-label={`Chi tiết ${selected.requirementId}`} onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
       <div className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl dark:bg-slate-950">
-        <header className="border-b border-slate-200 p-5 dark:border-slate-800"><div className="flex items-start justify-between gap-4"><div><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-violet-700 dark:text-violet-300">{selected.requirementId || "Chưa có mã"}</span><Badge tone={requirementTone(selected.status)}>{requirementStatusLabel[selected.status] || selected.status}</Badge></div><h3 className="mt-2 text-xl font-bold text-slate-950 dark:text-white">{selected.title}</h3><p className="mt-2 text-xs text-slate-500">{selected.type || "Requirement"} · Ưu tiên {selected.priority || "Medium"} · Tạo {formatDocumentDate(selected.createdAt)} · Cập nhật {formatDocumentDate(selected.updatedAt)}</p></div><button type="button" onClick={() => setSelected(null)} className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white" aria-label="Đóng chi tiết"><X className="h-5 w-5" /></button></div></header>
+        <header className="border-b border-slate-200 p-5 dark:border-slate-800"><div className="flex items-start justify-between gap-4"><div><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-violet-700 dark:text-violet-300">{selected.requirementId || "Chưa có mã"}</span><Badge tone={requirementTone(selected.status)}>{requirementStatusLabel[selected.status] || selected.status}</Badge><DocumentQualityBadge quality={selected.quality} /></div><h3 className="mt-2 text-xl font-bold text-slate-950 dark:text-white">{selected.title}</h3><p className="mt-2 text-xs text-slate-500">{selected.type || "Requirement"} · Ưu tiên {selected.priority || "Medium"} · Tạo {formatDocumentDate(selected.createdAt)} · Cập nhật {formatDocumentDate(selected.updatedAt)}</p></div><div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{!editing && <><Button size="sm" onClick={() => startEditing(selected)}>Chỉnh sửa & bổ sung</Button><Button size="sm" variant="outline" disabled={supplementDocument.isPending} onClick={() => supplementInputRef.current?.click()}><FileUp className="h-4 w-4" />Tải file mới</Button></>}<button type="button" onClick={() => setSelected(null)} className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white" aria-label="Đóng chi tiết"><X className="h-5 w-5" /></button></div></div></header>
         <div className="flex-1 space-y-6 overflow-y-auto p-5">
           <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">Nguồn</p><p className="mt-1 text-sm font-semibold">{selected.source?.title || "Chưa rõ nguồn"}</p><p className="mt-1 text-xs text-slate-500">{selected.source?.provider || "Chưa có người cung cấp"}{selected.source?.version ? ` · ${selected.source.version}` : ""}</p></div><div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">Phạm vi</p><p className="mt-1 text-sm font-semibold">{selected.scope?.name || selected.release || "Toàn hệ thống"}</p><p className="mt-1 text-xs text-slate-500">{selected.scope?.level || "System"}</p></div></div>
           <div className={`rounded-xl border p-4 ${completedDetailCount >= 8 ? "border-emerald-200 bg-emerald-50/70 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-100" : "border-amber-200 bg-amber-50/70 text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100"}`}><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold">Độ đầy đủ: {completedDetailCount}/13 nhóm thông tin</p><span className="text-xs font-medium">{completedDetailCount >= 8 ? "Khá đầy đủ" : "Cần bổ sung trước khi chốt"}</span></div><p className="mt-1 text-xs leading-5 opacity-80">Hệ thống chỉ tách nội dung có trong tài liệu nguồn và không tự bịa phần còn thiếu. Các mục trống được hiển thị bên dưới để PO/BA dễ rà soát.</p></div>
-          {!canBaselineSelected && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-900 dark:border-rose-900 dark:bg-rose-950/20 dark:text-rose-100"><p className="text-sm font-semibold">Chưa thể Baseline Requirement này</p><p className="mt-1 text-xs leading-5">Cần bổ sung: {missingBaselineFields.join(", ")}. {selected.reviewNote || "PO/BA cần hoàn thiện nội dung có thể kiểm thử trước khi chốt."}</p></div>}
-          <DetailList title="Mục tiêu nghiệp vụ" values={selected.objective} />
-          <DetailList title="Mô tả yêu cầu" values={selected.description} />
-          <DetailList title="Actor / vai trò" values={selected.actors} />
-          <DetailList title="Trong phạm vi" values={selected.inScope} />
-          <DetailList title="Ngoài phạm vi" values={selected.outOfScope} />
-          <DetailList title="Acceptance Criteria" values={selected.acceptanceCriteria} />
-          <DetailList title="Business rules" values={selected.businessRules} />
-          <DetailList title="Yêu cầu phi chức năng" values={selected.nonFunctionalRequirements} />
-          <DetailList title="Rủi ro" values={selected.risks} />
-          <DetailList title="Giả định" values={selected.assumptions} />
-          <DetailList title="Phụ thuộc" values={selected.dependencies} />
-          <DetailList title="Dữ liệu test cần có" values={selected.testDataRequirements} />
-          <DetailList title="Hạn chế dữ liệu" values={selected.dataRestrictions} />
+          {!canBaselineSelected && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-900 dark:border-rose-900 dark:bg-rose-950/20 dark:text-rose-100"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-semibold">Chưa thể Baseline Requirement này</p><p className="mt-1 text-xs leading-5">Cần bổ sung: {missingBaselineFields.join(", ")}. {selected.reviewNote || "PO/BA cần hoàn thiện nội dung có thể kiểm thử trước khi chốt."}</p></div>{!editing && <Button size="sm" onClick={() => startEditing(selected)}>Bổ sung ngay</Button>}</div></div>}
+          {editing ? <div className="space-y-4 rounded-xl border border-violet-200 bg-violet-50/30 p-4 dark:border-violet-900 dark:bg-violet-950/10">
+            <div><h4 className="font-semibold">Bổ sung Requirement</h4><p className="mt-1 text-xs leading-5 text-slate-500">Có thể lưu từng phần khi còn là Draft. Các trường có dấu * phải đủ trước khi Baseline.</p></div>
+            {selected.status === "Baselined" && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200">Sửa Requirement đã Baseline sẽ chuyển trạng thái thành “Có thay đổi” và cần Baseline lại.</p>}
+            <div className="grid gap-4 sm:grid-cols-2"><Field label="Tiêu đề *"><Input value={editForm.title} onChange={(event) => setEditForm({ ...editForm, title: event.target.value })} /></Field><Field label="Loại và ưu tiên"><div className="grid grid-cols-2 gap-2"><Select value={editForm.type} onChange={(event) => setEditForm({ ...editForm, type: event.target.value })}>{["Functional", "NonFunctional", "BusinessRule", "Integration"].map((value) => <option key={value}>{value}</option>)}</Select><Select value={editForm.priority} onChange={(event) => setEditForm({ ...editForm, priority: event.target.value })}>{["Critical", "High", "Medium", "Low"].map((value) => <option key={value}>{value}</option>)}</Select></div></Field></div>
+            <Field label="Mô tả *"><Textarea rows={3} value={editForm.description} onChange={(event) => setEditForm({ ...editForm, description: event.target.value })} /></Field>
+            <Field label="Mục tiêu nghiệp vụ *"><Textarea rows={2} value={editForm.objective} onChange={(event) => setEditForm({ ...editForm, objective: event.target.value })} /></Field>
+            <div className="grid gap-4 sm:grid-cols-2"><Field label="Actor / vai trò *" hint="Mỗi dòng một mục"><Textarea rows={3} value={editForm.actors} onChange={(event) => setEditForm({ ...editForm, actors: event.target.value })} /></Field><Field label="Trong phạm vi *" hint="Mỗi dòng một mục"><Textarea rows={3} value={editForm.inScope} onChange={(event) => setEditForm({ ...editForm, inScope: event.target.value })} /></Field></div>
+            <Field label="Acceptance Criteria *" hint="Mỗi dòng một tiêu chí; ưu tiên Given / When / Then"><Textarea rows={6} value={editForm.acceptanceCriteria} onChange={(event) => setEditForm({ ...editForm, acceptanceCriteria: event.target.value })} /></Field>
+            <details className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"><summary className="cursor-pointer text-sm font-semibold text-violet-700 dark:text-violet-300">Thông tin khuyến nghị</summary><div className="mt-4 grid gap-4 sm:grid-cols-2"><Field label="Ngoài phạm vi"><Textarea rows={3} value={editForm.outOfScope} onChange={(event) => setEditForm({ ...editForm, outOfScope: event.target.value })} /></Field><Field label="Business rules"><Textarea rows={3} value={editForm.businessRules} onChange={(event) => setEditForm({ ...editForm, businessRules: event.target.value })} /></Field><Field label="Yêu cầu phi chức năng"><Textarea rows={3} value={editForm.nonFunctionalRequirements} onChange={(event) => setEditForm({ ...editForm, nonFunctionalRequirements: event.target.value })} /></Field><Field label="Rủi ro"><Textarea rows={3} value={editForm.risks} onChange={(event) => setEditForm({ ...editForm, risks: event.target.value })} /></Field><Field label="Giả định"><Textarea rows={3} value={editForm.assumptions} onChange={(event) => setEditForm({ ...editForm, assumptions: event.target.value })} /></Field><Field label="Phụ thuộc"><Textarea rows={3} value={editForm.dependencies} onChange={(event) => setEditForm({ ...editForm, dependencies: event.target.value })} /></Field><Field label="Dữ liệu test cần có"><Textarea rows={3} value={editForm.testDataRequirements} onChange={(event) => setEditForm({ ...editForm, testDataRequirements: event.target.value })} /></Field><Field label="Hạn chế dữ liệu"><Textarea rows={3} value={editForm.dataRestrictions} onChange={(event) => setEditForm({ ...editForm, dataRestrictions: event.target.value })} /></Field></div></details>
+          </div> : <>
+            <DetailList title="Mục tiêu nghiệp vụ" values={selected.objective} />
+            <DetailList title="Mô tả yêu cầu" values={selected.description} />
+            <DetailList title="Actor / vai trò" values={selected.actors} />
+            <DetailList title="Trong phạm vi" values={selected.inScope} />
+            <DetailList title="Ngoài phạm vi" values={selected.outOfScope} />
+            <DetailList title="Acceptance Criteria" values={selected.acceptanceCriteria} />
+            <DetailList title="Business rules" values={selected.businessRules} />
+            <DetailList title="Yêu cầu phi chức năng" values={selected.nonFunctionalRequirements} />
+            <DetailList title="Rủi ro" values={selected.risks} />
+            <DetailList title="Giả định" values={selected.assumptions} />
+            <DetailList title="Phụ thuộc" values={selected.dependencies} />
+            <DetailList title="Dữ liệu test cần có" values={selected.testDataRequirements} />
+            <DetailList title="Hạn chế dữ liệu" values={selected.dataRestrictions} />
+          </>}
         </div>
-        <footer className="border-t border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950"><label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-900"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-violet-600" checked={reviewConfirmed} onChange={(event) => setReviewConfirmed(event.target.checked)} /><span><strong>Tôi đã đọc nội dung chi tiết</strong><span className="mt-0.5 block text-xs text-slate-500">Xác nhận trước khi Baseline hoặc Từ chối Requirement.</span></span></label><div className="mt-3 flex flex-wrap items-center justify-between gap-3"><p className="max-w-md text-xs leading-5 text-slate-500">{canBaselineSelected ? "Baseline cho phép dùng Requirement làm đầu vào chính thức để sinh Use Case." : `Nút Baseline bị khóa vì còn thiếu ${missingBaselineFields.join(", ")}.`}</p><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setSelected(null)}>Đóng</Button>{selected.status !== "Baselined" && <><Button variant="outline" disabled={!reviewConfirmed || decide.isPending} onClick={() => reject(selected)}>Từ chối</Button><Button disabled={!reviewConfirmed || !canBaselineSelected || decide.isPending} onClick={() => baseline(selected)}>{decide.isPending ? "Đang cập nhật…" : "Baseline Requirement"}</Button></>}</div></div></footer>
+        <footer className="border-t border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">{editing ? <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-slate-500">Sau khi lưu, điểm chất lượng và danh sách còn thiếu sẽ được tính lại.</p><div className="flex gap-2"><Button variant="outline" disabled={update.isPending} onClick={() => { setEditing(false); setEditForm(null); }}>Hủy</Button><Button disabled={!editForm.title.trim() || !editForm.description.trim() || update.isPending} onClick={saveEdits}>{update.isPending ? "Đang lưu…" : "Lưu nội dung bổ sung"}</Button></div></div> : <><label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-900"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-violet-600" checked={reviewConfirmed} onChange={(event) => setReviewConfirmed(event.target.checked)} /><span><strong>Tôi đã đọc nội dung chi tiết</strong><span className="mt-0.5 block text-xs text-slate-500">Xác nhận trước khi Baseline hoặc Từ chối Requirement.</span></span></label><div className="mt-3 flex flex-wrap items-center justify-between gap-3"><p className="max-w-md text-xs leading-5 text-slate-500">{canBaselineSelected ? "Baseline cho phép dùng Requirement làm đầu vào chính thức để sinh Use Case." : `Nút Baseline bị khóa vì còn thiếu ${missingBaselineFields.join(", ")}.`}</p><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setSelected(null)}>Đóng</Button>{selected.status !== "Baselined" && <><Button variant="outline" disabled={!reviewConfirmed || decide.isPending} onClick={() => reject(selected)}>Từ chối</Button><Button disabled={!reviewConfirmed || !canBaselineSelected || decide.isPending} onClick={() => baseline(selected)}>{decide.isPending ? "Đang cập nhật…" : "Baseline Requirement"}</Button></>}</div></div></>}</footer>
       </div>
     </div>}
   </section>;
