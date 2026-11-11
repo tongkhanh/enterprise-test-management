@@ -23,6 +23,7 @@ router.get('/test-runs/:id', authorize('execution:manage', 'execution:execute'),
 router.post('/test-runs/:id/execute', authorize('execution:manage', 'execution:execute'), asyncHandler(c.executeAutomatedRun));
 router.patch('/test-runs/:id', authorize('execution:manage'), auditLog('UPDATE', 'TestRun'), asyncHandler(c.updateRun));
 router.patch('/test-executions/:id', authorize('execution:execute', 'execution:manage'), auditLog('UPDATE', 'TestExecution'), asyncHandler(c.recordExecution));
+router.post('/test-executions/:id/auto', authorize('execution:execute', 'execution:manage'), asyncHandler(c.executeReviewedScript));
 router.get('/automation-results', authorizeWorkspaceList('execution:execute'), asyncHandler(c.listAutomationResults));
 router.post('/automation/run-test-case/:testCaseId', authorize('execution:manage', 'execution:execute'), asyncHandler(c.runAutomatedTestCase));
 router.get('/automation/jobs/:id', authorize('execution:manage', 'execution:execute'), asyncHandler(c.getAutomationJob));

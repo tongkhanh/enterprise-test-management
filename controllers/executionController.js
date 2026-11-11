@@ -1,4 +1,4 @@
-const { TestPlan, TestRun, TestExecution, AutomationResult, TestCase, TestSuite, TestEnvironment, SystemProfile, UserStory, Project, Bug, Notification, ExecutionArtifact } = require('../models');
+const { TestPlan, TestRun, TestExecution, AutomationResult, AutomationScript, TestCase, TestSuite, TestEnvironment, SystemProfile, UserStory, Project, Bug, Notification, ExecutionArtifact } = require('../models');
 const { AppError, list, getById, send } = require('../utils/http');
 const { addKpiPoints } = require('../services/kpiService');
 const { createAutomationJob, cancelAutomationJob, getAutomationArtifact } = require('../services/automationRunnerService');
@@ -7,6 +7,8 @@ const { assertProjectAccess, getAccessibleProjectIds } = require('../services/pr
 const { exportArtifact } = require('../services/artifactExportService');
 const ai = require('../services/aiService');
 const { resolveCaseRuntime } = require('../services/e2eRuntimeService');
+const { recalculateRun } = require('../services/testRunProgressService');
+const { createAutomationRun } = require('../services/multiEngineRunnerService');
 const { validateTestCase } = require('../services/automationScriptService');
 const { evaluateTestPlan, qualityErrorDetails } = require('../services/documentQualityService');
 
@@ -193,13 +195,31 @@ const createRun = async (req, res) => {
 const updateRun = async (req, res) => { const item = await getById(TestRun, req.params.id); const plan = await getById(TestPlan, item.testPlan); await ensureProjectAccess(req, plan.project); req._auditBefore = item.toObject(); Object.assign(item, req.body); if (item.status === 'InProgress' && !item.startedAt) item.startedAt = new Date(); if (item.status === 'Completed' && !item.completedAt) item.completedAt = new Date(); await item.save(); send(res, item); };
 
 const getRun = async (req, res) => {
-  const run = await getById(TestRun, req.params.id, [{ path: 'testPlan', select: 'name project environment' }, { path: 'assignee', select: 'fullName' }]);
+  const run = await getById(TestRun, req.params.id, [{ path: 'testPlan', select: 'name project environment kind approvalStatus' }, { path: 'assignee', select: 'fullName' }]);
   await ensureProjectAccess(req, run.testPlan.project);
-  const executions = await TestExecution.find({ testRun: run._id }).populate('testCase', 'title testSteps priority').populate('executedBy', 'fullName').sort('createdAt');
+  const executions = await TestExecution.find({ testRun: run._id })
+    .populate('testCase', 'title testSteps priority type status e2e targetUrl updatedAt')
+    .populate('executedBy', 'fullName')
+    .populate('automationRun', 'status engine script result error')
+    .sort('createdAt').lean();
+  await Promise.all(executions.map(async (execution) => {
+    let runtime;
+    try {
+      runtime = execution.testCase ? await resolveCaseRuntime(execution.testCase) : null;
+    } catch (error) {
+      if (error.statusCode !== 409) throw error;
+    }
+    const url = URL.parse(runtime?.targetUrl || '');
+    execution.runtimeUrl = url && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? runtime.targetUrl : '';
+    execution.environmentId = runtime?.environmentId || null;
+  }));
+  const scripts = await AutomationScript.find({
+    project: run.testPlan.project, status: 'Approved', testCase: { $in: executions.flatMap((execution) => execution.testCase ? [execution.testCase._id] : []) },
+  }).select('testCase engine filename runtimeUrl sourceCaseUpdatedAt').sort({ approvedAt: -1 }).lean();
   const automationJobs = await AutomationResult.find({ testRun: run._id })
-    .select('suiteName status progress testCase duration artifacts failureAnalysis createdAt completedAt')
+    .select('suiteName status progress testCase testExecution duration artifacts failureAnalysis createdAt completedAt')
     .sort('createdAt');
-  send(res, { run, executions, automationJobs });
+  send(res, { run, executions, automationJobs, scripts });
 };
 
 const executeAutomatedRun = async (req, res) => {
@@ -236,26 +256,31 @@ const executeAutomatedRun = async (req, res) => {
   send(res, { plan, run, jobs }, 202, { message: `Đã xếp hàng ${jobs.length} Playwright job.` });
 };
 
-const recalculateRun = async (runId) => {
-  const groups = await TestExecution.aggregate([{ $match: { testRun: runId } }, { $group: { _id: '$result', count: { $sum: 1 } } }]);
-  const counts = Object.fromEntries(groups.map((group) => [group._id, group.count]));
-  const totalCases = Object.values(counts).reduce((sum, count) => sum + count, 0);
-  const completed = totalCases > 0 && !counts.NotRun;
-  return TestRun.findByIdAndUpdate(runId, {
-    totalCases, passedCount: counts.Passed || 0, failedCount: counts.Failed || 0,
-    blockedCount: counts.Blocked || 0, skippedCount: counts.Skipped || 0,
-    status: completed ? 'Completed' : 'InProgress',
-    ...(completed ? { completedAt: new Date() } : { startedAt: new Date() }),
-  }, { new: true });
+const executeReviewedScript = async (req, res) => {
+  const execution = await getById(TestExecution, req.params.id);
+  const run = await getById(TestRun, execution.testRun, 'testPlan');
+  const plan = run.testPlan;
+  await ensureProjectAccess(req, plan.project);
+  if (plan.kind === 'ExecutionPlan' && plan.approvalStatus !== 'Approved') throw new AppError('Execution Plan phải được duyệt trước khi chạy.', 409);
+  const testCase = await getById(TestCase, execution.testCase);
+  const runtime = await resolveCaseRuntime(testCase);
+  if (!runtime?.environmentId) throw new AppError('Hãy gắn Environment Ready trước khi chạy script.', 409);
+  const automationRun = await createAutomationRun({
+    scriptId: req.body.scriptId, environmentId: runtime.environmentId, userId: req.user._id,
+    execution, dataset: req.body.dataset, fixture: req.body.fixture,
+  });
+  send(res, automationRun, 202);
 };
 
 const recordExecution = async (req, res) => {
-  const execution = await getById(TestExecution, req.params.id);
+  let execution = await getById(TestExecution, req.params.id);
+  const currentRun = await getById(TestRun, execution.testRun, 'testPlan');
+  await ensureProjectAccess(req, currentRun.testPlan.project);
   req._auditBefore = execution.toObject();
   const editable = ['result', 'duration', 'notes', 'actualResult', 'evidence', 'stepResults', 'bugReported'];
-  editable.forEach((key) => { if (req.body[key] !== undefined) execution[key] = req.body[key]; });
-  execution.executedBy = req.user._id; execution.executedAt = new Date();
-  await execution.save();
+  const updates = Object.fromEntries(editable.filter((key) => req.body[key] !== undefined).map((key) => [key, req.body[key]]));
+  if (req.body.result !== undefined) updates.qaVerdict = ['Passed', 'Failed'].includes(req.body.result) ? req.body.result : null;
+  execution = await TestExecution.findByIdAndUpdate(execution._id, { ...updates, executedBy: req.user._id, executedAt: new Date() }, { new: true, runValidators: true });
   const run = await recalculateRun(execution.testRun);
   const plan = await getById(TestPlan, run.testPlan);
   await addKpiPoints({ user: req.user._id, project: plan.project, points: 1, reason: 'Thực thi test case', entityType: 'TestExecution', entityId: execution._id, counters: { testCasesExecuted: 1 } });
@@ -422,7 +447,7 @@ const jiraIntegrationStatus = async (_req, res) => send(res, getJiraStatus());
 module.exports = {
   exportPlanPreview,
   listPlans, createPlan, suggestPlan, suggestPlanFromRequirements, decidePlan, updatePlan, exportPlan, deletePlan, listRuns, createRun, updateRun, getRun,
-  createPlanFromApproved, executeAutomatedRun,
+  createPlanFromApproved, executeAutomatedRun, executeReviewedScript,
   recordExecution, automationWebhook, listAutomationResults,
   runAutomatedTestCase, getAutomationJob, cancelAutomation, downloadAutomationArtifact, triageAutomationResult,
   jiraIntegrationStatus,

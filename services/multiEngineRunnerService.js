@@ -1,11 +1,14 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const { createHash } = require('node:crypto');
 const Docker = require('dockerode');
-const { AutomationRun, AutomationScript, AutomationProfile, AutomationResult, TestEnvironment } = require('../models');
+const { AutomationRun, AutomationScript, AutomationProfile, AutomationResult, TestEnvironment, TestExecution, TestRun } = require('../models');
 const { AppError } = require('../utils/http');
 const { normalizeEvidence } = require('./evidenceNormalizerService');
 const resources = require('./automationResourcesService');
 const { isScriptCurrent } = require('./automationScriptService');
+const { recalculateRun } = require('./testRunProgressService');
+const { Dataset, Fixture } = require('../models/execution-automation/AutomationResources');
 const docker = new Docker(process.env.DOCKER_HOST ? { host: process.env.DOCKER_HOST } : undefined);
 const root = path.resolve(path.join(__dirname, '..', 'storage', 'multi-engine'));
 const defaults = {
@@ -26,18 +29,53 @@ async function ensureDefaultProfile({ project, engine, userId }) {
   if (!profile) profile = await AutomationProfile.create({ project, engine, name: `${engine} default`, ...defaults[engine], isDefault: true, createdBy: userId });
   return profile;
 }
-async function createAutomationRun({ scriptId, environmentId, profileId, userId, dataset, fixture, matrix, dataRow = 0, groupId, schedule, triggeredBy = 'Manual' }) {
+const codeHash = (script) => createHash('sha256').update(script.code).digest('hex');
+const activeStatuses = ['Queued', 'Preparing', 'Running', 'Collecting'];
+
+async function syncTestExecution(run, result) {
+  if (!run.testExecution) return;
+  const execution = await TestExecution.findOne({ _id: run.testExecution, automationRun: run._id }).select('testRun');
+  if (!execution) return;
+  await TestExecution.updateOne({ _id: execution._id, automationRun: run._id, qaVerdict: null }, {
+    result, executedAt: new Date(), executedBy: run.requestedBy,
+  });
+  await recalculateRun(execution.testRun);
+}
+
+async function createAutomationRun({ scriptId, environmentId, profileId, userId, dataset, fixture, matrix, dataRow = 0, groupId, schedule, triggeredBy = 'Manual', execution }) {
   const script = await AutomationScript.findById(scriptId); if (!script) throw new AppError('Automation Script không tồn tại.', 404);
   if (script.status !== 'Approved') throw new AppError('Automation Script phải được QA Manager duyệt trước khi chạy.', 409);
   const environment = await TestEnvironment.findById(environmentId); if (!environment || environment.status !== 'Ready') throw new AppError('Test Environment phải ở trạng thái Ready.', 409);
   if (String(environment.project) !== String(script.project)) throw new AppError('Script và Environment phải cùng Project.', 409);
+  if (script.runtimeUrl && script.runtimeUrl !== environment.targetUrl) throw new AppError('Script cần được sinh và duyệt cho Environment đang chọn.', 409);
+  if (execution) {
+    if (String(execution.testCase) !== String(script.testCase)) throw new AppError('Script không thuộc Test Case của lượt chạy.', 409);
+    if (execution.automationRun && await AutomationRun.exists({ _id: execution.automationRun, status: { $in: activeStatuses } })) throw new AppError('Test Case đang được chạy tự động.', 409);
+    if (dataset && !await Dataset.exists({ _id: dataset, project: script.project })) throw new AppError('Dataset không thuộc Project.', 409);
+    if (fixture && !await Fixture.exists({ _id: fixture, project: script.project, environment: environment._id })) throw new AppError('Fixture không thuộc Environment.', 409);
+  }
   const profile = profileId ? await AutomationProfile.findById(profileId) : await ensureDefaultProfile({ project: script.project, engine: script.engine, userId });
   if (!profile || String(profile.project) !== String(script.project) || profile.engine !== script.engine) throw new AppError('Profile không thuộc Project/engine.', 409);
   const tc = await require('../models').TestCase.findById(script.testCase);
   if (!tc || !isScriptCurrent(script, tc)) throw new AppError('Test Case chưa được duyệt hoặc script không còn khớp Test Case; hãy sinh và duyệt script mới.', 409);
   if (tc.quarantined) throw new AppError('Test Case đang bị quarantine.', 409);
-  const run = await AutomationRun.create({ project: script.project, testCase: script.testCase, script: script._id, profile: profile._id, environment: environment._id, commitSha: environment.repository?.commitSha, targetUrl: environment.targetUrl, engine: script.engine, requestedBy: userId, dataset, fixture, matrix, dataRow, groupId, schedule, triggeredBy });
-  const job = await require('./queueService').enqueueAutomationRun(run._id);
+  const run = await AutomationRun.create({ project: script.project, testCase: script.testCase, script: script._id, profile: profile._id, environment: environment._id, commitSha: environment.repository?.commitSha, targetUrl: environment.targetUrl, engine: script.engine, requestedBy: userId, dataset, fixture, matrix, dataRow, groupId, schedule, triggeredBy, testExecution: execution?._id, approvedCodeHash: execution ? codeHash(script) : undefined });
+  if (execution) {
+    const linked = await TestExecution.updateOne({ _id: execution._id, automationRun: execution.automationRun || null }, { automationRun: run._id });
+    if (!linked.matchedCount) {
+      await run.deleteOne();
+      throw new AppError('Test Case vừa được đưa vào lượt chạy khác.', 409);
+    }
+  }
+  let job;
+  try {
+    job = await require('./queueService').enqueueAutomationRun(run._id);
+  } catch (error) {
+    await AutomationRun.updateOne({ _id: run._id }, { status: 'Error', error: error.message, completedAt: new Date() });
+    await syncTestExecution(run, 'Blocked');
+    throw error;
+  }
+  if (execution) await TestRun.updateOne({ _id: execution.testRun, status: { $in: ['NotStarted', 'Aborted'] } }, { status: 'InProgress', startedAt: new Date(), completedAt: null });
   if (job) { run.jobId = job.id; await run.save(); } else setImmediate(() => executeWithRetries(run._id).catch(console.error));
   return run;
 }
@@ -47,6 +85,7 @@ async function executeAutomationRun(runId, progress = async () => {}) {
   const adapter = adapters[run.engine]; if (!adapter || !script || !profile || !environment) throw new Error('Automation run configuration không đầy đủ.');
   const testCase = await require('../models').TestCase.findById(script.testCase);
   if (script.status !== 'Approved' || !testCase || !isScriptCurrent(script, testCase) || environment.status !== 'Ready') throw new AppError('Script, Test Case hoặc Environment không còn sẵn sàng.', 409);
+  if ((run.approvedCodeHash && run.approvedCodeHash !== codeHash(script)) || (script.runtimeUrl && script.runtimeUrl !== environment.targetUrl) || (run.testExecution && run.targetUrl !== environment.targetUrl)) throw new AppError('Script hoặc URL đã thay đổi sau khi xếp hàng.', 409);
   adapter.validate({ profile }); const values = await resources.runtimeData(run);
   const directory = path.join(root, String(run._id), `attempt-${run.attempt + 1}`); await fs.mkdir(directory, { recursive: true }); await adapter.prepare({ directory, script: { filename: script.filename, code: resources.substitute(script.code, values, run.engine) }, environment, profile });
   if (run.engine === 'Playwright') {
@@ -55,7 +94,8 @@ async function executeAutomationRun(runId, progress = async () => {}) {
     await fs.writeFile(path.join(directory, 'playwright.config.cjs'), `const {devices}=require('@playwright/test'); module.exports=${JSON.stringify({ timeout: Math.min(profile.timeoutMs, 300000), retries: 0, use: { browserName, channel, viewport: matrix.device ? require('playwright').devices[matrix.device]?.viewport : { width: matrix.width || 1440, height: matrix.height || 900 }, screenshot: 'only-on-failure', video: 'retain-on-failure', trace: 'retain-on-failure' } }).replace('"use":{', `"use":{...(devices[${JSON.stringify(matrix.device || '')}]||{}),`)};`);
   }
   if (run.engine === 'Cypress') await fs.writeFile(path.join(directory, 'cypress.config.js'), "module.exports={video:true,screenshotOnRunFailure:true,e2e:{supportFile:false,specPattern:'**/*.cy.js'}};");
-  const result = await AutomationResult.create({ suiteName: script.filename, framework: run.engine === 'RobotFramework' ? 'Robot' : run.engine, status: 'Running', triggeredBy: run.triggeredBy, project: run.project, testCase: run.testCase, targetUrl: environment.targetUrl, testEnvironment: environment._id, requestedBy: run.requestedBy, startedAt: new Date() });
+  const execution = run.testExecution ? await TestExecution.findById(run.testExecution).populate('testRun', 'testPlan') : null;
+  const result = await AutomationResult.create({ suiteName: script.filename, framework: run.engine === 'RobotFramework' ? 'Robot' : run.engine, status: 'Running', triggeredBy: run.triggeredBy, project: run.project, testCase: run.testCase, targetUrl: environment.targetUrl, testEnvironment: environment._id, requestedBy: run.requestedBy, startedAt: new Date(), testExecution: execution?._id, testRun: execution?.testRun?._id, testPlan: execution?.testRun?.testPlan });
   run.result = result._id; run.status = 'Running'; run.startedAt = new Date(); run.attempt += 1; await run.save(); await progress(20);
   let container; let sidecar; let network; let seleniumHost = 'selenium'; let timeout;
   try {
@@ -75,9 +115,11 @@ async function executeAutomationRun(runId, progress = async () => {}) {
     const evidence = await normalizeEvidence({ directory, project: run.project, automationResult: result._id, source: run.engine, environment: environment._id });
     const passed = wait.StatusCode === 0; run.status = passed ? 'Passed' : 'Failed'; run.completedAt = new Date();
     result.status = passed ? 'Passed' : 'Failed'; result.completedAt = new Date(); result.totalTests = 1; result.passed = passed ? 1 : 0; result.failed = passed ? 0 : 1; result.errorLogs = passed ? null : logs.toString('utf8').slice(-20000); result.artifacts = evidence.normalized.byType;
-    await Promise.all([run.save(), result.save()]);
+    await result.save();
     const testCase = await require('../models').TestCase.findById(run.testCase);
     if (!passed && run.attempt <= (testCase?.retryLimit || 0)) { run.status = 'Queued'; await run.save(); return { retry: true, runId: run._id }; }
+    await syncTestExecution(run, result.status);
+    await run.save();
     if (!passed && run.schedule) await require('../models').Notification.create({ recipient: run.requestedBy, type: 'System', title: 'Scheduled test thất bại', message: `${script.filename}: ${run.status}`, link: '/studio/automation-operations' }).catch(() => null);
     if (!passed && environment.autoAnalyze !== false) await require('./rootCauseService').analyzeRootCause({ resultId: result._id, user: { _id: run.requestedBy } }).catch((error) => console.warn('RCA tự động thất bại:', error.message));
     await progress(100); return { runId: run._id, resultId: result._id, status: run.status };
@@ -91,7 +133,8 @@ async function executeWithRetries(id, progress) {
     await require('./projectAccessService').assertProjectAccess(user, run.project, { permission: 'execution:execute' });
     let result; do { result = await executeAutomationRun(id, progress); } while (result?.retry); return result;
   } catch (error) {
-    await AutomationRun.updateOne({ _id: id }, { status: 'Error', error: error.message, completedAt: new Date() });
+    const failedRun = await AutomationRun.findByIdAndUpdate(id, { status: 'Error', error: error.message, completedAt: new Date() }, { new: true });
+    if (failedRun) await syncTestExecution(failedRun, 'Blocked');
     throw error;
   }
 }

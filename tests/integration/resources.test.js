@@ -15,6 +15,7 @@ test('isolated API: RBAC, dataset encryption/masking, schedules, signed webhook,
   const { Dataset, Schedule } = require('../../models/execution-automation/AutomationResources');
   const { encryptCredential } = require('../../services/integrationCredentialService');
   await mongoose.connect(uri); // Dedicated test DB only.
+  await m.WebhookDelivery.init();
   const server = app.listen(0, '127.0.0.1'); await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${server.address().port}`; const suffix = crypto.randomBytes(5).toString('hex'); const owned = [];
   const insert = async (Model, data) => { const doc = await Model.create(data); owned.push([Model, doc._id]); return doc; };

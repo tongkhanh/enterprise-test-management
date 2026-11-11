@@ -53,6 +53,16 @@ const testExecutionSchema = new Schema(
       type: Date,
       default: null,
     },
+    qaVerdict: {
+      type: String,
+      enum: ['Passed', 'Failed'],
+      default: null,
+    },
+    automationRun: {
+      type: Schema.Types.ObjectId,
+      ref: 'AutomationRun',
+      default: null,
+    },
 
     // Thời gian thực hiện (phút)
     duration: {

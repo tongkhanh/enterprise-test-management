@@ -212,6 +212,11 @@ const resolveWorkspaceIdFromRequest = async (req) => {
   for (const [prefix, Model] of scoped) if (path.includes(prefix)) projectId = (await Model.findById(id).select('project'))?.project;
   if (projectId) return String((await Project.findById(projectId).select('workspace'))?.workspace || '');
   if (path.includes('/test-runs/')) { const run = await models.TestRun.findById(id).populate('testPlan', 'project'); projectId = run?.testPlan?.project; if (projectId) return String((await Project.findById(projectId).select('workspace'))?.workspace || ''); }
+  if (path.includes('/test-executions/')) {
+    const execution = await models.TestExecution.findById(id).populate({ path: 'testRun', select: 'testPlan', populate: { path: 'testPlan', select: 'project' } });
+    projectId = execution?.testRun?.testPlan?.project;
+    if (projectId) return String((await Project.findById(projectId).select('workspace'))?.workspace || '');
+  }
   if (path.includes('/teams/')) {
     const team = await models.Team.findById(id).select('workspace project');
     if (team?.workspace) return String(team.workspace);

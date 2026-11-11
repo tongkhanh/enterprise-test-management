@@ -127,13 +127,21 @@ const extractPageStructure = (page) => page.evaluate(() => {
     return trim(element.getAttribute('aria-label') || element.getAttribute('aria-labelledby')?.split(/\s+/).map((id) => document.getElementById(id)?.textContent).join(' ') || explicit?.textContent || wrapping?.textContent || element.getAttribute('placeholder') || element.getAttribute('name'));
   };
   const locatorFor = (element) => {
-    const testId = element.getAttribute('data-testid') || element.getAttribute('data-test') || element.getAttribute('data-cy');
+    const testId = element.getAttribute('data-testid');
     if (testId) return { strategy: 'testId', value: trim(testId, 200) };
+    const css = stableCssFor(element);
+    if (element.type === 'password' && css) return css;
     const role = element.getAttribute('role') || ({ BUTTON: 'button', A: 'link', SELECT: 'combobox', TEXTAREA: 'textbox' }[element.tagName]) || (element.tagName === 'INPUT' && ['button', 'submit', 'reset'].includes(element.type) ? 'button' : element.tagName === 'INPUT' ? 'textbox' : null);
     const name = labelFor(element) || trim(element.textContent || element.getAttribute('value'), 200);
     if (role && name) return { strategy: 'role', role, name };
+    return css;
+  };
+  const stableCssFor = (element) => {
     if (element.id) return { strategy: 'css', value: `#${CSS.escape(element.id)}` };
-    if (element.getAttribute('name')) return { strategy: 'css', value: `${element.tagName.toLowerCase()}[name="${CSS.escape(element.getAttribute('name'))}"]` };
+    for (const attribute of ['data-testid', 'data-test', 'data-cy', 'name']) {
+      const value = element.getAttribute(attribute);
+      if (value) return { strategy: 'css', value: `${element.tagName.toLowerCase()}[${attribute}="${CSS.escape(value)}"]` };
+    }
     return null;
   };
   const inputs = [...document.querySelectorAll('input, textarea, select')].filter(visible).slice(0, 120).map((element) => ({
@@ -143,12 +151,12 @@ const extractPageStructure = (page) => page.evaluate(() => {
     pattern: trim(element.getAttribute('pattern'), 200), minLength: element.minLength > -1 ? element.minLength : null,
     maxLength: element.maxLength > -1 ? element.maxLength : null, min: element.getAttribute('min'), max: element.getAttribute('max'),
     options: element.tagName === 'SELECT' ? [...element.options].slice(0, 50).map((option) => ({ label: trim(option.textContent, 200), value: trim(option.value, 200), disabled: option.disabled })) : undefined,
-    locator: locatorFor(element),
+    locator: locatorFor(element), cssLocator: stableCssFor(element),
   }));
   const buttons = [...document.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]')].filter(visible).slice(0, 100).map((element) => ({
-    text: trim(element.textContent || element.getAttribute('value'), 300), type: element.getAttribute('type') || 'button', disabled: Boolean(element.disabled), locator: locatorFor(element),
+    text: trim(element.textContent || element.getAttribute('value'), 300), type: element.getAttribute('type') || 'button', disabled: Boolean(element.disabled), locator: locatorFor(element), cssLocator: stableCssFor(element),
   }));
-  const links = [...document.querySelectorAll('a[href]')].filter(visible).slice(0, 200).map((element) => ({ text: trim(element.textContent, 300), href: trim(element.href, 1000), locator: locatorFor(element) }));
+  const links = [...document.querySelectorAll('a[href]')].filter(visible).slice(0, 200).map((element) => ({ text: trim(element.textContent, 300), href: trim(element.href, 1000), locator: locatorFor(element), cssLocator: stableCssFor(element) }));
   const forms = [...document.querySelectorAll('form')].filter(visible).slice(0, 30).map((form) => ({
     name: trim(form.getAttribute('name') || form.getAttribute('aria-label') || form.id, 200), method: (form.method || 'get').toUpperCase(), action: trim(form.action, 1000),
     inputNames: [...form.querySelectorAll('input, textarea, select')].slice(0, 50).map((field) => trim(field.getAttribute('name') || labelFor(field), 200)).filter(Boolean),

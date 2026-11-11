@@ -10,7 +10,7 @@ router.get('/automation-lab/docker-status', authorize('execution:execute', 'exec
 router.get('/automation-scripts', authorize('execution:execute', 'execution:manage'), asyncHandler(c.listScripts));
 router.post('/automation-scripts', authorize('execution:execute', 'execution:manage'), auditLog('CREATE', 'AutomationScript'), asyncHandler(c.createScript));
 router.get('/automation-scripts/:id/download', authorize('execution:execute', 'execution:manage'), asyncHandler(c.downloadScript));
-router.post('/automation-scripts/:id/validate', authorize('execution:execute', 'execution:manage'), auditLog('VALIDATE', 'AutomationScript'), asyncHandler(c.validate));
+router.post('/automation-scripts/:id/validate', authorize('execution:execute', 'execution:manage'), auditLog('UPDATE', 'AutomationScript'), asyncHandler(c.validate));
 router.patch('/automation-scripts/:id/review', authorize('testcase:approve'), auditLog('APPROVE', 'AutomationScript'), asyncHandler(c.reviewScript));
 router.get('/test-environments', authorize('execution:execute', 'execution:manage'), asyncHandler(c.listEnvironments));
 router.post('/test-environments', authorize('execution:manage'), auditLog('CREATE', 'TestEnvironment'), asyncHandler(c.createEnvironment));

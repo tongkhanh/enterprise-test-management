@@ -4,6 +4,8 @@ const schema = new mongoose.Schema({
   project: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
   testCase: { type: mongoose.Schema.Types.ObjectId, ref: 'TestCase', required: true, index: true },
   sourceCaseUpdatedAt: { type: Date, default: null },
+  runtimeUrl: { type: String, default: '' },
+  generationNote: { type: String, default: '' },
   engine: { type: String, enum: ['Playwright', 'Selenium', 'Cypress', 'WebdriverIO', 'RobotFramework'], required: true },
   language: { type: String, enum: ['TypeScript', 'JavaScript', 'Python', 'Robot'], required: true },
   filename: { type: String, required: true },
@@ -14,7 +16,7 @@ const schema = new mongoose.Schema({
   approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   approvedAt: { type: Date, default: null },
   reviewNote: { type: String, default: '', maxlength: 2000 },
-}, { timestamps: true, collection: 'automation_scripts' });
+}, { timestamps: true, optimisticConcurrency: true, collection: 'automation_scripts' });
 
 schema.index({ testCase: 1, engine: 1, createdAt: -1 });
 module.exports = mongoose.model('AutomationScript', schema);

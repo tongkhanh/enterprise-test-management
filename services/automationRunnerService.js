@@ -1,4 +1,5 @@
 const { resolveCaseRuntime } = require('./e2eRuntimeService');
+const { recalculateRun } = require('./testRunProgressService');
 const { validateTestCase } = require('./automationScriptService');
 const fs = require('node:fs');
 const fsp = require('node:fs').promises;
@@ -140,7 +141,7 @@ const runE2eHook = async ({ hook, targetUrl, testData, label }) => {
 
 const updateExecutionAndRun = async ({ result, status, stepResults, evidence, durationSeconds, errorMessage }) => {
   const executionResult = status === 'Passed' ? 'Passed' : status === 'Cancelled' ? 'Skipped' : 'Failed';
-  await TestExecution.findByIdAndUpdate(result.testExecution, {
+  await TestExecution.updateOne({ _id: result.testExecution, qaVerdict: null }, {
     result: executionResult,
     executedAt: new Date(),
     duration: Math.max(0, durationSeconds / 60),
@@ -153,21 +154,8 @@ const updateExecutionAndRun = async ({ result, status, stepResults, evidence, du
       actualResult: step.actualResult || '', note: step.error || '',
     })),
   });
-  const groups = await TestExecution.aggregate([
-    { $match: { testRun: result.testRun } },
-    { $group: { _id: '$result', count: { $sum: 1 } } },
-  ]);
-  const counts = Object.fromEntries(groups.map((group) => [group._id, group.count]));
-  const totalCases = Object.values(counts).reduce((sum, count) => sum + count, 0);
-  const pending = counts.NotRun || 0;
-  const completed = totalCases > 0 && pending === 0;
-  const run = await TestRun.findByIdAndUpdate(result.testRun, {
-    status: completed ? 'Completed' : 'InProgress',
-    startedAt: result.startedAt || new Date(), completedAt: completed ? new Date() : null,
-    totalCases, passedCount: counts.Passed || 0, failedCount: counts.Failed || 0,
-    blockedCount: counts.Blocked || 0, skippedCount: counts.Skipped || 0,
-  }, { new: true });
-  if (completed && run?.testPlan) {
+  const run = await recalculateRun(result.testRun);
+  if (run?.status === 'Completed' && run.testPlan) {
     await TestPlan.findByIdAndUpdate(run.testPlan, { status: 'Completed', endDate: new Date() });
   }
 };
