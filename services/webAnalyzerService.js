@@ -132,7 +132,9 @@ const extractPageStructure = (page) => page.evaluate(() => {
     const css = stableCssFor(element);
     if (element.type === 'password' && css) return css;
     const role = element.getAttribute('role') || ({ BUTTON: 'button', A: 'link', SELECT: 'combobox', TEXTAREA: 'textbox' }[element.tagName]) || (element.tagName === 'INPUT' && ['button', 'submit', 'reset'].includes(element.type) ? 'button' : element.tagName === 'INPUT' ? 'textbox' : null);
-    const name = labelFor(element) || trim(element.textContent || element.getAttribute('value'), 200);
+    const name = role === 'button'
+      ? trim(element.getAttribute('aria-label') || element.getAttribute('aria-labelledby')?.split(/\s+/).map((id) => document.getElementById(id)?.textContent).join(' ') || element.textContent || element.getAttribute('value'), 200)
+      : labelFor(element) || trim(element.textContent || element.getAttribute('value'), 200);
     if (role && name) return { strategy: 'role', role, name };
     return css;
   };

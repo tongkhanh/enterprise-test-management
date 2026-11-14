@@ -52,4 +52,14 @@ test('runtime drafts use observed controls and credential references and require
   assert.deepEqual(draft([{ ...fill, control: 5 }, assertion]), []);
   assert.deepEqual(draft([{ ...fill, value: 'invented-password' }, assertion]), []);
   assert.deepEqual(draft([fill, { ...assertion, value: 'https://outside.example/account' }]), []);
+  assert.equal(resolveDraftSteps([{ ...fill, value: 'wrong_password' }, assertion], controls, routes, references, ['wrong_password']).length, 2);
+});
+
+test('Playwright compilation marks missing locators instead of filling the document body', () => {
+  const code = options.Playwright.compile({
+    title: 'Login', targetUrl: 'https://example.test',
+    testSteps: [{ stepNumber: 1, automationAction: 'fill', locator: null, value: 'standard_user' }],
+  });
+  assert.match(code, /TODO/);
+  assert.doesNotMatch(code, /locator\("body"\)\.fill/);
 });

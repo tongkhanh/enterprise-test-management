@@ -5,7 +5,7 @@ const { resolveCaseRuntime } = require('./e2eRuntimeService');
 const q = (value) => JSON.stringify(String(value ?? ''));
 const slug = (value) => String(value || 'test').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 60) || 'test';
 const locatorValue = (locator = {}) => locator.value || locator.selector || locator.testId || locator.text || '';
-const hasManualSteps = (steps = []) => steps.some((step) => !step.automationAction || step.automationAction === 'manual');
+const requiresRuntimeDraft = (testCase) => validateTestCase(testCase).some((issue) => issue.level === 'error');
 const cssLocator = (locator = {}) => {
   if (locator.strategy === 'testId' || locator.testId) return `[data-testid=${q(locatorValue(locator))}]`;
   if (locator.strategy === 'role' && locator.role) return `[role=${q(locator.role)}]`;
@@ -59,6 +59,9 @@ function validateExecutableCode(code) {
 
 function playwright(testCase, language) {
   const lines = (testCase.testSteps || []).map((s) => {
+    if (s.automationAction !== 'manual' && validateTestCase({ targetUrl: testCase.targetUrl, testSteps: [s] }).length) {
+      return `// TODO: Hoàn thiện bước ${s.stepNumber || ''}: thiếu action hoặc locator.`;
+    }
     const l = pwLocator(s.locator || {}); const v = q(s.value || s.testData || '');
     return ({ goto: `await page.goto(new URL(${q(s.value || "")}, targetUrl).toString());`, click: `await ${l}.click();`, fill: `await ${l}.fill(${v});`, select: `await ${l}.selectOption(${v});`, check: `await ${l}.check();`, uncheck: `await ${l}.uncheck();`, press: `await ${l}.press(${v});`, assertText: `await expect(${l}).toContainText(${v});`, assertVisible: `await expect(${l}).toBeVisible();`, assertUrl: `await expect(page).toHaveURL(new URL(${v}, targetUrl).toString());`, waitForResponse: `await page.waitForResponse(response => response.url().includes(${v}));`, manual: `// TODO manual: ${String(s.action).replace(/\r?\n/g, ' ')}` })[s.automationAction] || `// TODO: ${s.action}`;
   });
@@ -115,7 +118,7 @@ async function generateScript({ testCaseId, engine, userId }) {
   const runtime = await resolveCaseRuntime(testCase);
   if (testCase.e2e?.systemProfile && !runtime) throw new AppError('System Profile chưa có runtime sẵn sàng.', 409);
   const resolvedCase = { ...testCase.toObject(), targetUrl: runtime?.targetUrl || '' };
-  const needsDraft = Boolean(testCase.e2e?.systemProfile && hasManualSteps(resolvedCase.testSteps));
+  const needsDraft = Boolean(testCase.e2e?.systemProfile && requiresRuntimeDraft(resolvedCase));
   let generationNote = '';
   if (needsDraft) {
     try {
@@ -138,7 +141,7 @@ async function validateScript(script) {
   const runtime = await resolveCaseRuntime(testCase);
   const resolvedCase = { ...testCase.toObject(), targetUrl: runtime?.targetUrl || '' };
   script.validation = validateCode({ code: script.code, engine: script.engine });
-  if (testCase.e2e?.systemProfile && (script.runtimeUrl || hasManualSteps(resolvedCase.testSteps))) {
+  if (testCase.e2e?.systemProfile && (script.runtimeUrl || requiresRuntimeDraft(resolvedCase))) {
     if (!runtime || (script.runtimeUrl && script.runtimeUrl !== runtime.targetUrl)) script.validation.push({ level: 'error', message: 'Môi trường đã thay đổi hoặc chưa sẵn sàng. Hãy sinh script mới.' });
     else script.runtimeUrl = runtime.targetUrl;
     script.validation.push(...validateExecutableCode(script.code));

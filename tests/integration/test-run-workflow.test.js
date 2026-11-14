@@ -22,14 +22,16 @@ test('a Test Run records manual results and runs the reviewed script while retai
   const queue = require('../../services/queueService');
   const url = 'https://example.test/login';
   let aiConfigured = false;
-  t.mock.method(ai, 'isAiConfigured', () => aiConfigured);
-  t.mock.method(ai, 'isEmbeddingConfigured', () => false);
-  t.mock.method(ai, 'complete', async () => ({ text: JSON.stringify({ steps: [
+  let draftSteps = [
     { action: 'click', control: 0 },
     { action: 'assertText', control: 1, value: 'Alternate login' },
-  ] }) }));
+  ];
+  let pageInputs = [];
+  t.mock.method(ai, 'isAiConfigured', () => aiConfigured);
+  t.mock.method(ai, 'isEmbeddingConfigured', () => false);
+  t.mock.method(ai, 'complete', async () => ({ text: JSON.stringify({ steps: draftSteps }) }));
   t.mock.method(analyzer, 'analyzeWebPage', async () => ({
-    finalUrl: url, page: { inputs: [], buttons: [{ text: 'Alternate login', locator: { strategy: 'role', role: 'button', name: 'Alternate login' } }], links: [] },
+    finalUrl: url, page: { inputs: pageInputs, buttons: [{ text: 'Alternate login', locator: { strategy: 'role', role: 'button', name: 'Alternate login' } }], links: [] },
   }));
   t.mock.method(queue, 'enqueueAutomationRun', async () => ({ id: 'integration-job' }));
   t.mock.method(Docker.prototype, 'pull', async () => ({}));
@@ -112,6 +114,36 @@ test('a Test Run records manual results and runs the reviewed script while retai
     assert.ok(detail.automationJobs[0].artifacts.Log[0].url);
     const reported = await request('/bugs', 'POST', { project: project._id, testExecution: execution._id, title: 'Runner discrepancy', description: 'Runner did not see the confirmation', severity: 'Minor', priority: 'Low' }, 201);
     assert.equal(reported.bug.automationResult, detail.automationJobs[0]._id);
+
+    const negative = await m.TestCase.create({
+      title: 'Incorrect password', type: 'Automated', status: 'Approved', testSuite: suite._id, createdBy: owner._id,
+      e2e: { systemProfile: profile._id },
+      testSteps: [
+        { stepNumber: 1, action: 'Enter username', expectedResult: 'Username entered', automationAction: 'fill', value: 'standard_user' },
+        { stepNumber: 2, action: 'Enter wrong password', expectedResult: 'Password entered', automationAction: 'fill', value: 'wrong_password' },
+        { stepNumber: 3, action: 'Click Login and check the error', expectedResult: 'Incorrect credentials', automationAction: 'assertText', value: 'Incorrect credentials' },
+      ],
+    });
+    pageInputs = [
+      { type: 'text', label: 'Username', locator: { strategy: 'css', value: '#user-name' } },
+      { type: 'password', label: 'Password', locator: { strategy: 'css', value: '#password' } },
+    ];
+    draftSteps = [
+      { action: 'fill', control: 0, value: 'standard_user' },
+      { action: 'fill', control: 1, value: 'wrong_password' },
+      { action: 'click', control: 2 },
+      { action: 'assertText', control: 3, value: 'Incorrect credentials' },
+    ];
+    const repaired = await request('/automation-scripts', 'POST', { testCase: negative._id, engine: 'Playwright' }, 201);
+    assert.equal(repaired.status, 'Validated');
+    assert.match(repaired.code, /locator\("#user-name"\)\.fill\("standard_user"\)/);
+    assert.match(repaired.code, /locator\("#password"\)\.fill\("wrong_password"\)/);
+    assert.ok(repaired.code.indexOf('.click()') < repaired.code.indexOf('.toContainText('));
+    assert.doesNotMatch(repaired.code, /TODO|locator\("body"\)\.fill/);
+    assert.equal((await request(`/automation-scripts/${repaired._id}/validate`, 'POST', { code: repaired.code })).status, 'Validated');
+    const unchanged = await m.TestCase.findById(negative._id);
+    assert.equal(unchanged.status, 'Approved');
+    assert.equal(unchanged.testSteps[0].locator, null);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     if (/^[a-f0-9]{24}$/.test(automationRunId || '')) {
