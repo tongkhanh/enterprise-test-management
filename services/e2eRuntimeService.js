@@ -14,9 +14,15 @@ function selectRuntime({ profile, environment, testCaseUrl }) {
 
 async function resolveCaseRuntime(testCase) {
   if (!testCase.e2e?.systemProfile) return selectRuntime({ testCaseUrl: testCase.targetUrl });
-  const profile = await SystemProfile.findById(testCase.e2e.systemProfile).lean();
+  const profile = await SystemProfile.findById(testCase.e2e.systemProfile._id || testCase.e2e.systemProfile).lean();
   if (!profile) throw new AppError('System Profile của Test Case không tồn tại.', 409);
   const environment = profile.environment ? await TestEnvironment.findById(profile.environment).lean() : null;
   return selectRuntime({ profile, environment, testCaseUrl: testCase.targetUrl });
 }
-module.exports = { selectRuntime, resolveCaseRuntime };
+
+async function resolveExportRuntime(testCase) {
+  const runtime = await resolveCaseRuntime(testCase);
+  return { ...testCase, targetUrl: runtime?.targetUrl || '' };
+}
+
+module.exports = { selectRuntime, resolveCaseRuntime, resolveExportRuntime };

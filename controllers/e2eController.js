@@ -496,7 +496,8 @@ const exportE2EArtifact = async (req, res) => {
   const entry = models[type]; if (!entry) throw new AppError('Loại artifact export không hợp lệ.', 400);
   const item = await entry.Model.findById(id).populate(entry.populate).lean(); if (!item) throw new AppError('Artifact không tồn tại.', 404);
   const projectId = item.project || item.testSuite?.project || item.userStory?.project; await assertProjectAccess(req.user, projectId);
-  const format = ['pdf', 'xlsx', 'csv', 'docx'].includes(req.query.format) ? req.query.format : 'docx'; const output = await exportArtifact(entry.title, item, format);
+  const artifact = type === 'test-case' ? await require('../services/e2eRuntimeService').resolveExportRuntime(item) : item;
+  const format = ['pdf', 'xlsx', 'csv', 'docx'].includes(req.query.format) ? req.query.format : 'docx'; const output = await exportArtifact(entry.title, artifact, format);
   res.setHeader('Content-Type', output.mime); res.setHeader('Content-Disposition', `attachment; filename="${type}-${item.code || item.testCaseId || item._id}.${output.ext}"`); res.send(output.buffer);
 };
 module.exports = { listProfiles, ensureDefaultProfile, startWorkflowRun, updateWorkflowProgress, createProfile, updateProfile, analyzeGithub, listUseCases, createUseCase, updateUseCase, decideUseCase, suggestUseCases, importUseCasesFromDocument, generateStory, generateCases, generateCasesFromStory, exportE2EArtifact, normalizeGeneratedStory, normalizeGeneratedTestCase, fallbackTestCases };

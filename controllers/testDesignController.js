@@ -11,6 +11,7 @@ const { recordProjectActivity } = require('../services/projectActivityService');
 const { getWorkspaceRole } = require('../services/workspaceAccessService');
 const { exportTestCases } = require('../services/artifactExportService');
 const { evaluateTestSuite, evaluateTestCase, qualityErrorDetails } = require('../services/documentQualityService');
+const { resolveExportRuntime } = require('../services/e2eRuntimeService');
 
 const accessibleSuiteFilter = async (req) => {
   if (req.query.project) {
@@ -110,7 +111,7 @@ const exportCases = async (req, res) => {
   const projectIds = [...new Set(cases.map((item) => String(item.testSuite?.project || '')).filter(Boolean))];
   if (projectIds.length !== 1) throw new AppError('Một lần xuất chỉ bao gồm Test Case thuộc cùng một Project.', 400);
   await assertProjectAccess(req.user, projectIds[0]);
-  const output = await exportTestCases(cases);
+  const output = await exportTestCases(await Promise.all(cases.map(resolveExportRuntime)));
   res.setHeader('Content-Type', output.mime);
   res.setHeader('Content-Disposition', 'attachment; filename="test-cases.xlsx"');
   res.send(output.buffer);
