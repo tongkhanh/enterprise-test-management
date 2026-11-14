@@ -165,6 +165,7 @@ export const workspaceInvitationApi = {
 };
 export const bugApi = {
   list: (params = "limit=100") => api.get(`/bugs?${params}`).then(data),
+  create: (body) => api.post("/bugs", body).then(data),
   decide: (id, body) => api.patch(`/bugs/${id}/decision`, body).then(data),
 };
 export const gamificationApi = {
@@ -407,18 +408,24 @@ export const automationLabApi = {
   dockerStatus: () => api.get("/automation-lab/docker-status").then(data),
   environments: (project) =>
     api.get("/test-environments", { params: { project } }).then(data),
+  datasets: (project) =>
+    api.get("/automation-datasets", { params: { project } }).then(data),
+  fixtures: (project) =>
+    api.get("/automation-fixtures", { params: { project } }).then(data),
   createEnvironment: (body) => api.post("/test-environments", body).then(data),
   provision: (id) => api.post(`/test-environments/${id}/provision`).then(data),
   stop: (id) => api.post(`/test-environments/${id}/stop`).then(data),
   scripts: (project) =>
     api.get("/automation-scripts", { params: { project } }).then(data),
-  generateScript: (body) => api.post("/automation-scripts", body).then(data),
+  generateScript: (body) => api.post("/automation-scripts", body, { timeout: 90000 }).then(data),
   validateScript: (id, body = {}) =>
     api.post(`/automation-scripts/${id}/validate`, body).then(data),
   reviewScript: (id, body) =>
     api.patch(`/automation-scripts/${id}/review`, body).then(data),
   downloadScript: (id) =>
     api.get(`/automation-scripts/${id}/download`, { responseType: "blob" }),
+  downloadEvidence: (url) =>
+    api.get(url.replace(/^\/api\/v1/, ""), { responseType: "blob" }),
   githubRepos: (integrationId, params = {}) =>
     api.get(`/github/${integrationId}/repos`, { params }).then(data),
   githubBranches: (integrationId, owner, repo) =>
@@ -476,7 +483,13 @@ export const executionApi = {
     api.get("/test-plans", { params: { project, limit: 100 } }).then(data),
   runs: (project) =>
     api.get("/test-runs", { params: { project, limit: 100 } }).then(data),
+  run: (id) => api.get(`/test-runs/${id}`).then(data),
+  executeScript: (id, body) =>
+    api.post(`/test-executions/${id}/auto`, body).then(data),
+  recordExecution: (id, body) =>
+    api.patch(`/test-executions/${id}`, body).then(data),
   createPlan: (body) => api.post("/test-plans", body).then(data),
+  updatePlan: (id, body) => api.patch(`/test-plans/${id}`, body).then(data),
   createRun: (body) => api.post("/test-runs", body).then(data),
   executeRun: (id, body = {}) =>
     api.post(`/test-runs/${id}/execute`, body).then(data),

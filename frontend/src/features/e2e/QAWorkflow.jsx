@@ -15,7 +15,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   agileApi,
@@ -29,6 +29,7 @@ import { Badge, Button, Card, Input, Select, Textarea } from "@/components/ui";
 import { PageHeader, SectionTitle } from "@/components/common/PageKit";
 import { DocumentQualityBadge, DocumentQualityNotice } from "@/components/common/DocumentQuality";
 import AutomationLabPage from "@/features/automation/AutomationLabPage";
+import TestRunExecutionPanel from "./TestRunExecutionPanel";
 
 const statusTone = {
   Draft: "slate",
@@ -2565,6 +2566,12 @@ function AutomationStep({ profile, project, onNext }) {
 }
 function ExecutionStep({ project, profile, cases, plans, setActiveStep, requestedRun }) {
   const qc = useQueryClient();
+  const [, setSearchParams] = useSearchParams();
+  const openRun = (id) => setSearchParams((current) => {
+    const next = new URLSearchParams(current);
+    next.set("run", id);
+    return next;
+  });
   const runs = useQuery({
     queryKey: ["e2e-runs", project],
     queryFn: () => executionApi.runs(project),
@@ -2607,15 +2614,19 @@ function ExecutionStep({ project, profile, cases, plans, setActiveStep, requeste
     onSuccess: () => {
       toast.success("Đã duyệt Execution Plan");
       qc.invalidateQueries({ queryKey: ["e2e-plans"] });
+      qc.invalidateQueries({ queryKey: ["test-run-detail"] });
     },
     onError: (error) => toast.error(error.message),
   });
-  const execute = useMutation({
-    mutationFn: (id) => executionApi.executeRun(id),
-    onSuccess: () => {
-      toast.success("Đã đưa Test Run vào hàng đợi");
-      qc.invalidateQueries({ queryKey: ["e2e-runs", project] });
-    },
+  const submitBoardPlan = useMutation({
+    mutationFn: (plan) => executionApi.updatePlan(plan._id, {
+      approvalStatus: "PendingApproval",
+      objectives: plan.objectives?.length ? plan.objectives : [`Xác minh các Test Case đã duyệt trong phạm vi ${plan.scope}.`],
+      testStrategy: plan.testStrategy || "Chạy Manual hoặc script Auto đã duyệt và ghi kết quả từng Test Case.",
+      entryCriteria: plan.entryCriteria?.length ? plan.entryCriteria : ["Test Case đã duyệt và môi trường kiểm thử sẵn sàng."],
+      exitCriteria: plan.exitCriteria?.length ? plan.exitCriteria : ["Mọi Test Case có kết quả; lỗi phát hiện được ghi vào Bug Log."],
+    }),
+    onSuccess: () => { toast.success("Đã gửi Execution Plan để duyệt"); qc.invalidateQueries({ queryKey: ["e2e-plans"] }); qc.invalidateQueries({ queryKey: ["test-run-detail"] }); },
     onError: (error) => toast.error(error.message),
   });
   const createRun = useMutation({
@@ -2626,9 +2637,10 @@ function ExecutionStep({ project, profile, cases, plans, setActiveStep, requeste
         environment: runtimeUrl,
         status: "NotStarted",
       }),
-    onSuccess: () => {
+    onSuccess: (run) => {
       toast.success("Đã tạo Test Run");
       qc.invalidateQueries({ queryKey: ["e2e-runs", project] });
+      openRun(run._id);
     },
     onError: (error) => toast.error(error.message),
   });
@@ -2651,7 +2663,8 @@ function ExecutionStep({ project, profile, cases, plans, setActiveStep, requeste
           <p className="mt-3 text-xs text-slate-500">Run này đã tồn tại. Không cần tạo lại kế hoạch hoặc điền lại biểu mẫu; hãy chọn môi trường và chạy khi sẵn sàng.</p>
         </section>
       )}
-      {!runtimeUrl && (
+      {openedRun && <TestRunExecutionPanel key={openedRun._id} runId={openedRun._id} project={project} profile={profile?._id} />}
+      {!runtimeUrl && !openedRun && (
         <p className="mt-4 rounded-lg bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
           Chưa có Runtime URL nên chưa thể tạo Execution Plan hoặc Test Run. Các
           tài liệu QA vẫn không bị ảnh hưởng.
@@ -2677,6 +2690,11 @@ function ExecutionStep({ project, profile, cases, plans, setActiveStep, requeste
               {item.approvalStatus}
             </Badge>
             <strong className="ml-2">{item.name}</strong>
+            {item.origin === "Board" && item.approvalStatus === "Draft" && (
+              <Button size="sm" className="ml-3" disabled={submitBoardPlan.isPending} onClick={() => submitBoardPlan.mutate(item)}>
+                Gửi duyệt Execution Plan
+              </Button>
+            )}
             {item.approvalStatus === "PendingApproval" && (
               <Button
                 size="sm"
@@ -2748,16 +2766,9 @@ function ExecutionStep({ project, profile, cases, plans, setActiveStep, requeste
               <span className="ml-2 text-xs text-slate-500">
                 {item.status} · {item.totalCases} case
               </span>
-              {["NotStarted", "Aborted"].includes(item.status) && (
-                <Button
-                  size="sm"
-                  className="ml-3"
-                  disabled={!runtimeUrl || execute.isPending}
-                  onClick={() => execute.mutate(item._id)}
-                >
-                  Chạy Test Run
-                </Button>
-              )}
+              <Button size="sm" className="ml-3" variant="outline" onClick={() => openRun(item._id)}>
+                Mở Test Run
+              </Button>
             </div>
           ))}
       </div>

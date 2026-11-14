@@ -1,4 +1,4 @@
-const { Bug, BugHistory, BugRetest, Notification, Project } = require('../models');
+const { Bug, BugHistory, BugRetest, Notification, Project, TestExecution } = require('../models');
 const { AppError, list, getById, send } = require('../utils/http');
 const { addKpiPoints } = require('../services/kpiService');
 const { getAccessibleProjectIds } = require('../services/projectAccessService');
@@ -22,7 +22,19 @@ const getBug = async (req, res) => {
 };
 
 const createBug = async (req, res) => {
+  let execution;
+  if (req.body.testExecution) {
+    execution = await getById(TestExecution, req.body.testExecution, [
+      { path: 'testRun', select: 'testPlan', populate: { path: 'testPlan', select: 'project' } },
+      { path: 'automationRun', select: 'result' },
+    ]);
+    const project = execution.testRun?.testPlan?.project;
+    if (!project || String(project) !== String(req.body.project)) throw new AppError('Bug và Test Execution phải cùng Project.', 409);
+    await assertProjectAccess(req.user, project);
+    if (execution.automationRun?.result) req.body.automationResult = execution.automationRun.result;
+  }
   const bug = await Bug.create({ ...req.body, reportedBy: req.user._id });
+  if (execution) await TestExecution.updateOne({ _id: execution._id }, { bugReported: bug._id });
   const severityPoints = { Critical: 10, Major: 5, Minor: 2, Trivial: 1 };
   const severityKey = bug.severity.toLowerCase();
   await addKpiPoints({ user: req.user._id, project: bug.project, points: severityPoints[bug.severity], reason: `Phát hiện bug ${bug.severity}: ${bug.title}`, entityType: 'Bug', entityId: bug._id, counters: { 'bugsFound.total': 1, [`bugsFound.${severityKey}`]: 1 } });
