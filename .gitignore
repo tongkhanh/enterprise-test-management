@@ -4,6 +4,7 @@ node_modules/
 .playwright-browsers/
 storage/web-analysis/
 storage/automation/
+storage/multi-engine/
 storage/user-story-documents/
 storage/environment-workspaces/
 .env
