@@ -74,18 +74,17 @@ test('temporary Gemini high-demand responses use the safe E2E fallback', () => {
   assert.equal(isGeminiQuotaExhausted({ statusCode: 502, message: 'Gemini API lỗi 503: gemini-3.5-flash is currently experiencing high demand. Please try again later.' }), true);
   assert.equal(isGeminiQuotaExhausted({ statusCode: 502, message: 'Gemini API lỗi 500: invalid response body' }), false);
 });
-test('E2E fallback provides reviewable scientific test-case components', () => {
+test('E2E fallback preserves approved criteria without inventing extra scenarios', () => {
   const useCase = { code: 'UC-01', name: 'Nộp bài tập', actor: 'Sinh viên', risk: 'High', preconditions: ['Đã đăng nhập'], postconditions: ['Bài nộp được lưu'], mainFlow: ['Mở bài tập', 'Tải tệp hợp lệ', 'Lưu thay đổi'], alternateFlows: ['Lưu nháp'], exceptionFlows: ['Tệp không hợp lệ'] };
   const story = { priority: 'High', acceptanceCriteria: [{ criteria: 'Given hợp lệ When nộp bài Then trạng thái được lưu' }] };
   const cases = fallbackTestCases({ useCase, story, targetUrl: 'https://e2e.example.test', profile: { roles: [{ name: 'Sinh viên', credentialSecretRef: 'student-e2e' }] } });
-  assert.equal(cases.length, 4);
-  assert.deepEqual(cases.map((item) => item.journeyType), ['HappyPath', 'Alternate', 'Negative', 'Permission']);
-  for (const item of cases) {
-    assert.ok(item.objective && item.preconditions && item.postconditions);
-    assert.ok(item.testDesignTechniques.length > 0 && item.setup.length > 0 && item.cleanup.length > 0);
-    assert.ok(item.storyCoverage.includes('Given hợp lệ When nộp bài Then trạng thái được lưu'));
-    assert.ok(item.testSteps.length >= 3);
-  }
+  assert.equal(cases.length, 1);
+  assert.equal(cases[0].preconditions, 'hợp lệ');
+  assert.equal(cases[0].testSteps[0].action, 'nộp bài');
+  assert.equal(cases[0].testSteps[0].expectedResult, 'trạng thái được lưu');
+  assert.deepEqual(cases[0].storyCoverage, ['Given hợp lệ When nộp bài Then trạng thái được lưu']);
+  assert.ok(cases[0].tags.includes('NeedsSpecificationReview'));
+  assert.doesNotMatch(JSON.stringify(cases), /missing permission|expired session|accountReference/);
   const normalized = normalizeGeneratedTestCase({ title: 'Tối giản', testSteps: [] }, 0, { useCase, story, targetUrl: 'https://e2e.example.test', profile: {} });
   assert.ok(normalized.objective && normalized.preconditions && normalized.postconditions);
   assert.deepEqual(normalized.storyCoverage, ['Given hợp lệ When nộp bài Then trạng thái được lưu']);

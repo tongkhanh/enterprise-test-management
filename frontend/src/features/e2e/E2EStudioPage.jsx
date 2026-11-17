@@ -215,6 +215,7 @@ export default function E2EStudioPage() {
   const startWorkflowRun = useMutation({
     mutationFn: () => e2eApi.startWorkflowRun(activeProject),
     onSuccess: (result) => {
+      qc.setQueryData(["system-profiles", activeProject], (current = []) => [result, ...current.filter((item) => item._id !== result._id)]);
       setSelectedProfile(result._id);
       setActiveStep("requirement");
       setCaseTarget({ useCaseId: "", storyId: "", suiteId: "" });
@@ -225,7 +226,10 @@ export default function E2EStudioPage() {
     onError: (error) => toast.error(error.message),
   });
   const updateWorkflowProgress = useMutation({
-    mutationFn: (body) => e2eApi.updateWorkflowProgress(currentProfile._id, body),
+    mutationFn: (body) => {
+      if (!currentProfile?._id) throw new Error("Phạm vi đang tải. Vui lòng thử lưu lại sau.");
+      return e2eApi.updateWorkflowProgress(currentProfile._id, body);
+    },
     onSuccess: (_, variables) => {
       if (!variables?.draft) qc.invalidateQueries({ queryKey: ["system-profiles", activeProject] });
     },

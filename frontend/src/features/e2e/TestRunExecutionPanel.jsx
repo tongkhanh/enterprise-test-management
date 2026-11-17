@@ -13,7 +13,8 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
   const [dataset, setDataset] = useState("");
   const [fixture, setFixture] = useState("");
   const [verdict, setVerdict] = useState("");
-  const [note, setNote] = useState("");
+  const [noteEdit, setNote] = useState(null);
+  const note = noteEdit ?? execution.actualResult ?? "";
   const [showBug, setShowBug] = useState(false);
   const [bug, setBug] = useState({ title: "", description: "" });
   const testCase = execution.testCase;
@@ -35,7 +36,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
   const readyFixtures = (fixtures.data || []).filter((item) => (item.environment?._id || item.environment) === execution.environmentId);
 
   const save = useMutation({
-    mutationFn: () => executionApi.recordExecution(execution._id, { result: verdict, ...(note.trim() && { actualResult: note.trim() }) }),
+    mutationFn: () => executionApi.recordExecution(execution._id, { result: verdict || execution.qaVerdict, actualResult: note.trim() }),
     onSuccess: () => { setVerdict(""); refresh(); toast.success("Đã lưu kết quả QA"); },
     onError: (error) => toast.error(error.message),
   });
@@ -104,7 +105,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
         {runner.error && <p className="text-red-600">{runner.error}</p>}
         {evidence.map((item) => <Button key={item.url} size="sm" variant="ghost" onClick={() => download(item)}>{item.name}</Button>)}
       </div>}
-      <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); if (verdict) save.mutate(); }}>
+      <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); if (verdict || execution.qaVerdict) save.mutate(); }}>
         <label className="block max-w-xs">
           <span className="label">Kết luận QA</span>
           <Select value={verdict || execution.qaVerdict || ""} onChange={(event) => setVerdict(event.target.value)}>
@@ -112,7 +113,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
           </Select>
         </label>
         <Textarea aria-label="Ghi chú kết quả" placeholder="Ghi chú kết quả" value={note} onChange={(event) => setNote(event.target.value)} />
-        <Button type="submit" disabled={!verdict || save.isPending}>Lưu kết quả QA</Button>
+        <Button type="submit" disabled={!(verdict || execution.qaVerdict) || save.isPending}>Lưu kết quả QA</Button>
       </form>
       {execution.bugReported && <p className="text-sm text-slate-500">Bug Log đã liên kết · {execution.bugReported}</p>}
       {!showBug && <Button variant="outline" onClick={() => setShowBug(true)}>Ghi Bug Log</Button>}

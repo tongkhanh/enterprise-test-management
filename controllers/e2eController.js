@@ -23,62 +23,7 @@ const fallbackUseCases = (profile) => {
     { code: 'UC-E2E-03', name: `Theo dõi tiến độ ${course}`, summary: 'Người dùng kiểm tra được trạng thái và tiến độ sau các hành động học tập.', actor, trigger: 'Người dùng muốn kiểm tra kết quả đã thực hiện', preconditions: ['Đã đăng nhập', 'Có ít nhất một hoạt động có trạng thái'], mainFlow: ['Mở khu vực tiến độ hoặc nội dung học', 'Đọc trạng thái của hoạt động', 'Đối chiếu với kết quả đã thực hiện', 'Xác nhận thông tin hiển thị đúng theo quyền người dùng'], alternateFlows: ['Chưa có tiến độ: hiển thị trạng thái rỗng dễ hiểu'], exceptionFlows: ['Không có quyền xem: chặn truy cập và không lộ dữ liệu'], postconditions: ['Trạng thái/tiến độ hiển thị đúng hoặc phản hồi quyền truy cập đúng'], businessRules: ['Tiến độ chỉ hiển thị cho đúng người dùng và khóa học'], assumptions: ['Các hoạt động thực hiện bằng dữ liệu test có thể dọn dẹp'], dependencies: ['Dịch vụ trạng thái/tiến độ', 'Phân quyền'], risk: 'Medium' },
   ];
 };
-const fallbackUserStory = (useCase) => ({
-  title: useCase.name,
-  description: `As a ${useCase.actor || 'người dùng'}, I want to complete ${useCase.name}, so that I can achieve the expected end-to-end business outcome.`,
-  acceptanceCriteria: [
-    `Given the preconditions of ${useCase.code || useCase.name} are met When ${useCase.actor || 'the user'} completes the main journey Then the final business outcome is visible and persisted correctly.`,
-    'Given an invalid input, missing permission, or expired session When the journey is attempted Then the system gives a safe, actionable response and does not create an unintended change.',
-  ],
-  definitionOfDone: ['Happy path, alternate path, permission/error handling and final outcome have testable acceptance criteria.'],
-  assumptions: useCase.assumptions || [],
-  dependencies: useCase.dependencies || [],
-  priority: useCase.risk || 'Medium',
-  storyPoints: 3,
-});
-const fallbackTestCases = ({ useCase, story, targetUrl, profile }) => {
-  const sourceOnly = !targetUrl;
-  const asTextList = (value) => Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [];
-  const criteria = Array.isArray(story.acceptanceCriteria) ? story.acceptanceCriteria.map((item) => String(item?.criteria || item || '').trim()).filter(Boolean).slice(0, 8) : [];
-  const mainFlow = asTextList(useCase.mainFlow);
-  const alternateFlows = asTextList(useCase.alternateFlows);
-  const exceptionFlows = asTextList(useCase.exceptionFlows);
-  const primaryRole = useCase.actor || profile?.roles?.[0]?.name || 'người dùng kiểm thử';
-  const accountReference = profile?.roles?.find((role) => role?.name === primaryRole)?.credentialSecretRef || profile?.roles?.[0]?.credentialSecretRef || 'Tham chiếu tài khoản E2E đã được phê duyệt';
-  const baseData = {
-    actor: primaryRole,
-    accountReference,
-    dataSource: 'System Test Profile / dữ liệu tổng hợp được phê duyệt',
-    dataSafety: 'Không dùng PII hoặc thay đổi dữ liệu production; chỉ dùng dữ liệu có thể cleanup.',
-  };
-  const common = {
-    priority: useCase.risk || story.priority || 'High',
-    routeCoverage: sourceOnly ? ['Chưa gắn Runtime URL'] : [targetUrl],
-    storyCoverage: criteria,
-    setup: sourceOnly ? ['Đây là bản nháp từ ngữ cảnh đã cung cấp; chưa gắn Runtime URL.', 'QA gắn Runtime URL, tài khoản và dữ liệu an toàn trước khi thực thi.'] : ['Xác nhận Environment Ready và Target URL truy cập được.', `Chuẩn bị tài khoản ${primaryRole} theo System Test Profile.`, 'Chuẩn bị dữ liệu E2E an toàn, có thể dọn dẹp.'],
-    cleanup: ['Ghi nhận ID dữ liệu phát sinh để cleanup.', 'Xóa hoặc reset duy nhất dữ liệu do Test Case này tạo theo chính sách System Profile.'],
-  };
-  const openStep = sourceOnly ? { action: 'Đối chiếu yêu cầu, Acceptance Criteria và luồng nghiệp vụ đã cung cấp.', expectedResult: 'QA xác nhận điểm vào, route và dữ liệu cần dùng trước khi gắn Runtime URL.', testData: 'Yêu cầu kiểm thử', automationAction: 'manual', locator: null, value: '' } : { action: `Mở môi trường kiểm thử tại ${targetUrl}.`, expectedResult: 'Môi trường sẵn sàng, trả về trang/điểm vào hợp lệ và không có lỗi truy cập.', testData: 'Target URL', automationAction: 'goto', locator: null, value: targetUrl };
-  const verifyFinal = { action: 'Mở lại hoặc tải lại khu vực hiển thị kết quả cuối của hành trình.', expectedResult: 'Kết quả nghiệp vụ cuối cùng được lưu bền vững, hiển thị nhất quán và có thể đối chiếu với Acceptance Criteria.', testData: 'ID/kết quả dữ liệu E2E vừa tạo', automationAction: 'manual', locator: null, value: '' };
-  return [
-    {
-      ...common, testCaseId: 'TC-E2E-HP-001', title: `${useCase.name} - Luồng chính`, objective: `Xác minh ${primaryRole} hoàn tất Use Case đã duyệt và đạt đúng kết quả nghiệp vụ cuối.`, description: `Bản nháp xác định từ ${useCase.code || 'Use Case đã duyệt'} khi Gemini tạm thời không sẵn sàng. QA cần bổ sung locator trước khi tự động hóa.`, preconditions: [...asTextList(useCase.preconditions), sourceOnly ? 'Chưa gắn Runtime URL; đây là test design draft.' : 'Environment ở trạng thái Ready.', `Tài khoản ${primaryRole} có quyền thực hiện luồng chính.`].join('\n'), postconditions: [...asTextList(useCase.postconditions), 'Dữ liệu hoặc trạng thái cuối đã được xác minh và có thể cleanup.'].join('\n'), testDesignTechniques: ['Use case testing', 'End-to-end testing', 'Equivalence partitioning'], journeyType: 'HappyPath', tags: ['E2E', 'HappyPath', 'SystemProfile', ...(sourceOnly ? ['NeedsRuntimeBinding'] : [])], estimatedTime: 10, testData: { ...baseData, dataset: 'Dữ liệu hợp lệ đại diện cho phân vùng hợp lệ.' },
-      testSteps: [openStep, { action: `Đăng nhập hoặc khởi tạo phiên với vai trò ${primaryRole}.`, expectedResult: 'Phiên hợp lệ được thiết lập và chỉ hiển thị chức năng theo đúng quyền của vai trò.', testData: 'accountReference', automationAction: 'manual', locator: null, value: '' }, ...mainFlow.map((action) => ({ action, expectedResult: 'Hệ thống chấp nhận thao tác, chuyển đúng trạng thái và không phát sinh lỗi nghiệp vụ.', testData: 'Dữ liệu hợp lệ đã phê duyệt', automationAction: 'manual', locator: null, value: '' })), verifyFinal],
-    },
-    {
-      ...common, testCaseId: 'TC-E2E-ALT-002', title: `${useCase.name} - Luồng thay thế`, objective: 'Xác minh hệ thống xử lý đúng một nhánh thay thế đã được mô tả trong Use Case mà vẫn giữ tính nhất quán dữ liệu.', description: 'Kịch bản bao phủ alternate flow để tránh chỉ kiểm tra một đường đi thành công duy nhất.', preconditions: [...asTextList(useCase.preconditions), 'Có dữ liệu tạo điều kiện kích hoạt luồng thay thế.'].join('\n'), postconditions: 'Hệ thống đưa người dùng tới kết quả thay thế hợp lệ; không có dữ liệu mồ côi hoặc trạng thái dở dang.', testDesignTechniques: ['Use case testing', 'Decision table testing', 'State transition testing'], journeyType: 'Alternate', tags: ['E2E', 'Alternate', 'BusinessRule', ...(sourceOnly ? ['NeedsRuntimeBinding'] : [])], estimatedTime: 8, testData: { ...baseData, dataset: 'Dữ liệu hợp lệ kích hoạt nhánh thay thế.', alternateCondition: alternateFlows[0] || 'Điều kiện thay thế được QA xác nhận từ Use Case.' },
-      testSteps: [openStep, { action: `Đăng nhập bằng vai trò ${primaryRole} và điều hướng tới điểm quyết định của hành trình.`, expectedResult: 'Người dùng đến đúng điểm có thể chọn hoặc gặp điều kiện luồng thay thế.', testData: 'accountReference', automationAction: 'manual', locator: null, value: '' }, { action: `Kích hoạt luồng thay thế: ${alternateFlows[0] || 'thực hiện điều kiện thay thế đã được QA phê duyệt'}.`, expectedResult: 'Hệ thống áp dụng đúng business rule của nhánh thay thế, thông báo rõ ràng và không mất dữ liệu hợp lệ.', testData: 'alternateCondition', automationAction: 'manual', locator: null, value: '' }, verifyFinal],
-    },
-    {
-      ...common, testCaseId: 'TC-E2E-NEG-003', title: `${useCase.name} - Dữ liệu không hợp lệ`, objective: 'Xác minh hệ thống từ chối dữ liệu hoặc thao tác không hợp lệ một cách an toàn và có thông báo có thể hành động.', description: 'Kịch bản negative-path kiểm tra validation, tính toàn vẹn dữ liệu và không tạo thay đổi ngoài ý muốn.', preconditions: 'Có tài khoản E2E được phép mở chức năng; chuẩn bị dữ liệu không hợp lệ nhưng an toàn.', postconditions: 'Không có bản ghi, chuyển trạng thái hoặc tác động ngoài ý muốn được tạo.', testDesignTechniques: ['Negative testing', 'Boundary value analysis', 'Error guessing'], journeyType: 'Negative', tags: ['E2E', 'Negative', 'Validation', ...(sourceOnly ? ['NeedsRuntimeBinding'] : [])], estimatedTime: 8, testData: { ...baseData, dataset: 'Một trường bắt buộc thiếu/sai định dạng/ngoài biên được QA xác định.', expectedError: exceptionFlows[0] || 'Thông báo validation rõ ràng, không lưu dữ liệu.' },
-      testSteps: [openStep, { action: `Đăng nhập bằng vai trò ${primaryRole} và mở điểm nhập/gửi dữ liệu của hành trình.`, expectedResult: 'Màn hình/chức năng sẵn sàng nhận dữ liệu kiểm thử.', testData: 'accountReference', automationAction: 'manual', locator: null, value: '' }, { action: 'Nhập hoặc gửi dữ liệu không hợp lệ đã định nghĩa trong Test Data.', expectedResult: 'Hệ thống chặn thao tác, chỉ rõ dữ liệu cần sửa và không ghi nhận kết quả thành công.', testData: 'dataset', automationAction: 'manual', locator: null, value: '' }, { action: 'Kiểm tra lại danh sách, trạng thái và dữ liệu liên quan sau thao tác bị từ chối.', expectedResult: 'Không tồn tại bản ghi hoặc thay đổi trạng thái ngoài ý muốn; dữ liệu trước đó vẫn nguyên vẹn.', testData: 'expectedError', automationAction: 'manual', locator: null, value: '' }],
-    },
-    {
-      ...common, testCaseId: 'TC-E2E-PERM-004', title: `${useCase.name} - Phân quyền`, objective: 'Xác minh người dùng không có quyền cần thiết không thể hoàn tất thao tác hoặc truy cập dữ liệu bị bảo vệ.', description: 'Kịch bản bảo vệ quyền truy cập và ngăn leo thang đặc quyền trong hành trình E2E.', preconditions: 'Có một tài khoản E2E không có quyền thực hiện hành động cuối của Use Case.', postconditions: 'Không có thay đổi dữ liệu, cấp quyền hoặc lộ thông tin bảo vệ.', testDesignTechniques: ['Role-based access control testing', 'Negative testing', 'End-to-end testing'], journeyType: 'Permission', tags: ['E2E', 'Permission', 'Security', ...(sourceOnly ? ['NeedsRuntimeBinding'] : [])], estimatedTime: 7, testData: { ...baseData, restrictedRole: 'Tài khoản E2E không có quyền thao tác', protectedAction: mainFlow.at(-1) || 'Hành động cuối của Use Case' },
-      testSteps: [openStep, { action: 'Đăng nhập bằng tài khoản E2E không có quyền cần thiết.', expectedResult: 'Phiên đăng nhập hợp lệ nhưng phạm vi quyền được giới hạn đúng cấu hình role.', testData: 'restrictedRole', automationAction: 'manual', locator: null, value: '' }, { action: `Thử truy cập hoặc thực hiện hành động được bảo vệ: ${mainFlow.at(-1) || 'hành động cuối của Use Case'}.`, expectedResult: 'Hệ thống từ chối an toàn (ẩn/chặn/chuyển hướng phù hợp) và không tiết lộ dữ liệu nhạy cảm.', testData: 'protectedAction', automationAction: 'manual', locator: null, value: '' }, { action: 'Đối chiếu dữ liệu và trạng thái nghiệp vụ sau lần truy cập bị chặn.', expectedResult: 'Không có thay đổi quyền, dữ liệu hoặc trạng thái nghiệp vụ ngoài ý muốn.', testData: 'Dữ liệu trước và sau thử nghiệm', automationAction: 'manual', locator: null, value: '' }],
-    },
-  ];
-};
+const { fallbackUserStory, fallbackTestCases } = require('../services/sourceDraftService');
 const normalizeGeneratedStory = (value) => {
   const criteria = Array.isArray(value?.acceptanceCriteria)
     ? value.acceptanceCriteria
@@ -455,7 +400,7 @@ const generateCases = async (req, res) => {
   }
   const normalizedRows = rows.map((row, index) => normalizeGeneratedTestCase(row, index, { useCase, story, targetUrl, profile: useCase.systemProfile }));
   const testCases = await TestCase.insertMany(normalizedRows.map((row) => ({ ...row, testSuite: suite._id, userStory: story._id, createdBy: req.user._id, type: 'Automated', status: 'Draft', targetUrl, generatedFrom: 'SystemE2E', generatedTestData: row.testData, testDesignTechniques: row.testDesignTechniques, testSteps: row.testSteps.map((step, stepIndex) => ({ ...step, stepNumber: stepIndex + 1 })), e2e: { testPlan: plan._id, systemProfile: useCase.systemProfile._id, useCase: useCase._id, requirements: (useCase.requirements || []).map((item) => item._id || item), journeyType: row.journeyType, routeCoverage: row.routeCoverage, setup: row.setup, cleanup: row.cleanup } })));
-  send(res, testCases, 201, { usage, fallback: Boolean(fallbackReason), message: fallbackReason ? 'Gemini tạm quá tải; đã tạo bộ Test Case E2E có cấu trúc đầy đủ để QA rà soát, bổ sung locator và dữ liệu cụ thể.' : undefined });
+  send(res, testCases, 201, { usage, fallback: Boolean(fallbackReason), message: fallbackReason ? 'AI tạm không sẵn sàng; đã sao chép từng Acceptance Criterion thành bản nháp cần rà soát, chưa sinh bước tự động.' : undefined });
 };
 // A customer/PO supplied User Story is a valid test basis on its own.  Do not
 // manufacture a Use Case just to satisfy an E2E route: it would introduce a
@@ -484,7 +429,7 @@ const generateCasesFromStory = async (req, res) => {
   catch (error) { if (!ai.isGeminiQuotaExhausted(error)) throw error; rows = fallbackTestCases({ useCase: basis, story, targetUrl, profile }); fallbackReason = error.message; }
   const normalizedRows = rows.map((row, index) => normalizeGeneratedTestCase(row, index, { useCase: basis, story, targetUrl, profile }));
   const testCases = await TestCase.insertMany(normalizedRows.map((row) => ({ ...row, testSuite: suite._id, userStory: story._id, createdBy: req.user._id, type: 'Automated', status: 'Draft', targetUrl, generatedFrom: 'UserStory', generatedTestData: row.testData, testDesignTechniques: row.testDesignTechniques, testSteps: row.testSteps.map((step, stepIndex) => ({ ...step, stepNumber: stepIndex + 1 })), e2e: { testPlan: plan._id, systemProfile: profile._id, useCase: null, requirements: story.parentRequirements || [], journeyType: row.journeyType, routeCoverage: row.routeCoverage, setup: row.setup, cleanup: row.cleanup } })));
-  send(res, testCases, 201, { usage, fallback: Boolean(fallbackReason), message: fallbackReason ? 'Gemini tạm quá tải; hệ thống đã tạo Test Case nháp bám theo User Story đã được xác nhận.' : undefined });
+  send(res, testCases, 201, { usage, fallback: Boolean(fallbackReason), message: fallbackReason ? 'AI tạm không sẵn sàng; đã sao chép từng Acceptance Criterion thành bản nháp cần rà soát, chưa sinh bước tự động.' : undefined });
 };
 const exportE2EArtifact = async (req, res) => {
   const type = req.params.type; const id = req.params.id;
@@ -496,7 +441,8 @@ const exportE2EArtifact = async (req, res) => {
   const entry = models[type]; if (!entry) throw new AppError('Loại artifact export không hợp lệ.', 400);
   const item = await entry.Model.findById(id).populate(entry.populate).lean(); if (!item) throw new AppError('Artifact không tồn tại.', 404);
   const projectId = item.project || item.testSuite?.project || item.userStory?.project; await assertProjectAccess(req.user, projectId);
-  const format = ['pdf', 'xlsx', 'csv', 'docx'].includes(req.query.format) ? req.query.format : 'docx'; const output = await exportArtifact(entry.title, item, format);
+  const artifact = type === 'test-case' ? (await require('../services/e2eRuntimeService').resolveExportRuntime([item]))[0] : item;
+  const format = ['pdf', 'xlsx', 'csv', 'docx'].includes(req.query.format) ? req.query.format : 'docx'; const output = await exportArtifact(entry.title, artifact, format);
   res.setHeader('Content-Type', output.mime); res.setHeader('Content-Disposition', `attachment; filename="${type}-${item.code || item.testCaseId || item._id}.${output.ext}"`); res.send(output.buffer);
 };
 module.exports = { listProfiles, ensureDefaultProfile, startWorkflowRun, updateWorkflowProgress, createProfile, updateProfile, analyzeGithub, listUseCases, createUseCase, updateUseCase, decideUseCase, suggestUseCases, importUseCasesFromDocument, generateStory, generateCases, generateCasesFromStory, exportE2EArtifact, normalizeGeneratedStory, normalizeGeneratedTestCase, fallbackTestCases };
