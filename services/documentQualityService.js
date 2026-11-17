@@ -98,6 +98,9 @@ const evaluateTestCase = (item = {}) => {
     field('storyCoverage', 'Truy vết Acceptance Criteria', present(item.storyCoverage)),
     field('estimatedTime', 'Thời gian ước tính', Number(item.estimatedTime) > 0),
     field('testData', 'Dữ liệu kiểm thử', present(item.generatedTestData) || steps.some((step) => present(step.testData))),
+    field('sourceReview', 'Rà soát bản nháp nguồn và thay dữ liệu placeholder',
+      !(item.tags || []).includes('NeedsSpecificationReview') &&
+      !/(accountReference|alternateCondition|protectedAction|restrictedRole|dữ liệu hợp lệ đại diện)/i.test(JSON.stringify(item.generatedTestData || {}))),
   ]);
 };
 

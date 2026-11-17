@@ -26,8 +26,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm --prefix frontend ci
+      - run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
       - run: npm run check
       - run: npm test
       - run: npm run frontend:build
       - run: npx playwright install --with-deps chromium
+      - run: node frontend/check-workflow-retest.mjs
       - run: npm run test:integration

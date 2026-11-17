@@ -33,8 +33,8 @@ const createPlan = async (req, res) => {
     if ((req.body.kind || 'TestPlan') !== 'TestPlan') throw new AppError('Chỉ có thể lập Feature Test Plan từ User Story.', 409);
     if (req.body.planLevel && req.body.planLevel !== 'Feature') throw new AppError('Test Plan trong luồng E2E phải là Feature Test Plan.', 409);
     req.body.planLevel = 'Feature';
-    req.body.origin = req.body.origin === 'AI' ? 'AI' : 'Manual';
-    req.body.approvalStatus = 'PendingApproval';
+    req.body.origin = ['AI', 'Rule'].includes(req.body.origin) ? req.body.origin : 'Manual';
+    req.body.approvalStatus = req.body.approvalStatus === 'Draft' ? 'Draft' : 'PendingApproval';
     req.body.status = 'Draft';
   }
   if (req.body.approvalStatus === 'PendingApproval') {
@@ -79,14 +79,14 @@ const suggestPlanFromRequirements = async (req, res) => {
   const suggestion = {
     name: `E2E Test Plan · ${new Date().toLocaleDateString('vi-VN')}`,
     scope: titles.join('; '),
-    objectives: ['Xác nhận các User Story đã duyệt hoạt động đúng theo tiêu chí chấp nhận.'],
-    testStrategy: 'Risk-based E2E testing, ưu tiên luồng chính, xác thực và phân quyền.',
+    objectives: stories.flatMap((item) => require('../services/sourceDraftService').texts(item.acceptanceCriteria)),
+    testStrategy: 'Kiểm thử chức năng Manual hoặc Auto theo từng Acceptance Criterion đã xác nhận; không mở rộng ngoài phạm vi nguồn.',
     testItems: titles,
     outOfScope: ['Hiệu năng chuyên sâu và kiểm thử bảo mật xâm nhập, trừ khi có yêu cầu riêng.'],
     entryCriteria: ['User Story đã được duyệt.', 'Môi trường và dữ liệu kiểm thử sẵn sàng.'],
     exitCriteria: ['Test Case trong phạm vi đã được thực thi hoặc có lý do Blocked được ghi nhận.', 'Bug Critical/High đã được triage.'],
     environment: String(environment || 'Staging').slice(0, 500),
-    testData: 'Dùng tài khoản và dữ liệu thử nghiệm đã khai báo trong System Profile.',
+    testData: stories.flatMap((item) => require('../services/sourceDraftService').texts(item.acceptanceCriteria)).join('\n'),
     risks: [{ risk: 'Môi trường không ổn định hoặc dữ liệu kiểm thử không nhất quán.', mitigation: 'Ghi evidence, xác nhận dữ liệu và triage trước khi kết luận.', owner: 'QA Manager' }],
     deliverables: ['Test Plan đã duyệt', 'Test Case và evidence thực thi', 'Danh sách defect', 'Test Summary Report'],
   };
@@ -148,7 +148,28 @@ const createPlanFromApproved = async (req, res) => {
   })));
   send(res, { plan, run, executions }, 201, { message: `Đã tạo Test Plan với ${cases.length} Test Case Approved.` });
 };
-const updatePlan = async (req, res) => { const item = await getById(TestPlan, req.params.id); await ensureProjectAccess(req, item.project); req._auditBefore = item.toObject(); const wasApproved = item.approvalStatus === 'Approved'; Object.assign(item, req.body); if (wasApproved) { item.approvalStatus = 'Draft'; item.status = 'Draft'; item.reviewNote = ''; item.approvedBy = null; item.approvedAt = null; } await item.save(); send(res, item); };
+const updatePlan = async (req, res) => {
+  const item = await getById(TestPlan, req.params.id);
+  await ensureProjectAccess(req, item.project);
+  req._auditBefore = item.toObject();
+  if (req.body.approvalStatus && !['Draft', 'PendingApproval'].includes(req.body.approvalStatus)) throw new AppError('Dùng luồng QA review để duyệt hoặc từ chối Test Plan.', 409);
+  for (const field of ['project', 'systemProfile', 'kind']) {
+    if (req.body[field] !== undefined && String(req.body[field] || '') !== String(item[field] || '')) throw new AppError('Không thể chuyển phạm vi Test Plan khi chỉnh sửa.', 409);
+  }
+  const wasApproved = item.approvalStatus === 'Approved';
+  Object.assign(item, req.body);
+  if (wasApproved) { item.approvalStatus = 'Draft'; item.status = 'Draft'; item.reviewNote = ''; item.approvedBy = null; item.approvedAt = null; }
+  if (item.approvalStatus === 'PendingApproval') {
+    if (item.systemProfile) {
+      const ids = [...new Set(item.userStories.map(String))];
+      const count = await UserStory.countDocuments({ _id: { $in: ids }, project: item.project, 'e2e.systemProfile': item.systemProfile, approvalStatus: 'Approved' });
+      if (!ids.length || count !== ids.length) throw new AppError('User Story nguồn phải được duyệt trong cùng Profile.', 409);
+    }
+    const quality = evaluateTestPlan(item);
+    if (!quality.canApprove) throw new AppError('Test Plan chưa sẵn sàng gửi duyệt.', 400, qualityErrorDetails(quality));
+  }
+  await item.save(); send(res, item);
+};
 const exportPlan = async (req, res) => {
   const plan = await TestPlan.findById(req.params.id)
     .populate('testCases release cycle assignee createdBy approvedBy')

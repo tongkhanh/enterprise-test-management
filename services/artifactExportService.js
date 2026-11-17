@@ -22,7 +22,7 @@ function rows(value, prefix = '') {
   return [[label(prefix), clean(value)]];
 }
 function resolvePdfFont() {
-  const candidates = [process.env.PDF_FONT_PATH, path.join(process.cwd(), 'assets', 'fonts', 'NotoSans-Regular.ttf'), 'C:\\Windows\\Fonts\\arial.ttf'].filter(Boolean);
+  const candidates = [process.env.PDF_FONT_PATH, path.join(__dirname, '..', 'assets', 'fonts', 'NotoSans-Regular.ttf'), '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 'C:\\Windows\\Fonts\\arial.ttf'].filter(Boolean);
   return candidates.find((item) => fs.existsSync(item)) || null;
 }
 const arrayText = (value) => Array.isArray(value) ? value.map((item) => typeof item === 'object' ? (item.criteria || item.name || JSON.stringify(item)) : item).filter(Boolean).join('\n') : clean(value);
@@ -148,20 +148,22 @@ async function genericDocx(title, artifact) {
   return Packer.toBuffer(new Document({ sections: [{ children }] }));
 }
 function pdf(title, rowsToExport) {
-  const chunks = []; const document = new PDFDocument({ size: 'A4', margin: 44, info: { Title: title, Author: 'Enterprise Test Management System' } });
   const font = resolvePdfFont();
+  if (!font) throw new Error('Không tìm thấy font Unicode cho PDF. Cài fonts-dejavu-core hoặc cấu hình PDF_FONT_PATH.');
+  const chunks = []; const document = new PDFDocument({ size: 'A4', margin: 44, info: { Title: title, Author: 'Enterprise Test Management System' } });
   document.on('data', (chunk) => chunks.push(chunk));
-  if (font) document.font(font); else document.font('Helvetica');
+  document.font(font);
   document.fontSize(18).fillColor('#172554').text(title);
   document.moveDown(0.25).fontSize(9).fillColor('#64748b').text(`Xuất lúc: ${new Date().toLocaleString('vi-VN')}`);
   document.moveDown(0.8);
   for (const [field, value] of rowsToExport) {
-    if (document.y > 730) document.addPage();
-    if (font) document.font(font); else document.font('Helvetica-Bold');
-    document.fontSize(10).fillColor('#1e293b').text(String(field), { width: 150, continued: true });
-    if (font) document.font(font); else document.font('Helvetica');
-    document.fillColor('#334155').text(`  ${String(value)}`, { width: 350 });
-    document.moveDown(0.25);
+    const width = document.page.width - document.page.margins.left - document.page.margins.right;
+    document.fontSize(10);
+    const labelHeight = document.heightOfString(String(field), { width });
+    if (document.y + labelHeight + 28 > document.page.height - document.page.margins.bottom) document.addPage();
+    document.fillColor('#172554').text(String(field), document.page.margins.left, document.y, { width });
+    document.moveDown(0.15).fillColor('#334155').text(String(value), document.page.margins.left, document.y, { width });
+    document.moveDown(0.6);
   }
   return new Promise((resolve, reject) => {
     document.once('end', () => resolve(Buffer.concat(chunks)));
