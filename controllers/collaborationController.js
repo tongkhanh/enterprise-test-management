@@ -41,7 +41,7 @@ const publicIntegration = (document) => {
 };
 
 const assertProjectManager = async (project, user) => {
-  await assertProjectAccess(user, project._id, { manage: true });
+  return assertProjectAccess(user, project._id, { manage: true });
 };
 
 const accessibleProjectIds = async (user) => {
@@ -182,13 +182,14 @@ const listMemberships = async (req, res) => {
 
 const updateMembership = async (req, res) => {
   const project = await getById(Project, req.params.id);
-  await assertProjectManager(project, req.user);
+  const access = await assertProjectManager(project, req.user);
   const membership = await ProjectMembership.findOne({ _id: req.params.membershipId, project: project._id, isActive: true });
   if (!membership) throw new AppError('Project Membership không tồn tại.', 404);
   if (String(project.lead) === String(membership.user) && req.body.role && req.body.role !== ROLE_NAMES.QA_MANAGER) {
     throw new AppError('Project Lead phải giữ vai trò QA Manager.', 409);
   }
   if (req.body.role !== undefined) {
+    if (access.workspaceRole !== ROLE_NAMES.OWNER) throw new AppError('Chỉ Workspace Owner mới có quyền đổi vai trò thành viên Project.', 403);
     if (!INVITE_ROLES.includes(req.body.role)) throw new AppError('Vai trò Project không hợp lệ.', 400);
     membership.role = req.body.role;
   }
@@ -200,6 +201,21 @@ const updateMembership = async (req, res) => {
     membership.teams = validTeams;
   }
   await membership.save();
+  // An accepted invitation is historical evidence, but older reconciliation
+  // paths also use it to repair missing memberships. Keep its assigned role in
+  // sync so a later login can never restore the role that was originally
+  // invited after an Owner has changed the Project role.
+  if (req.body.role !== undefined) {
+    const memberUser = await User.findById(membership.user).select('email');
+    await ProjectInvitation.updateMany({
+      project: project._id,
+      status: 'Accepted',
+      $or: [
+        { acceptedBy: membership.user },
+        ...(memberUser?.email ? [{ email: String(memberUser.email).trim().toLowerCase() }] : []),
+      ],
+    }, { $set: { role: membership.role } });
+  }
   await membership.populate([{ path: 'user', select: 'fullName email avatar status role', populate: { path: 'role', select: 'name' } }, { path: 'teams', select: 'name key color' }]);
   send(res, membership);
 };

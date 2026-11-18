@@ -31,7 +31,7 @@ const listMemberships = async (req, res) => {
 };
 
 const updateMembership = async (req, res) => {
-  const { workspace, role: actorRole } = await assertWorkspaceAccess(req.user, req.params.id, { roles: [ROLE_NAMES.OWNER, ROLE_NAMES.QA_MANAGER] });
+  const { workspace, role: actorRole } = await assertWorkspaceAccess(req.user, req.params.id, { roles: [ROLE_NAMES.OWNER] });
   const membership = await WorkspaceMembership.findOne({ _id: req.params.membershipId, workspace: workspace._id, isActive: true });
   if (!membership) throw new AppError('Workspace Membership không tồn tại.', 404);
   if (membership.role === ROLE_NAMES.OWNER || String(membership.user) === String(workspace.owner)) throw new AppError('Không thể thay đổi vai trò Owner.', 409);
@@ -43,7 +43,7 @@ const updateMembership = async (req, res) => {
 };
 
 const removeMembership = async (req, res) => {
-  const { workspace } = await assertWorkspaceAccess(req.user, req.params.id, { roles: [ROLE_NAMES.OWNER, ROLE_NAMES.QA_MANAGER] });
+  const { workspace } = await assertWorkspaceAccess(req.user, req.params.id, { roles: [ROLE_NAMES.OWNER, ROLE_NAMES.QA, ROLE_NAMES.QA_MANAGER] });
   const membership = await WorkspaceMembership.findOne({ _id: req.params.membershipId, workspace: workspace._id, isActive: true });
   if (!membership) throw new AppError('Workspace Membership không tồn tại.', 404);
   if (membership.role === ROLE_NAMES.OWNER || String(membership.user) === String(workspace.owner)) throw new AppError('Không thể xóa Owner khỏi Workspace.', 409);
@@ -53,7 +53,7 @@ const removeMembership = async (req, res) => {
 };
 
 const listInvitations = async (req, res) => {
-  await assertWorkspaceAccess(req.user, req.params.id, { roles: [ROLE_NAMES.OWNER, ROLE_NAMES.QA_MANAGER] });
+  await assertWorkspaceAccess(req.user, req.params.id, { roles: [ROLE_NAMES.OWNER, ROLE_NAMES.QA, ROLE_NAMES.QA_MANAGER] });
   const invitations = await WorkspaceInvitation.find({ workspace: req.params.id })
     .populate('invitedBy acceptedBy', 'fullName email')
     .sort('-createdAt');
@@ -61,7 +61,7 @@ const listInvitations = async (req, res) => {
 };
 
 const createInvitation = async (req, res) => {
-  const { workspace } = await assertWorkspaceAccess(req.user, req.params.id, { roles: [ROLE_NAMES.OWNER, ROLE_NAMES.QA_MANAGER] });
+  const { workspace } = await assertWorkspaceAccess(req.user, req.params.id, { roles: [ROLE_NAMES.OWNER, ROLE_NAMES.QA, ROLE_NAMES.QA_MANAGER] });
   const email = String(req.body.email || '').trim().toLowerCase();
   const role = req.body.role;
   if (!/^\S+@\S+\.\S+$/.test(email)) throw new AppError('Email không hợp lệ.', 400);

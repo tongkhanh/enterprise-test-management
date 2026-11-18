@@ -78,6 +78,34 @@ const testCaseSchema = new Schema(
       // VD: "User đã đăng nhập, đang ở trang Dashboard"
     },
     postconditions: { type: String, default: '' },
+    environmentRequirement: { type: String, default: '' },
+    productRisks: { type: [String], default: [] },
+    assumptions: { type: [String], default: [] },
+    evidence: { type: [{ sourceType: String, sourceId: String, title: String, version: String, excerpt: String }], default: [] },
+    automationCandidate: {
+      eligible: { type: Boolean, default: false },
+      reason: { type: String, default: '' },
+    },
+    generationContext: {
+      scopeMode: { type: String, enum: ['single', 'feature', 'uncovered'], default: 'single' },
+      polarity: { type: String, enum: ['positive', 'negative', 'both'], default: 'both' },
+      detailLevel: { type: String, enum: ['Scenario', 'Standard', 'Detailed'], default: 'Standard' },
+      techniques: { type: [String], default: [] },
+      includeSecurity: { type: Boolean, default: false },
+      includeAccessibility: { type: Boolean, default: false },
+      generationMode: { type: String, enum: ['logic', 'technicalContext', 'executionReady'], default: 'logic' },
+      readinessStatus: { type: String, enum: ['Ready', 'Assumptions', 'Blocked'], default: 'Assumptions' },
+      missingInputs: { type: [String], default: [] },
+      unavailableTestTypes: { type: [String], default: [] },
+      assumptions: { type: [String], default: [] },
+      planSnapshot: { type: Schema.Types.Mixed, default: null },
+      references: { type: [Schema.Types.Mixed], default: [] },
+      environmentContext: { type: Schema.Types.Mixed, default: null },
+      // Legacy fields retained only to read records created before environment
+      // selection was moved out of Test Case design and into execution.
+      environmentProfile: { type: Schema.Types.ObjectId, ref: 'TestEnvironment', default: null },
+      environmentSnapshot: { type: Schema.Types.Mixed, default: null },
+    },
     testDesignTechniques: { type: [String], default: [] },
 
     priority: {
@@ -108,6 +136,12 @@ const testCaseSchema = new Schema(
       },
       default: 'Draft',
     },
+    approvalException: {
+      mode: { type: String, enum: ['Standard', 'OwnerFallback', 'SelfApproval'], default: 'Standard' },
+      reason: { type: String, default: '' },
+      responsibility: { type: String, enum: ['Business', 'QA'], default: 'QA' },
+      recordedAt: { type: Date, default: null },
+    },
 
     // Thời gian ước tính (phút)
     estimatedTime: {
@@ -131,9 +165,24 @@ const testCaseSchema = new Schema(
     targetUrl: { type: String, default: null },
     generatedFrom: {
       type: String,
-      enum: ['Manual', 'UserStory', 'UserStoryAndWeb', 'SystemE2E'],
+      enum: ['Manual', 'Requirement', 'UseCase', 'UserStory', 'UserStoryAndWeb', 'SystemE2E'],
       default: 'Manual',
     },
+    // Project-derived grouping and many-to-many traceability. These values
+    // stay on each Test Case record; Excel sheets are only a presentation of
+    // this data and are never persisted as fixed project structure.
+    module: { type: String, trim: true, maxlength: 300, default: '' },
+    feature: { type: String, trim: true, maxlength: 300, default: '' },
+    primaryTestBasis: {
+      basisType: { type: String, enum: ['Requirement', 'UserStory', 'UseCase', 'Manual'], default: 'Manual' },
+      basisId: { type: Schema.Types.ObjectId, default: null },
+      code: { type: String, trim: true, maxlength: 160, default: '' },
+      title: { type: String, trim: true, maxlength: 500, default: '' },
+    },
+    linkedRequirements: [{ type: Schema.Types.ObjectId, ref: 'Requirement' }],
+    linkedUserStories: [{ type: Schema.Types.ObjectId, ref: 'UserStory' }],
+    linkedUseCases: [{ type: Schema.Types.ObjectId, ref: 'UseCase' }],
+    coverageItems: { type: [String], default: [] },
     storyCoverage: { type: [String], default: [] },
     generatedTestData: { type: Schema.Types.Mixed, default: {} },
     webAnalysisSnapshot: {
@@ -199,5 +248,9 @@ testCaseSchema.index({ priority: 1, type: 1 });
 testCaseSchema.index({ tags: 1 });
 testCaseSchema.index({ createdBy: 1 });
 testCaseSchema.index({ generatedFrom: 1, 'webAnalysisSnapshot.analysisId': 1 });
+testCaseSchema.index({ 'e2e.testPlan': 1, module: 1, feature: 1 });
+testCaseSchema.index({ linkedRequirements: 1 });
+testCaseSchema.index({ linkedUserStories: 1 });
+testCaseSchema.index({ linkedUseCases: 1 });
 
 module.exports = mongoose.model('TestCase', testCaseSchema);

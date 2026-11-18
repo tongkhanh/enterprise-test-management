@@ -1,12 +1,16 @@
-const { User, UserStory, UserStoryDocument, Comment, DesignMockup, Notification, ProjectMembership } = require('../models');
+const { User, UserStory, UserStoryDocument, UseCase, Comment, DesignMockup, Notification, ProjectMembership } = require('../models');
 const { AppError, list, getById, send } = require('../utils/http');
 const { getAccessibleProjectIds, assertProjectAccess } = require('../services/projectAccessService');
 const { removeStoredDocument } = require('../services/documentExtractionService');
 const { evaluateUserStory, qualityErrorDetails } = require('../services/documentQualityService');
+const { authorizeArtifactApproval, roleHasResponsibility } = require('../services/approvalPolicyService');
 
-const BUSINESS_ROLES = new Set(['Owner', 'Product_Owner', 'Business_Analyst']);
-const QA_REVIEW_ROLES = new Set(['Owner', 'QA_Manager']);
-const hasProjectRole = ({ workspaceRole, membership }, roles) => roles.has(workspaceRole) || roles.has(membership?.role);
+const BUSINESS_ROLES = new Set(['Owner', 'Business_Owner', 'Product_Owner', 'Business_Analyst']);
+const QA_REVIEW_ROLES = new Set(['Owner', 'QA', 'QA_Manager', 'Tester']);
+const hasProjectRole = ({ workspaceRole, membership }, roles) => {
+  const responsibility = roles === BUSINESS_ROLES ? 'Business' : 'QA';
+  return roleHasResponsibility(workspaceRole, responsibility) || roleHasResponsibility(membership?.role, responsibility);
+};
 const approvalState = (story) => ({
   business: story.businessApprovalStatus || (story.approvalStatus === 'Approved' ? 'BusinessConfirmed' : 'NotConfirmed'),
   qa: story.qaTestabilityStatus || (story.approvalStatus === 'Approved' ? 'Testable' : 'NotReviewed'),
@@ -28,6 +32,11 @@ const listStories = async (req, res) => {
     populate: [{ path: 'assignee', select: 'fullName email' }, { path: 'createdBy', select: 'fullName' }, { path: 'businessApprovedBy qaReviewedBy', select: 'fullName email' }, { path: 'parentRequirements', select: 'requirementId title status' }, { path: 'sprint', select: 'name' }, { path: 'project', select: 'name key workspace', populate: { path: 'workspace', select: 'name slug' } }],
   });
   const data = result.data.map((item) => item.toObject ? item.toObject() : item);
+  const projectIds = [...new Set(data.map((story) => String(story.project?._id || story.project)).filter(Boolean))];
+  const viewerAccessByProject = new Map(await Promise.all(projectIds.map(async (projectId) => {
+    const access = await assertProjectAccess(req.user, projectId);
+    return [projectId, access];
+  })));
   const memberships = data.length ? await ProjectMembership.find({
     project: { $in: [...new Set(data.map((story) => String(story.project?._id || story.project)).filter(Boolean))] },
     user: { $in: [...new Set(data.map((story) => String(story.createdBy?._id || story.createdBy)).filter(Boolean))] },
@@ -38,7 +47,18 @@ const listStories = async (req, res) => {
     const project = story.project;
     const creator = story.createdBy?._id || story.createdBy;
     const membership = membershipByCreator.get(`${project?._id || project}:${creator}`);
-    return { ...story, quality: evaluateUserStory(story), workflowContext: { workspace: project?.workspace || null, project: project || null, teams: membership?.teams || [] } };
+    const viewerAccess = viewerAccessByProject.get(String(project?._id || project));
+    return {
+      ...story,
+      quality: evaluateUserStory(story),
+      viewerPermissions: {
+        canConfirmBusiness: Boolean(viewerAccess && hasProjectRole(viewerAccess, BUSINESS_ROLES)),
+        canReviewQaTestability: Boolean(viewerAccess && hasProjectRole(viewerAccess, QA_REVIEW_ROLES)),
+        projectRole: viewerAccess?.membership?.role || null,
+        workspaceRole: viewerAccess?.workspaceRole || null,
+      },
+      workflowContext: { workspace: project?.workspace || null, project: project || null, teams: membership?.teams || [] },
+    };
   });
   send(res, enriched, 200, { pagination: result.pagination });
 };
@@ -67,7 +87,10 @@ const createStory = async (req, res) => {
   await assertProjectAccess(req.user, req.body.project);
   // Creation/import never implies that business scope or testability is
   // confirmed. Those are separate explicit decisions made later.
-  send(res, await UserStory.create({ ...req.body, approvalStatus: 'Draft', status: 'Backlog', businessApprovalStatus: 'NotConfirmed', businessApprovedBy: null, businessApprovedAt: null, qaTestabilityStatus: 'NotReviewed', qaReviewedBy: null, qaReviewedAt: null, createdBy: req.user._id }), 201);
+  const story = await UserStory.create({ ...req.body, approvalStatus: 'Draft', status: 'Backlog', businessApprovalStatus: 'NotConfirmed', businessApprovedBy: null, businessApprovedAt: null, qaTestabilityStatus: 'NotReviewed', qaReviewedBy: null, qaReviewedAt: null, createdBy: req.user._id });
+  const linkedUseCases = [...new Set([...(req.body.e2e?.useCases || []), ...(req.body.e2e?.useCase ? [req.body.e2e.useCase] : [])].map(String))];
+  if (linkedUseCases.length) await UseCase.updateMany({ _id: { $in: linkedUseCases }, project: req.body.project }, { $addToSet: { userStories: story._id } });
+  send(res, story, 201);
 };
 
 const updateStory = async (req, res) => {
@@ -88,8 +111,8 @@ const updateStory = async (req, res) => {
   const editable = ['title', 'description', 'acceptanceCriteria', 'businessValue', 'inScope', 'outOfScope', 'nonFunctionalRequirements', 'risks', 'assumptions', 'dependencies', 'definitionOfReady', 'definitionOfDone', 'testDataRequirements', 'dataRestrictions', 'estimatedHours', 'storyPoints', 'priority', 'status', 'labels', 'sprint', 'assignee', 'aiSuggestion', 'source', 'sourceDocument', 'externalReference', 'parentRequirements', 'repositorySource', 'e2e'];
   editable.forEach((key) => { if (req.body[key] !== undefined) story[key] = req.body[key]; });
   if (['title', 'description', 'acceptanceCriteria', 'businessValue', 'inScope', 'outOfScope', 'nonFunctionalRequirements', 'risks', 'assumptions', 'dependencies', 'definitionOfReady', 'definitionOfDone', 'testDataRequirements', 'dataRestrictions'].some((key) => req.body[key] !== undefined)) {
-    story.businessApprovalStatus = 'NotConfirmed'; story.businessApprovedBy = null; story.businessApprovedAt = null; story.businessDecisionNote = '';
-    story.qaTestabilityStatus = 'NotReviewed'; story.qaReviewedBy = null; story.qaReviewedAt = null; story.qaReviewNote = '';
+    story.businessApprovalStatus = 'NotConfirmed'; story.businessApprovedBy = null; story.businessApprovedAt = null; story.businessDecisionNote = ''; story.businessApprovalException = undefined;
+    story.qaTestabilityStatus = 'NotReviewed'; story.qaReviewedBy = null; story.qaReviewedAt = null; story.qaReviewNote = ''; story.qaApprovalException = undefined;
     story.approvalStatus = 'Draft'; story.status = 'Backlog';
   }
   await story.save();
@@ -108,15 +131,41 @@ const submitApproval = async (req, res) => {
   send(res, story);
 };
 
+const submitApprovalsBulk = async (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? [...new Set(req.body.ids.map(String).filter(Boolean))].slice(0, 200) : [];
+  if (!ids.length) throw new AppError('Cần chọn ít nhất một User Story.', 400);
+  const results = [];
+  for (const id of ids) {
+    try {
+      const story = await getById(UserStory, id);
+      await assertProjectAccess(req.user, story.project);
+      if (!['Draft', 'Rejected'].includes(story.approvalStatus)) throw new AppError('User Story không ở trạng thái có thể gửi duyệt.', 409);
+      const quality = evaluateUserStory(story);
+      if (!quality.canApprove) throw new AppError(`Cần bổ sung: ${quality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(quality));
+      story.approvalStatus = 'PendingApproval';
+      story.businessApprovalStatus = 'PendingBusinessConfirmation';
+      story.reviewNote = '';
+      await story.save();
+      results.push({ id, success: true });
+    } catch (error) {
+      results.push({ id, success: false, error: error.message, details: error.details || [] });
+    }
+  }
+  send(res, {
+    summary: { requested: ids.length, succeeded: results.filter((item) => item.success).length, failed: results.filter((item) => !item.success).length },
+    results,
+  });
+};
+
 const decideBusinessApproval = async (req, res) => {
   const story = await getById(UserStory, req.params.id);
   const access = await assertProjectAccess(req.user, story.project);
-  if (!hasProjectRole(access, BUSINESS_ROLES)) throw new AppError('Chỉ Product Owner, Business Analyst hoặc Owner mới có thể xác nhận nghiệp vụ.', 403);
-  if (String(story.createdBy) === String(req.user._id)) throw new AppError('Người tạo không thể tự xác nhận nghiệp vụ của User Story.', 403);
+  if (!hasProjectRole(access, BUSINESS_ROLES)) throw new AppError('Chỉ Business Owner mới có thể xác nhận nghiệp vụ.', 403);
   const decision = req.body.decision;
   if (!['BusinessConfirmed', 'BusinessRejected'].includes(decision)) throw new AppError('Quyết định nghiệp vụ không hợp lệ.', 400);
   if (story.businessApprovalStatus !== 'PendingBusinessConfirmation') throw new AppError('User Story chưa được gửi để xác nhận nghiệp vụ.', 409);
   if (decision === 'BusinessRejected' && !String(req.body.reviewNote || '').trim()) throw new AppError('Cần nêu lý do từ chối nghiệp vụ.', 400);
+  if (decision === 'BusinessConfirmed') story.businessApprovalException = await authorizeArtifactApproval({ projectId: story.project, actorId: req.user._id, creatorId: story.createdBy, responsibility: 'Business', reason: req.body.reviewNote });
   story.businessApprovalStatus = decision; story.businessApprovedBy = decision === 'BusinessConfirmed' ? req.user._id : null; story.businessApprovedAt = decision === 'BusinessConfirmed' ? new Date() : null; story.businessDecisionNote = String(req.body.reviewNote || '').trim().slice(0, 2000);
   story.qaTestabilityStatus = 'NotReviewed'; story.qaReviewedBy = null; story.qaReviewedAt = null; story.qaReviewNote = '';
   story.approvalStatus = decision === 'BusinessRejected' ? 'Rejected' : 'Draft'; story.status = 'Backlog';
@@ -128,14 +177,14 @@ const decideQaTestability = async (req, res) => {
   const story = await getById(UserStory, req.params.id);
   const access = await assertProjectAccess(req.user, story.project);
   if (!hasProjectRole(access, QA_REVIEW_ROLES)) throw new AppError('Chỉ QA Manager hoặc Owner mới có thể rà soát khả năng kiểm thử.', 403);
-  if (String(story.createdBy) === String(req.user._id)) throw new AppError('Người tạo User Story không thể tự xác nhận khả năng kiểm thử.', 403);
-  if (approvalState(story).business !== 'BusinessConfirmed') throw new AppError('PO/BA cần xác nhận nghiệp vụ trước khi QA rà soát khả năng kiểm thử.', 409);
+  if (approvalState(story).business !== 'BusinessConfirmed') throw new AppError('Business Owner cần xác nhận nghiệp vụ trước khi QA rà soát khả năng kiểm thử.', 409);
   const decision = req.body.decision;
   if (!['Testable', 'NeedsClarification'].includes(decision)) throw new AppError('Quyết định QA không hợp lệ.', 400);
   if (decision === 'NeedsClarification' && !String(req.body.reviewNote || '').trim()) throw new AppError('Cần nêu nội dung cần làm rõ.', 400);
   if (decision === 'Testable') {
     const quality = evaluateUserStory(story);
     if (!quality.canApprove) throw new AppError(`User Story chưa đủ khả năng kiểm thử. Cần bổ sung: ${quality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(quality));
+    story.qaApprovalException = await authorizeArtifactApproval({ projectId: story.project, actorId: req.user._id, creatorId: story.createdBy, responsibility: 'QA', reason: req.body.reviewNote });
   }
   story.qaTestabilityStatus = decision; story.qaReviewedBy = req.user._id; story.qaReviewedAt = new Date(); story.qaReviewNote = String(req.body.reviewNote || '').trim().slice(0, 2000);
   story.approvalStatus = decision === 'Testable' ? 'Approved' : 'Draft'; story.status = decision === 'Testable' ? 'Ready' : 'Backlog';
@@ -238,4 +287,4 @@ const deleteMockup = async (req, res) => {
   send(res, { _id: mockup._id });
 };
 
-module.exports = { listStories, getStory, createStory, updateStory, submitApproval, decideApproval, decideBusinessApproval, decideQaTestability, deleteStory, addComment, updateComment, deleteComment, listMockups, createMockup, updateMockup, deleteMockup };
+module.exports = { listStories, getStory, createStory, updateStory, submitApproval, submitApprovalsBulk, decideApproval, decideBusinessApproval, decideQaTestability, deleteStory, addComment, updateComment, deleteComment, listMockups, createMockup, updateMockup, deleteMockup };

@@ -2,6 +2,8 @@ const ROLE_NAMES = Object.freeze({
   SYSTEM_ADMIN: 'System_Admin',
   USER: 'User',
   OWNER: 'Owner',
+  BUSINESS_OWNER: 'Business_Owner',
+  QA: 'QA',
   PRODUCT_OWNER: 'Product_Owner',
   BUSINESS_ANALYST: 'Business_Analyst',
   QA_MANAGER: 'QA_Manager',
@@ -28,6 +30,8 @@ const SYSTEM_ROLE_NAMES = Object.freeze([
 // ============================================================
 const WORKSPACE_ROLE_NAMES = Object.freeze([
   ROLE_NAMES.OWNER,
+  ROLE_NAMES.BUSINESS_OWNER,
+  ROLE_NAMES.QA,
   ROLE_NAMES.PRODUCT_OWNER,
   ROLE_NAMES.BUSINESS_ANALYST,
   ROLE_NAMES.QA_MANAGER,
@@ -35,13 +39,12 @@ const WORKSPACE_ROLE_NAMES = Object.freeze([
   ROLE_NAMES.GUEST,
 ]);
 const INVITABLE_WORKSPACE_ROLE_NAMES = Object.freeze([
-  ROLE_NAMES.QA_MANAGER,
-  ROLE_NAMES.PRODUCT_OWNER,
-  ROLE_NAMES.BUSINESS_ANALYST,
-  ROLE_NAMES.TESTER,
-  ROLE_NAMES.GUEST,
+  ROLE_NAMES.BUSINESS_OWNER,
+  ROLE_NAMES.QA,
 ]);
 const PROJECT_ROLE_NAMES = Object.freeze([
+  ROLE_NAMES.BUSINESS_OWNER,
+  ROLE_NAMES.QA,
   ROLE_NAMES.QA_MANAGER,
   ROLE_NAMES.PRODUCT_OWNER,
   ROLE_NAMES.BUSINESS_ANALYST,
@@ -75,6 +78,8 @@ const ROLE_DEFINITIONS = Object.freeze({
 // trách nhiệm và làm dữ liệu audit/assignment.
 const WORKSPACE_ROLE_PERMISSIONS = Object.freeze({
   [ROLE_NAMES.OWNER]: ['*'],
+  [ROLE_NAMES.BUSINESS_OWNER]: ['*'],
+  [ROLE_NAMES.QA]: ['*'],
   [ROLE_NAMES.PRODUCT_OWNER]: ['*'],
   [ROLE_NAMES.BUSINESS_ANALYST]: ['*'],
   [ROLE_NAMES.QA_MANAGER]: ['*'],

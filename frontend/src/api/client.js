@@ -51,6 +51,18 @@ api.interceptors.response.use(
 );
 
 const data = (response) => response.data.data;
+const allPages = async (path, params = {}) => {
+  const first = await api.get(path, { params: { ...params, page: 1, limit: 100 } });
+  const rows = [...(first.data.data || [])];
+  const pages = Math.max(1, Number(first.data.pagination?.pages || 1));
+  if (pages > 1) {
+    const remaining = await Promise.all(
+      Array.from({ length: pages - 1 }, (_, index) => api.get(path, { params: { ...params, page: index + 2, limit: 100 } })),
+    );
+    remaining.forEach((response) => rows.push(...(response.data.data || [])));
+  }
+  return rows;
+};
 // Keep the normal payload shape intact while exposing the server's explicit
 // quota-fallback marker to the E2E studio.  This is intentionally scoped to
 // E2E generation endpoints so existing API consumers are unaffected.
@@ -174,8 +186,9 @@ export const gamificationApi = {
 };
 export const catalogApi = {
   projects: workspaceApi.projects,
-  stories: (project) =>
-    api.get(`/user-stories?project=${project}&limit=100`).then(data),
+  stories: (project, limit = 100) =>
+    api.get(`/user-stories?project=${project}&limit=${limit}`).then(data),
+  allStories: (project) => allPages("/user-stories", { project }),
   suites: (project) => api.get(`/test-suites?project=${project}`).then(data),
   members: (project) => api.get(`/projects/${project}/members`).then(data),
 };
@@ -250,15 +263,32 @@ export const aiApi = {
       .then((response) => response.data),
 };
 export const e2eApi = {
+  technicalReferences: (project, systemProfile = "") => api.get("/technical-references", { params: { project, systemProfile: systemProfile || undefined } }).then(data),
+  uploadTechnicalReference: (project, systemProfile, reference, file) => {
+    const body = new FormData();
+    body.append("project", project);
+    if (systemProfile) body.append("systemProfile", systemProfile);
+    body.append("type", reference.type);
+    body.append("title", reference.title || file.name);
+    body.append("version", reference.version || "");
+    body.append("document", file);
+    return api.post("/technical-references/upload", body, { timeout: 180_000, headers: { "Content-Type": "multipart/form-data" } }).then(data);
+  },
+  createTechnicalReferenceLink: (body) => api.post("/technical-references/link", body).then(data),
   requirements: (systemProfile) => api.get("/requirements", { params: { systemProfile } }).then(data),
   createRequirement: (body) => api.post("/requirements", body).then(data),
   updateRequirement: (id, body) => api.patch(`/requirements/${id}`, body).then(data),
   decideRequirement: (id, body) => api.patch(`/requirements/${id}/decision`, body).then(data),
-  importRequirements: (systemProfile, source, file, scope = null) => {
+  decideRequirementsBulk: (body) => api.post('/requirements/bulk-decision', body).then(data),
+  importBatches: (systemProfile, artifactType) => api.get('/document-import-batches', { params: { systemProfile, artifactType } }).then(data),
+  rollbackImportBatch: (id) => api.post(`/document-import-batches/${id}/rollback`, {}).then(data),
+  importRequirements: (systemProfile, source, file, scope = null, documentType = "Requirement", references = []) => {
     const body = new FormData();
     body.append("systemProfile", systemProfile);
     body.append("source", JSON.stringify(source));
     if (scope) body.append("scope", JSON.stringify(scope));
+    body.append("documentType", documentType);
+    if (references.length) body.append("references", JSON.stringify(references));
     body.append("document", file);
     return api.post("/requirements/import", body, { timeout: 180_000, headers: { "Content-Type": "multipart/form-data" } }).then(e2eData);
   },
@@ -285,6 +315,10 @@ export const e2eApi = {
     api.post("/system-profiles/start-run", { project, ...body }).then(data),
   updateWorkflowProgress: (id, body) =>
     api.patch(`/system-profiles/${id}/progress`, body).then(data),
+  confirmTestBasisSelection: (id, body) =>
+    api.put(`/system-profiles/${id}/test-basis-selection`, body).then(data),
+  finalizeDocumentation: (id) =>
+    api.post(`/system-profiles/${id}/finalize-documentation`).then(data),
   createProfile: (body) => api.post("/system-profiles", body).then(data),
   updateProfile: (id, body) =>
     api.patch(`/system-profiles/${id}`, body).then(data),
@@ -305,6 +339,7 @@ export const e2eApi = {
   updateUseCase: (id, body) => api.patch(`/use-cases/${id}`, body).then(data),
   decideUseCase: (id, body) =>
     api.patch(`/use-cases/${id}/decision`, body).then(data),
+  decideUseCasesBulk: (body) => api.post('/use-cases/bulk-decision', body).then(data),
   suggestUseCases: (profileId) =>
     api
       .post(
@@ -324,6 +359,14 @@ export const e2eApi = {
       })
       .then(e2eData);
   },
+  supplementUseCasesDocument: (profileId, file, targetUseCaseId = "") => {
+    const body = new FormData();
+    if (targetUseCaseId) body.append("targetUseCaseId", targetUseCaseId);
+    body.append("document", file);
+    return api.post(`/system-profiles/${profileId}/supplement-use-cases`, body, { timeout: 180_000, headers: { "Content-Type": "multipart/form-data" } }).then(e2eData);
+  },
+  applyUseCaseSupplement: (id, body) => api.post(`/use-cases/${id}/apply-supplement`, body).then(data),
+  createUseCaseFromSupplement: (profileId, body) => api.post(`/system-profiles/${profileId}/create-use-case-from-supplement`, body).then(data),
   uploadRequirementImage: (requirementId, file) => {
     const body = new FormData();
     body.append("image", file);
@@ -341,6 +384,19 @@ export const e2eApi = {
     api
       .post(`/use-cases/${useCaseId}/generate-story`, {}, { timeout: 180_000 })
       .then(e2eData),
+  derivedTestBasis: (project, systemProfile = "") =>
+    api.get("/derived-test-basis", { params: { project, systemProfile: systemProfile || undefined } }).then(data),
+  generateDerivedTestBasis: (body) =>
+    api.post("/derived-test-basis/generate", body, { timeout: 180_000 }).then(e2eData),
+  analyzeTestBasisSources: (body) => api.post("/derived-test-basis/analyze-sources", body, { timeout: 180_000 }).then(data),
+  updateDerivedTestBasis: (id, body) => api.patch(`/derived-test-basis/${id}`, body).then(data),
+  acceptDerivedTestBasis: (id, reviewNote = "") => api.post(`/derived-test-basis/${id}/accept`, { reviewNote }).then(data),
+  archiveDerivedTestBasis: (id) => api.post(`/derived-test-basis/${id}/archive`, {}).then(data),
+  compareDerivedTestBasis: (id, body) => api.post(`/derived-test-basis/${id}/compare`, body).then(data),
+  supersedeDerivedTestBasis: (id, body) => api.post(`/derived-test-basis/${id}/supersede`, body).then(data),
+  applyDerivedFields: (id, body) => api.post(`/derived-test-basis/${id}/apply-selected-fields`, body).then(data),
+  adoptDerivedTestBasis: (id) => api.post(`/derived-test-basis/${id}/adopt`, {}).then(data),
+  downloadDerivedTestBasis: (id, format = "docx") => api.get(`/derived-test-basis/${id}/download`, { params: { format }, responseType: "blob" }).then((response) => response.data),
   generateCases: (useCaseId, body) =>
     api
       .post(`/use-cases/${useCaseId}/generate-test-cases`, body, {
@@ -353,8 +409,15 @@ export const e2eApi = {
         timeout: 180_000,
       })
       .then(e2eData),
+  generateCasesFromRequirement: (requirementId, body) =>
+    api
+      .post(`/requirements/${requirementId}/generate-test-cases`, body, {
+        timeout: 180_000,
+      })
+      .then(e2eData),
 };
 export const requirementApi = {
+  reviewStories: () => allPages("/user-stories"),
   pendingStories: () =>
     api
       .get("/user-stories?approvalStatus=PendingApproval&limit=100")
@@ -363,6 +426,8 @@ export const requirementApi = {
   updateStory: (id, body) => api.patch(`/user-stories/${id}`, body).then(data),
   submitApproval: (id) =>
     api.post(`/user-stories/${id}/submit-approval`).then(data),
+  submitApprovalsBulk: (body) =>
+    api.post('/user-stories/bulk-submit-approval', body).then(data),
   decideApproval: (id, body) =>
     api.patch(`/user-stories/${id}/approval`, body).then(data),
   decideBusiness: (id, body) =>
@@ -372,6 +437,7 @@ export const requirementApi = {
 };
 export const testCaseApi = {
   list: (params = "limit=100") => api.get(`/test-cases?${params}`).then(data),
+  listAll: (project) => allPages("/test-cases", { project }),
   exportMany: (testCaseIds) =>
     api.post("/test-cases/export", { testCaseIds }, { responseType: "blob" }),
   update: (id, body) => api.patch(`/test-cases/${id}`, body).then(data),
@@ -479,8 +545,10 @@ export const issueApi = {
     api.post(`/test-plans/${planId}/generate-issues`).then(data),
 };
 export const executionApi = {
-  plans: (project) =>
-    api.get("/test-plans", { params: { project, limit: 100 } }).then(data),
+  planApprovals: () => api.get("/test-plans/approval-inbox").then(data),
+  plans: (project, limit = 100) =>
+    api.get("/test-plans", { params: { project, limit } }).then(data),
+  allPlans: (project) => allPages("/test-plans", { project }),
   runs: (project) =>
     api.get("/test-runs", { params: { project, limit: 100 } }).then(data),
   run: (id) => api.get(`/test-runs/${id}`).then(data),
@@ -495,6 +563,13 @@ export const executionApi = {
     api.post(`/test-runs/${id}/execute`, body).then(data),
   suggestPlanFromRequirements: (body, options = {}) =>
     api.post("/test-plans/suggest-from-requirements", body, { timeout: 75000, ...options }).then(data),
+  importPlanDocument: (project, systemProfile, file) => {
+    const body = new FormData();
+    body.append("project", project);
+    body.append("systemProfile", systemProfile);
+    body.append("document", file);
+    return api.post("/test-plans/import-document", body, { timeout: 180_000, headers: { "Content-Type": "multipart/form-data" } }).then(data);
+  },
   suggestPlan: (body) => api.post("/test-plans/suggest", body).then(data),
   decidePlan: (id, body) =>
     api.patch(`/test-plans/${id}/decision`, body).then(data),

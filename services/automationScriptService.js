@@ -125,8 +125,10 @@ async function generateScript({ testCaseId, engine, userId }) {
       const draft = await require('./automationStepDraftService').draftAutomationSteps(resolvedCase, runtime, userId, engine);
       if (draft.steps) resolvedCase.testSteps = draft.steps;
       generationNote = draft.note || '';
-    } catch {
-      generationNote = 'Không thể sinh bước từ môi trường. Hãy kiểm tra Web Analyzer và cấu hình AI, hoặc chỉnh script rồi Validate.';
+    } catch (error) {
+      generationNote = require('./aiService').isGeminiQuotaExhausted(error)
+        ? 'Gemini đang quá tải hoặc đã đạt giới hạn quota. Chưa tạo được script thực thi; hãy thử lại sau hoặc chỉnh script rồi Validate.'
+        : 'Không thể sinh bước từ môi trường. Hãy kiểm tra Web Analyzer và cấu hình AI, hoặc chỉnh script rồi Validate.';
     }
   }
   const code = config.compile(resolvedCase, config.language);

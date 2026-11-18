@@ -10,6 +10,7 @@ router.use(['/user-stories', '/user-story-documents', '/comments', '/design-mock
 router.get('/user-stories', authorizeWorkspaceList('requirement:read'), asyncHandler(c.listStories));
 router.get('/user-stories/:id', authorize('requirement:read', 'requirement:manage'), asyncHandler(c.getStory));
 router.post('/user-stories', authorize('requirement:manage'), auditLog('CREATE', 'UserStory'), asyncHandler(c.createStory));
+router.post('/user-stories/bulk-submit-approval', authorize('requirement:manage'), auditLog('SUBMIT_APPROVAL_BULK', 'UserStory'), asyncHandler(c.submitApprovalsBulk));
 router.patch('/user-stories/:id', authorize('requirement:manage'), auditLog('UPDATE', 'UserStory'), asyncHandler(c.updateStory));
 router.post('/user-stories/:id/submit-approval', authorize('requirement:manage'), auditLog('SUBMIT_APPROVAL', 'UserStory'), asyncHandler(c.submitApproval));
 router.patch('/user-stories/:id/approval', authorize('requirement:manage'), auditLog('DECIDE_APPROVAL', 'UserStory'), asyncHandler(c.decideApproval));

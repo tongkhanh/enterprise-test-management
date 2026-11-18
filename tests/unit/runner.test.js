@@ -8,8 +8,8 @@ const { applyFixture } = require('../../services/automationResourcesService');
 const { Fixture } = require('../../models/execution-automation/AutomationResources');
 const { workspaceRoleHasPermission } = require('../../services/workspaceAccessService');
 const { resolveWorkspaceIdFromRequest } = require('../../services/workspaceAccessService');
-const { normalizeGeneratedStory, fallbackTestCases, normalizeGeneratedTestCase } = require('../../controllers/e2eController');
-const { isGeminiQuotaExhausted } = require('../../services/aiService');
+const { normalizeGeneratedUseCase, normalizeGeneratedStory, fallbackUseCases, fallbackUserStory, fallbackTestCases, normalizeGeneratedTestCase, useCaseScopeFilter } = require('../../controllers/e2eController');
+const { isGeminiQuotaExhausted, parseJson } = require('../../services/aiService');
 const { exportArtifact, exportTestCases } = require('../../services/artifactExportService');
 const models = require('../../models');
 test('GitHub repository URLs are repaired to the GitHub API endpoint before verification', () => {
@@ -56,6 +56,11 @@ test('E2E profile and Use Case routes resolve workspace before checking ai permi
     models.Project.findById = originalProjectFind;
   }
 });
+test('Use Case listing keeps the selected workflow run even when project is also supplied', () => {
+  const filter = useCaseScopeFilter({ projectId: 'project-1', profile: { _id: 'run-2', project: 'project-1' } });
+  assert.deepEqual(filter, { project: 'project-1', systemProfile: 'run-2' });
+  assert.throws(() => useCaseScopeFilter({ projectId: 'project-2', profile: { _id: 'run-2', project: 'project-1' } }), /không thuộc Project/);
+});
 test('generated E2E User Story converts AI criteria strings to UserStory subdocuments', () => {
   const story = normalizeGeneratedStory({
     title: 'Đặt hàng thành công',
@@ -74,12 +79,50 @@ test('temporary Gemini high-demand responses use the safe E2E fallback', () => {
   assert.equal(isGeminiQuotaExhausted({ statusCode: 502, message: 'Gemini API lỗi 503: gemini-3.5-flash is currently experiencing high demand. Please try again later.' }), true);
   assert.equal(isGeminiQuotaExhausted({ statusCode: 502, message: 'Gemini API lỗi 500: invalid response body' }), false);
 });
+test('malformed Gemini JSON is repaired without exposing a raw SyntaxError', () => {
+  const repaired = parseJson('```json\n{"requirements":[{"requirementId":"BR-01"} {"requirementId":"BR-02"}]}\n```');
+  assert.deepEqual(repaired.requirements.map((item) => item.requirementId), ['BR-01', 'BR-02']);
+  assert.throws(() => parseJson('không có dữ liệu JSON'), (error) => error.statusCode === 502 && /sai cấu trúc/.test(error.message));
+});
+test('Use Case and User Story fallbacks only derive content from approved source documents', () => {
+  const requirement = {
+    _id: 'req-1', requirementId: 'BR-03', title: 'Minh bạch tổng tiền',
+    description: 'Hiển thị tổng tiền trước khi xác nhận.', objective: 'Khách hàng biết số tiền phải trả.',
+    actors: ['Khách hàng'], priority: 'Critical',
+    acceptanceCriteria: ['Given giỏ hàng có sản phẩm When khách hàng xem bước xác nhận Then tổng tiền được hiển thị'],
+    businessRules: ['Tổng tiền bằng tiền món cộng phí được công bố.'], assumptions: [], dependencies: ['Giỏ hàng'],
+  };
+  const [useCase] = fallbackUseCases([requirement]);
+  assert.equal(useCase.sourceRequirementId, 'req-1');
+  assert.equal(useCase.code, 'UC-BR-03');
+  assert.equal(useCase.name, requirement.title);
+  assert.equal(useCase.actor, 'Khách hàng');
+  assert.equal(useCase.risk, 'Critical');
+  assert.deepEqual(useCase.preconditions, ['giỏ hàng có sản phẩm']);
+  assert.deepEqual(useCase.mainFlow, ['A: khách hàng xem bước xác nhận', 'S: tổng tiền được hiển thị']);
+  assert.deepEqual(useCase.postconditions, ['tổng tiền được hiển thị']);
+  assert.ok(!JSON.stringify(useCase).includes('khóa học'));
+
+  const story = fallbackUserStory(useCase);
+  assert.equal(story.title, requirement.title);
+  assert.match(story.description, /Khách hàng/);
+  assert.ok(story.acceptanceCriteria.some((item) => item.includes('tổng tiền được hiển thị')));
+});
+test('AI Use Case normalization always exposes every standard specification field', () => {
+  const useCase = normalizeGeneratedUseCase({ code: 'UC-01', name: 'Đăng nhập', actor: 'Người dùng', summary: 'Xác thực tài khoản', risk: 'Critical', trigger: 'Người dùng chọn đăng nhập', preconditions: ['Tài khoản tồn tại'], mainFlow: ['A: Nhập thông tin', 'S: Xác thực'], postconditions: ['Phiên được tạo'], secondaryActors: ['Google'], exceptionFlows: ['2a: Sai mật khẩu'] });
+  for (const key of ['code', 'name', 'summary', 'actor', 'secondaryActors', 'risk', 'trigger', 'preconditions', 'mainFlow', 'postconditions', 'exceptionFlows']) assert.ok(useCase[key]?.length || useCase[key]);
+  const incomplete = normalizeGeneratedUseCase({ name: 'Thiếu dữ liệu' });
+  assert.match(incomplete.trigger, /cần Business Owner hoặc QA xác nhận/i);
+  assert.ok(incomplete.assumptions.length > 0);
+});
 test('E2E fallback provides reviewable scientific test-case components', () => {
   const useCase = { code: 'UC-01', name: 'Nộp bài tập', actor: 'Sinh viên', risk: 'High', preconditions: ['Đã đăng nhập'], postconditions: ['Bài nộp được lưu'], mainFlow: ['Mở bài tập', 'Tải tệp hợp lệ', 'Lưu thay đổi'], alternateFlows: ['Lưu nháp'], exceptionFlows: ['Tệp không hợp lệ'] };
   const story = { priority: 'High', acceptanceCriteria: [{ criteria: 'Given hợp lệ When nộp bài Then trạng thái được lưu' }] };
   const cases = fallbackTestCases({ useCase, story, targetUrl: 'https://e2e.example.test', profile: { roles: [{ name: 'Sinh viên', credentialSecretRef: 'student-e2e' }] } });
-  assert.equal(cases.length, 4);
-  assert.deepEqual(cases.map((item) => item.journeyType), ['HappyPath', 'Alternate', 'Negative', 'Permission']);
+  assert.equal(cases.length, 3);
+  assert.deepEqual(cases.map((item) => item.journeyType), ['HappyPath', 'Alternate', 'Negative']);
+  const permissionCases = fallbackTestCases({ useCase, story, targetUrl: 'https://e2e.example.test', profile: { roles: [{ name: 'Sinh viên' }, { name: 'Giảng viên' }] } });
+  assert.ok(permissionCases.some((item) => item.journeyType === 'Permission'));
   for (const item of cases) {
     assert.ok(item.objective && item.preconditions && item.postconditions);
     assert.ok(item.testDesignTechniques.length > 0 && item.setup.length > 0 && item.cleanup.length > 0);
@@ -123,6 +166,19 @@ test('batch Test Case Excel export keeps every case and step in one workbook', a
   assert.equal(workbook.getWorksheet('Test Cases').rowCount, 3);
   assert.equal(workbook.getWorksheet('Steps').rowCount, 4);
   assert.match(String(workbook.getWorksheet('Test Cases').getRow(3).values), /TC-002/);
+});
+test('Test Case workbook creates functional sheets from Project data instead of fixed product modules', async () => {
+  const ExcelJS = require('exceljs');
+  const output = await exportTestCases([
+    { testCaseId: 'TC-PAY-01', module: 'Thanh toán FoodRush', feature: 'COD', title: 'Thanh toán COD', primaryTestBasis: { basisType: 'Requirement', code: 'BR-07', title: 'COD' }, coverageItems: ['COD thành công'], testSteps: [{ action: 'Chọn COD', expectedResult: 'Đơn được tạo' }], e2e: {} },
+    { testCaseId: 'TC-ORDER-01', module: 'Vận hành đơn', title: 'Nhà hàng xác nhận đơn', primaryTestBasis: { basisType: 'UseCase', code: 'UC-04', title: 'Xác nhận đơn' }, coverageItems: ['Xác nhận trong SLA'], testSteps: [{ action: 'Xác nhận', expectedResult: 'Trạng thái cập nhật' }], e2e: {} },
+  ]);
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(output.buffer);
+  assert.ok(workbook.getWorksheet('Thanh toán FoodRush'));
+  assert.ok(workbook.getWorksheet('Vận hành đơn'));
+  assert.ok(workbook.getWorksheet('Summary & Coverage'));
+  assert.equal(workbook.getWorksheet('Authentication'), undefined);
+  assert.equal(workbook.getWorksheet('Payment'), undefined);
 });
 test('generic downloads use genuine Excel, Word, PDF and UTF-8 CSV files', async () => {
   const artifact = { title: 'Tài liệu kiểm thử', description: 'Nội dung có dấu tiếng Việt', token: 'secret-value' };

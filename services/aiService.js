@@ -1,5 +1,6 @@
 const OpenAI = require('openai');
 const mongoose = require('mongoose');
+const { jsonrepair } = require('jsonrepair');
 const { Bug, BugEmbedding, KnowledgeBase } = require('../models');
 const { AppError } = require('../utils/http');
 
@@ -11,10 +12,10 @@ const resolveProvider = (requestedProvider) => normalizeProvider(process.env.AI_
 
 const resolveModel = (provider, requestedModel) => {
   if (provider === 'GoogleAI') {
-    const configured = process.env.AI_MODEL || process.env.GEMINI_MODEL;
+    const configured = process.env.GEMINI_MODEL || (process.env.AI_MODEL?.startsWith('gemini-') ? process.env.AI_MODEL : '');
     return configured?.startsWith('gemini-') ? configured : (requestedModel?.startsWith('gemini-') ? requestedModel : 'gemini-3.5-flash');
   }
-  const configured = process.env.AI_MODEL || process.env.OPENAI_MODEL;
+  const configured = process.env.OPENAI_MODEL || (process.env.AI_MODEL && !process.env.AI_MODEL.startsWith('gemini-') ? process.env.AI_MODEL : '');
   return configured && !configured.startsWith('gemini-') ? configured : (requestedModel && !requestedModel.startsWith('gemini-') ? requestedModel : 'gpt-4o-mini');
 };
 
@@ -45,13 +46,23 @@ const getOpenAI = () => {
 };
 
 const parseJson = (text) => {
-  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  try { return JSON.parse(cleaned); } catch (_) {
-    const start = Math.min(...['[', '{'].map((char) => { const index = cleaned.indexOf(char); return index < 0 ? Infinity : index; }));
-    const end = Math.max(cleaned.lastIndexOf(']'), cleaned.lastIndexOf('}'));
-    if (!Number.isFinite(start) || end < start) throw new AppError('AI không trả về JSON hợp lệ.', 502);
-    return JSON.parse(cleaned.slice(start, end + 1));
+  const cleaned = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const start = Math.min(...['[', '{'].map((char) => { const index = cleaned.indexOf(char); return index < 0 ? Infinity : index; }));
+  const end = Math.max(cleaned.lastIndexOf(']'), cleaned.lastIndexOf('}'));
+  const candidate = Number.isFinite(start) && end >= start ? cleaned.slice(start, end + 1) : cleaned;
+  for (const value of [...new Set([cleaned, candidate])]) {
+    if (!value) continue;
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch (_) {
+      try {
+        const repaired = JSON.parse(jsonrepair(value));
+        if (repaired && typeof repaired === 'object') return repaired;
+      } catch (_) { /* try the next candidate */ }
+    }
   }
+  throw new AppError('AI trả về dữ liệu sai cấu trúc và hệ thống không thể phục hồi an toàn. Tài liệu chưa bị thay đổi; vui lòng thử lại.', 502);
 };
 
 const callOpenAI = async ({ prompt, system, model = 'gpt-4o-mini', temperature = 0.3, maxTokens = 2048, json = false }) => {
@@ -77,31 +88,54 @@ const readGeminiError = async (response) => {
   }
 };
 
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const retryDelay = (response, attempt, baseMs) => {
+  const retryAfter = Number(response?.headers?.get?.('retry-after'));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) return Math.min(retryAfter * 1000, 10000);
+  return Math.min(baseMs * (2 ** attempt), 10000);
+};
+
 const requestGemini = async (path, body) => {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new AppError('Chưa cấu hình GEMINI_API_KEY cho Gemini 3.5 Flash.', 503);
   const configuredTimeout = Number(process.env.AI_REQUEST_TIMEOUT_MS);
   const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? Math.min(configuredTimeout, 90000) : 60000;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      const message = await readGeminiError(response);
-      if (response.status === 429) throw new AppError(`Gemini Free Tier đã đạt giới hạn tạm thời: ${message}`, 429);
-      throw new AppError(`Gemini API lỗi ${response.status}: ${message}`, 502);
-    }
-    return await response.json();
-  } catch (error) {
-    if (controller.signal.aborted) throw new AppError('Gemini phản hồi quá lâu. Vui lòng thử lại sau.', 504);
-    if (error.isOperational) throw error;
-    throw new AppError(`Không thể kết nối Gemini API: ${error.message}`, 502);
-  } finally { clearTimeout(timer); }
+  const configuredRetries = Number(process.env.AI_GEMINI_RETRY_COUNT);
+  const retries = Number.isFinite(configuredRetries) ? Math.min(Math.max(configuredRetries, 0), 4) : 2;
+  const configuredBaseMs = Number(process.env.AI_GEMINI_RETRY_BASE_MS);
+  const baseMs = Number.isFinite(configuredBaseMs) && configuredBaseMs >= 0 ? Math.min(configuredBaseMs, 5000) : 750;
+  const retryableStatuses = new Set([500, 502, 503, 504]);
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const message = await readGeminiError(response);
+        if (response.status === 429) throw new AppError(`Gemini Free Tier đã đạt giới hạn tạm thời: ${message}`, 429);
+        if (retryableStatuses.has(response.status) && attempt < retries) {
+          await wait(retryDelay(response, attempt, baseMs));
+          continue;
+        }
+        const attempts = attempt + 1;
+        const suffix = retryableStatuses.has(response.status) && attempts > 1 ? ` sau ${attempts} lần thử` : '';
+        throw new AppError(`Gemini API lỗi ${response.status}${suffix}: ${message}`, response.status === 503 ? 503 : 502);
+      }
+      return await response.json();
+    } catch (error) {
+      if (controller.signal.aborted) throw new AppError('Gemini phản hồi quá lâu. Vui lòng thử lại sau.', 504);
+      if (error.isOperational) throw error;
+      throw new AppError(`Không thể kết nối Gemini API: ${error.message}`, 502);
+    } finally { clearTimeout(timer); }
+  }
+  throw new AppError('Gemini tạm không sẵn sàng sau nhiều lần thử.', 503);
 };
 
 const callGemini = async ({ prompt, system, model = 'gemini-3.5-flash', maxTokens = 2048, json = false }) => {
@@ -138,11 +172,34 @@ const callGemini = async ({ prompt, system, model = 'gemini-3.5-flash', maxToken
   };
 };
 
-const complete = (options = {}) => {
+const complete = async (options = {}) => {
   const provider = resolveProvider(options.provider);
   const resolvedOptions = { ...options, model: resolveModel(provider, options.model) };
-  if (provider === 'GoogleAI') return callGemini(resolvedOptions);
-  if (provider === 'OpenAI') return callOpenAI(resolvedOptions);
+  if (provider === 'GoogleAI') {
+    try {
+      return await callGemini(resolvedOptions);
+    } catch (error) {
+      const fallbackProvider = normalizeProvider(process.env.AI_FALLBACK_PROVIDER);
+      if (fallbackProvider === 'OpenAI' && process.env.OPENAI_API_KEY?.trim() && isGeminiQuotaExhausted(error)) {
+        return callOpenAI({ ...options, model: resolveModel('OpenAI', options.model) });
+      }
+      throw error;
+    }
+  }
+  if (provider === 'OpenAI') {
+    try {
+      return await callOpenAI(resolvedOptions);
+    } catch (error) {
+      const status = Number(error?.statusCode || error?.status || 0);
+      const connectionError = ['APIConnectionError', 'APIConnectionTimeoutError'].includes(error?.constructor?.name);
+      const fallbackProvider = normalizeProvider(process.env.AI_FALLBACK_PROVIDER);
+      const canRetryWithGemini = status === 408 || status === 429 || status >= 500 || connectionError;
+      if (fallbackProvider === 'GoogleAI' && process.env.GEMINI_API_KEY?.trim() && canRetryWithGemini) {
+        return callGemini({ ...options, model: resolveModel('GoogleAI', options.model) });
+      }
+      throw error;
+    }
+  }
   throw new AppError(`AI provider ${provider} chưa được hỗ trợ.`, 503);
 };
 

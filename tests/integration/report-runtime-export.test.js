@@ -92,11 +92,14 @@ test('reports distinguish execution modes and retries, and exports resolve the c
       return workbook;
     };
     const batch = await readWorkbook('/test-cases/export', 'POST', { testCaseIds: cases.map((item) => item._id) });
-    assert.deepEqual(batch.worksheets.map((sheet) => sheet.name), ['Test Cases', 'Steps', 'Test Data', 'Traceability']);
-    assert.equal(batch.getWorksheet('Test Cases').getCell('M2').value, url);
-    assert.equal(batch.getWorksheet('Test Cases').getCell('M3').value, url);
+    assert.ok(batch.getWorksheet('Summary & Coverage'));
+    assert.ok(batch.getWorksheet('Steps'));
+    assert.ok(batch.getWorksheet('Test Data'));
+    assert.ok(batch.getWorksheet('Traceability'));
+    assert.equal(batch.getWorksheet('Login suite').getCell('N2').value, url);
+    assert.equal(batch.getWorksheet('Login suite').getCell('N3').value, url);
     const single = await readWorkbook(`/e2e-artifacts/test-case/${cases[0]._id}/export?format=xlsx`, 'GET');
-    assert.equal(single.getWorksheet('Test Cases').getCell('M2').value, url);
+    assert.equal(single.getWorksheet('Login suite').getCell('N2').value, url);
     assert.equal((await m.TestCase.findById(cases[0]._id)).targetUrl, oldUrl);
     assert.equal((await m.TestCase.findById(cases[0]._id)).status, 'Approved');
 
@@ -109,8 +112,8 @@ test('reports distinguish execution modes and retries, and exports resolve the c
     await m.AutomationResult.updateOne({ _id: previous._id }, { targetUrl: oldUrl });
     await m.TestEnvironment.updateOne({ _id: environment._id }, { status: 'Stopped' });
     const stopped = await readWorkbook('/test-cases/export', 'POST', { testCaseIds: cases.map((item) => item._id) });
-    assert.equal(stopped.getWorksheet('Test Cases').getCell('M2').value, '');
-    assert.equal(stopped.getWorksheet('Test Cases').getCell('M3').value, '');
+    assert.equal(stopped.getWorksheet('Login suite').getCell('N2').value, '');
+    assert.equal(stopped.getWorksheet('Login suite').getCell('N3').value, '');
     const historical = await request(`/test-runs/${run._id}/reports/suggest`, 'POST', {}, 201);
     assert.ok(historical.environment.includes(url));
     assert.ok(!historical.environment.includes(oldUrl));

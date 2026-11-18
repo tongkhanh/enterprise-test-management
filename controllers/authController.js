@@ -126,7 +126,8 @@ const login = async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) throw new AppError('Email và mật khẩu là bắt buộc.', 400);
   if (!process.env.JWT_SECRET) throw new AppError('Máy chủ chưa cấu hình JWT_SECRET.', 500);
-  const user = await User.findOne({ email: email.toLowerCase() }).select('+passwordHash').populate('role');
+  const normalizedEmail = String(email).trim().toLowerCase();
+  const user = await User.findOne({ email: normalizedEmail }).select('+passwordHash').populate('role');
   if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
     throw new AppError('Email hoặc mật khẩu không đúng.', 401);
   }

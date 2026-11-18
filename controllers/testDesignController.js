@@ -1,17 +1,17 @@
 const mongoose = require('mongoose');
 const {
   TestSuite, TestCase, SharedTestData, ReviewRequest, Notification, SystemProfile,
-  User, Project, ProjectMembership, BoardItem,
+  User, Project, ProjectMembership,
 } = require('../models');
 const { AppError, list, getById, send } = require('../utils/http');
 const { addKpiPoints } = require('../services/kpiService');
 const { assertProjectAccess, getAccessibleProjectIds } = require('../services/projectAccessService');
-const { upsertApprovedBoardItem, markBoardItemNeedsReview } = require('../services/boardService');
 const { recordProjectActivity } = require('../services/projectActivityService');
 const { getWorkspaceRole } = require('../services/workspaceAccessService');
 const { exportTestCases } = require('../services/artifactExportService');
-const { evaluateTestSuite, evaluateTestCase, qualityErrorDetails } = require('../services/documentQualityService');
 const { resolveExportRuntime } = require('../services/e2eRuntimeService');
+const { evaluateTestSuite, evaluateTestCase, qualityErrorDetails } = require('../services/documentQualityService');
+const { authorizeArtifactApproval } = require('../services/approvalPolicyService');
 
 const accessibleSuiteFilter = async (req) => {
   if (req.query.project) {
@@ -76,7 +76,9 @@ const listCases = async (req, res) => {
     searchFields: ['title', 'description', 'tags'],
     populate: [
       { path: 'testSuite', select: 'name project' },
-      { path: 'userStory', select: 'title acceptanceCriteria' },
+      { path: 'userStory linkedUserStories', select: 'title externalReference acceptanceCriteria' },
+      { path: 'linkedRequirements e2e.requirements', select: 'requirementId title scope' },
+      { path: 'linkedUseCases e2e.useCase', select: 'code name scope' },
       { path: 'createdBy', select: 'fullName email' },
       { path: 'sharedTestData', select: 'name category data' },
     ],
@@ -86,7 +88,10 @@ const listCases = async (req, res) => {
 
 const getCase = async (req, res) => {
   const testCase = await getById(TestCase, req.params.id, [
-    { path: 'testSuite', select: 'name project' }, { path: 'userStory', select: 'title acceptanceCriteria' },
+    { path: 'testSuite', select: 'name project' },
+    { path: 'userStory linkedUserStories', select: 'title externalReference acceptanceCriteria' },
+    { path: 'linkedRequirements e2e.requirements', select: 'requirementId title scope' },
+    { path: 'linkedUseCases e2e.useCase', select: 'code name scope' },
     { path: 'sharedTestData' }, { path: 'createdBy', select: 'fullName email' },
   ]);
   await assertProjectAccess(req.user, testCase.testSuite.project);
@@ -102,16 +107,16 @@ const exportCases = async (req, res) => {
   if (requestedIds.some((id) => !mongoose.isValidObjectId(id))) throw new AppError('Danh sách Test Case không hợp lệ.', 400);
   const cases = await TestCase.find({ _id: { $in: requestedIds } })
     .populate('testSuite', 'name project')
-    .populate('userStory', 'title acceptanceCriteria')
-    .populate('e2e.useCase', 'name code')
-    .populate('e2e.requirements', 'requirementId title')
+    .populate('userStory linkedUserStories', 'title externalReference acceptanceCriteria')
+    .populate('e2e.useCase linkedUseCases', 'name code scope')
+    .populate('e2e.requirements linkedRequirements', 'requirementId title scope')
     .sort({ testCaseId: 1, createdAt: 1 })
     .lean();
   if (cases.length !== requestedIds.length) throw new AppError('Có Test Case không tồn tại hoặc không còn khả dụng.', 404);
   const projectIds = [...new Set(cases.map((item) => String(item.testSuite?.project || '')).filter(Boolean))];
   if (projectIds.length !== 1) throw new AppError('Một lần xuất chỉ bao gồm Test Case thuộc cùng một Project.', 400);
   await assertProjectAccess(req.user, projectIds[0]);
-  const output = await exportTestCases(await Promise.all(cases.map(resolveExportRuntime)));
+  const output = await exportTestCases(await resolveExportRuntime(cases));
   res.setHeader('Content-Type', output.mime);
   res.setHeader('Content-Disposition', 'attachment; filename="test-cases.xlsx"');
   res.send(output.buffer);
@@ -134,13 +139,13 @@ const updateCase = async (req, res) => {
   const editable = [
     'title', 'objective', 'description', 'preconditions', 'postconditions', 'testDesignTechniques', 'priority', 'type', 'estimatedTime',
     'testSteps', 'tags', 'testSuite', 'userStory', 'sharedTestData', 'targetUrl',
+    'module', 'feature', 'primaryTestBasis', 'linkedRequirements', 'linkedUserStories', 'linkedUseCases', 'coverageItems',
     'storyCoverage', 'generatedTestData', 'e2e',
   ];
   editable.forEach((key) => { if (req.body[key] !== undefined) testCase[key] = req.body[key]; });
-  if (['Approved', 'Active'].includes(testCase.status)) testCase.status = testCase.e2e?.systemProfile ? 'Draft' : 'NeedsReview';
+  if (['Approved', 'Active'].includes(testCase.status)) { testCase.status = testCase.e2e?.systemProfile ? 'Draft' : 'NeedsReview'; testCase.approvalException = undefined; }
   else if (testCase.status === 'Rejected') testCase.status = 'Draft';
   await testCase.save();
-  if (testCase.status === 'NeedsReview' || (testCase.e2e?.systemProfile && ['Approved', 'Active'].includes(req._auditBefore.status))) await markBoardItemNeedsReview({ testCaseId: testCase._id, actor: req.user._id });
   send(res, testCase);
 };
 
@@ -149,7 +154,7 @@ const deleteCase = async (req, res) => {
   const suite = await getById(TestSuite, testCase.testSuite);
   await assertProjectAccess(req.user, suite.project);
   req._auditBefore = testCase.toObject();
-  await Promise.all([ReviewRequest.deleteMany({ testCase: testCase._id }), BoardItem.deleteOne({ testCase: testCase._id }), testCase.deleteOne()]);
+  await Promise.all([ReviewRequest.deleteMany({ testCase: testCase._id }), testCase.deleteOne()]);
   send(res, { _id: testCase._id });
 };
 
@@ -206,10 +211,7 @@ const submitReview = async (req, res) => {
   const testCase = await getById(TestCase, req.params.id);
   const quality = evaluateTestCase(testCase);
   if (!quality.canApprove) throw new AppError(`Test Case chưa sẵn sàng gửi review. Cần bổ sung: ${quality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(quality));
-  if (!req.body.reviewer) throw new AppError('Vui lòng chọn QA Manager.', 400);
-  if (String(req.body.reviewer) === String(req.user._id) || String(req.body.reviewer) === String(testCase.createdBy)) {
-    throw new AppError('Người tạo hoặc người gửi không thể tự duyệt Test Case của mình.', 409);
-  }
+  if (!req.body.reviewer) throw new AppError('Vui lòng chọn một QA khác để review.', 400);
   if (await ReviewRequest.exists({ testCase: testCase._id, status: 'Pending' })) throw new AppError('Test Case đã có yêu cầu duyệt đang chờ.', 409);
   const [suite, reviewer] = await Promise.all([
     TestSuite.findById(testCase.testSuite),
@@ -220,66 +222,64 @@ const submitReview = async (req, res) => {
   const project = await Project.findById(suite.project);
   const membership = await ProjectMembership.findOne({ project: project._id, user: reviewer._id, isActive: true });
   const reviewerIsProjectMember = membership || project.lead?.equals(reviewer._id) || project.members.some((member) => member.equals(reviewer._id));
-  if (!reviewerIsProjectMember) throw new AppError('QA Manager phải là thành viên Project.', 409);
+  if (!reviewerIsProjectMember) throw new AppError('QA reviewer phải là thành viên Project.', 409);
   const reviewerWorkspaceRole = await getWorkspaceRole(reviewer, project.workspace);
   if (!reviewerWorkspaceRole) throw new AppError('Người duyệt phải là thành viên Workspace.', 409);
+  const approvalException = await authorizeArtifactApproval({ projectId: project._id, actorId: reviewer._id, creatorId: testCase.createdBy, responsibility: 'QA', reason: req.body.reviewNote });
 
-  const review = await ReviewRequest.create({ testCase: testCase._id, requestedBy: req.user._id, reviewer: reviewer._id, reviewNote: req.body.reviewNote || '' });
+  const review = await ReviewRequest.create({ testCase: testCase._id, requestedBy: req.user._id, reviewer: reviewer._id, reviewNote: req.body.reviewNote || '', approvalException });
   testCase.status = 'NeedsReview';
   await testCase.save();
-  await markBoardItemNeedsReview({ testCaseId: testCase._id, actor: req.user._id });
   await Notification.create({ type: 'ReviewRequested', title: 'Yêu cầu duyệt Test Case', message: `${req.user.fullName} yêu cầu bạn duyệt “${testCase.title}”.`, recipient: reviewer._id, sender: req.user._id, relatedEntity: { entityType: 'ReviewRequest', entityId: review._id }, link: `/studio/approvals` });
   send(res, review, 201);
 };
 
 const decideReview = async (req, res) => {
   const review = await getById(ReviewRequest, req.params.id);
-  if (String(review.reviewer) !== String(req.user._id)) throw new AppError('Yêu cầu này được giao cho QA Manager khác.', 403);
-  if (String(review.requestedBy) === String(req.user._id)) throw new AppError('Người gửi không thể tự duyệt Test Case của mình.', 409);
+  if (String(review.reviewer) !== String(req.user._id)) throw new AppError('Yêu cầu này được giao cho QA khác.', 403);
   if (review.status !== 'Pending') throw new AppError('Yêu cầu này đã được xử lý.', 409);
-  const approved = req.body.decision === 'Approved';
-  if (!approved && req.body.decision !== 'Rejected') throw new AppError('decision phải là Approved hoặc Rejected.', 400);
+  const decisionMap = { Approved: 'Approve', Rejected: 'Reject', RequestEdit: 'RequestEdit', ClarifyBasis: 'ClarifyBasis', InsufficientInformation: 'InsufficientInformation', RegenerateFailedArea: 'RegenerateFailedArea' };
+  const decisionType = decisionMap[req.body.decision];
+  const approved = decisionType === 'Approve';
+  if (!decisionType) throw new AppError('Quyết định review không hợp lệ.', 400);
   if (!approved && !req.body.reviewNote?.trim()) throw new AppError('Lý do từ chối là bắt buộc.', 400);
 
   const testCase = await getById(TestCase, review.testCase);
-  if (String(testCase.createdBy) === String(req.user._id)) throw new AppError('Người tạo không thể tự duyệt Test Case.', 409);
   const suite = await getById(TestSuite, testCase.testSuite);
   await assertProjectAccess(req.user, suite.project);
   if (approved) {
     const quality = evaluateTestCase(testCase);
     if (!quality.canApprove) throw new AppError(`Test Case chưa sẵn sàng duyệt. Cần bổ sung: ${quality.requiredMissing.map((field) => field.label).join(', ')}.`, 400, qualityErrorDetails(quality));
+    review.approvalException = await authorizeArtifactApproval({ projectId: suite.project, actorId: req.user._id, creatorId: testCase.createdBy, responsibility: 'QA', reason: review.approvalException?.reason || req.body.reviewNote });
   }
 
   const session = await mongoose.startSession();
-  let boardItem = null;
   try {
     await session.withTransaction(async () => {
       const currentReview = await ReviewRequest.findOne({ _id: review._id, status: 'Pending', reviewer: req.user._id }).session(session);
       if (!currentReview) throw new AppError('Yêu cầu không còn ở trạng thái Pending.', 409);
       const currentCase = await TestCase.findById(testCase._id).session(session);
-      currentReview.status = req.body.decision;
+      currentReview.status = approved ? 'Approved' : 'Rejected';
+      currentReview.decisionType = decisionType;
       currentReview.reviewNote = req.body.reviewNote || '';
       currentReview.reviewedAt = new Date();
+      currentReview.approvalException = review.approvalException;
       currentCase.status = approved ? 'Approved' : 'Rejected';
+      currentCase.approvalException = approved ? review.approvalException : undefined;
       await currentReview.save({ session });
       await currentCase.save({ session });
-      if (approved) {
-        boardItem = await upsertApprovedBoardItem({ testCase: currentCase, project: suite.project, reviewRequest: currentReview, actor: req.user._id, session });
-      } else {
-        boardItem = await BoardItem.findOne({ testCase: currentCase._id }).session(session);
-        if (boardItem) { boardItem.reviewState = 'Rejected'; await boardItem.save({ session }); }
-      }
     });
   } finally { await session.endSession(); }
 
-  review.status = req.body.decision;
+  review.status = approved ? 'Approved' : 'Rejected';
+  review.decisionType = decisionType;
   review.reviewNote = req.body.reviewNote || '';
   review.reviewedAt = new Date();
   testCase.status = approved ? 'Approved' : 'Rejected';
   if (!approved) await addKpiPoints({ user: review.requestedBy, project: suite.project, points: -5, reason: `Test Case bị từ chối: ${testCase.title}`, entityType: 'TestCase', entityId: testCase._id });
-  await Notification.create({ type: 'ReviewCompleted', title: approved ? 'Test Case đã được duyệt' : 'Test Case cần chỉnh sửa', message: req.body.reviewNote || `Kết quả: ${review.status}`, recipient: review.requestedBy, sender: req.user._id, relatedEntity: { entityType: 'ReviewRequest', entityId: review._id }, link: approved ? '/studio/board' : '/studio/ai-generator' });
-  await recordProjectActivity({ project: suite.project, actor: req.user._id, action: 'STATUS_CHANGED', entityType: 'TestCase', entityId: testCase._id, title: approved ? `Đã duyệt “${testCase.title}” và đưa vào Backlog` : `Đã từ chối “${testCase.title}”` });
-  send(res, { review, testCase, boardItem });
+  await Notification.create({ type: 'ReviewCompleted', title: approved ? 'Test Case đã được duyệt' : 'Test Case cần chỉnh sửa', message: req.body.reviewNote || `Kết quả: ${review.status}`, recipient: review.requestedBy, sender: req.user._id, relatedEntity: { entityType: 'ReviewRequest', entityId: review._id }, link: '/studio/ai-generator' });
+  await recordProjectActivity({ project: suite.project, actor: req.user._id, action: 'STATUS_CHANGED', entityType: 'TestCase', entityId: testCase._id, title: approved ? `Đã duyệt “${testCase.title}”` : `Đã từ chối “${testCase.title}”` });
+  send(res, { review, testCase });
 };
 
 module.exports = {

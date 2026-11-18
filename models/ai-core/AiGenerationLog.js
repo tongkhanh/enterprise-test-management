@@ -82,6 +82,7 @@ const aiGenerationLogSchema = new Schema(
           'WebAnalysis',
           'GenerateWebTestCase',
           'SuggestUserStory',
+          'ExtractUserStoriesFromDocument',
           'SuggestUserStoryFromGitHub',
           'RootCauseAnalysis',
           'SuggestSeverity',

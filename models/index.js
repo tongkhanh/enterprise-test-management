@@ -51,6 +51,8 @@ const DesignMockup = require('./requirements-docs/DesignMockup');
 const UserStoryDocument = require('./requirements-docs/UserStoryDocument');
 const RepositorySnapshot = require('./requirements-docs/RepositorySnapshot');
 const Requirement = require('./requirements-docs/Requirement');
+const DocumentImportBatch = require('./requirements-docs/DocumentImportBatch');
+const DerivedTestBasis = require('./requirements-docs/DerivedTestBasis');
 const SystemProfile = require('./e2e/SystemProfile');
 const UseCase = require('./e2e/UseCase');
 
@@ -62,6 +64,7 @@ const TestSuite = require('./test-design/TestSuite');
 const TestCase = require('./test-design/TestCase');
 const SharedTestData = require('./test-design/SharedTestData');
 const ReviewRequest = require('./test-design/ReviewRequest');
+const TechnicalReference = require('./test-design/TechnicalReference');
 
 // =============================================
 // Phân hệ 5: Thực thi & Tích hợp Tự động
@@ -143,6 +146,8 @@ module.exports = {
   UserStoryDocument,
   RepositorySnapshot,
   Requirement,
+  DocumentImportBatch,
+  DerivedTestBasis,
   SystemProfile,
   UseCase,
 
@@ -151,6 +156,7 @@ module.exports = {
   TestCase,
   SharedTestData,
   ReviewRequest,
+  TechnicalReference,
 
   // Phân hệ 5: Execution & Automation
   TestPlan,

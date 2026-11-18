@@ -31,6 +31,11 @@ const reviewRequestSchema = new Schema(
       default: '',
       // VD: "Test Case cần bổ sung thêm bước verify email"
     },
+    decisionType: {
+      type: String,
+      enum: ['Approve', 'RequestEdit', 'Reject', 'ClarifyBasis', 'InsufficientInformation', 'RegenerateFailedArea'],
+      default: undefined,
+    },
 
     submittedAt: {
       type: Date,
@@ -63,6 +68,10 @@ const reviewRequestSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: [true, 'Người duyệt là bắt buộc'],
+    },
+    approvalException: {
+      mode: { type: String, enum: ['Standard', 'OwnerFallback', 'SelfApproval'], default: 'Standard' },
+      reason: { type: String, default: '' }, responsibility: { type: String, enum: ['Business', 'QA'], default: 'QA' }, recordedAt: { type: Date, default: null },
     },
   },
   {

@@ -22,7 +22,7 @@ function rows(value, prefix = '') {
   return [[label(prefix), clean(value)]];
 }
 function resolvePdfFont() {
-  const candidates = [process.env.PDF_FONT_PATH, path.join(process.cwd(), 'assets', 'fonts', 'NotoSans-Regular.ttf'), 'C:\\Windows\\Fonts\\arial.ttf'].filter(Boolean);
+  const candidates = [process.env.PDF_FONT_PATH, path.join(__dirname, '..', 'assets', 'fonts', 'NotoSans-Regular.ttf'), '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 'C:\\Windows\\Fonts\\arial.ttf'].filter(Boolean);
   return candidates.find((item) => fs.existsSync(item)) || null;
 }
 const arrayText = (value) => Array.isArray(value) ? value.map((item) => typeof item === 'object' ? (item.criteria || item.name || JSON.stringify(item)) : item).filter(Boolean).join('\n') : clean(value);
@@ -34,10 +34,25 @@ const excelDocument = (sheets) => `<?xml version="1.0"?><Workbook xmlns="urn:sch
 const cellText = (value) => clean(value).slice(0, 32000);
 const caseId = (item, index) => cellText(item.testCaseId || `TC-${String(index + 1).padStart(3, '0')}`);
 const caseJourney = (item) => cellText(item.e2e?.journeyType || item.journeyType || 'Functional');
-const caseType = (item) => /negative|permission/i.test(caseJourney(item)) ? `Negative / ${caseJourney(item)}` : `Positive / ${caseJourney(item)}`;
+const caseType = (item) => {
+  const journey = caseJourney(item).toLowerCase();
+  if (journey.includes('permission') || journey.includes('security')) return 'Permission / Security';
+  if (journey.includes('integration')) return 'Integration';
+  if (journey.includes('boundary')) return 'Boundary';
+  if (journey.includes('negative') || journey.includes('recovery')) return 'Negative';
+  return 'Positive';
+};
 const generatedDataText = (item) => {
   if (!item.generatedTestData || typeof item.generatedTestData !== 'object') return cellText(item.generatedTestData || '');
   return Object.entries(item.generatedTestData).map(([key, value]) => `${key}: ${isSensitiveField(key) ? '[REDACTED]' : (typeof value === 'object' ? JSON.stringify(value) : cellText(value))}`).join('\n');
+};
+const functionalGroup = (item) => cellText(item.module || item.feature || item.primaryTestBasis?.title || item.e2e?.useCase?.scope || item.e2e?.useCase?.name || item.e2e?.requirements?.[0]?.scope?.name || item.e2e?.requirements?.[0]?.title || item.userStory?.labels?.[0] || item.userStory?.title || item.testSuite?.name || item.e2e?.systemProfile?.name || 'Test Cases');
+const safeSheetBase = (value) => String(value || 'Test Cases').replace(/[\\/?*:[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 31) || 'Test Cases';
+const uniqueSheetName = (value, used) => {
+  const base = safeSheetBase(value);
+  let name = base; let suffix = 2;
+  while (used.has(name.toLocaleLowerCase())) { const tail = ` (${suffix++})`; name = `${base.slice(0, 31 - tail.length)}${tail}`; }
+  used.add(name.toLocaleLowerCase()); return name;
 };
 function styleSheet(sheet, headers, widths) {
   sheet.columns = headers.map((header, index) => ({ header, key: `c${index}`, width: widths[index] || 22 }));
@@ -87,12 +102,38 @@ function testCaseWorkbook(title, artifact) {
 async function testCaseExecutionWorkbook(artifacts) {
   const cases = Array.isArray(artifacts) ? artifacts : [artifacts];
   const workbook = new ExcelJS.Workbook();
-
-  const casesSheet = workbook.addWorksheet('Test Cases');
-  styleSheet(casesSheet, ['Test Case ID', 'Test Suite', 'Use Case', 'User Story', 'Test Case Name', 'Objective', 'Preconditions', 'Postconditions', 'Type', 'Priority', 'Status', 'Estimated minutes', 'Target URL', 'Tags'], [18, 24, 26, 34, 42, 42, 40, 40, 18, 12, 16, 18, 34, 26]);
-  appendSheetRows(casesSheet, cases.map((item, index) => [
-    caseId(item, index), cellText(item.testSuite?.name || item.testSuite || ''), cellText(item.e2e?.useCase?.name || item.e2e?.useCase || ''), cellText(item.userStory?.title || item.userStory || ''), cellText(item.title), cellText(item.objective), cellText(item.preconditions), cellText(item.postconditions), caseType(item), cellText(item.priority || 'Medium'), cellText(item.status || 'Draft'), Number(item.estimatedTime) || 0, cellText(item.targetUrl), arrayText(item.tags),
-  ]));
+  const grouped = new Map();
+  cases.forEach((item, index) => { const group = functionalGroup(item); if (!grouped.has(group)) grouped.set(group, []); grouped.get(group).push({ item, index }); });
+  const usedNames = new Set(['summary & coverage', 'steps', 'test data', 'traceability', 'lists']);
+  const summarySheet = workbook.addWorksheet('Summary & Coverage');
+  styleSheet(summarySheet, ['Functional group from Project', 'Test Cases', 'Primary test basis', 'Coverage status'], [44, 16, 80, 22]);
+  appendSheetRows(summarySheet, [...grouped.entries()].map(([group, entries]) => [group, entries.length, [...new Set(entries.map(({ item }) => `${item.primaryTestBasis?.basisType || item.generatedFrom || 'Test Basis'} · ${item.primaryTestBasis?.code || item.primaryTestBasis?.title || 'Chưa ghi mã'}`))].join('\n'), entries.every(({ item }) => (item.coverageItems || item.storyCoverage || []).length) ? 'Có truy vết' : 'Cần rà soát']));
+  const caseSheets = [];
+  const headers = ['Test Case ID', 'Module / Feature', 'Requirement / User Story', 'Use Case ID', 'Test Case Name', 'Objective', 'Preconditions', 'Steps', 'Test Data', 'Expected Result', 'Type', 'Priority', 'Design Status', 'Environment / Target URL', 'Actual Result', 'Execution Status', 'Bug ID', 'Executed By', 'Execution Date'];
+  const widths = [18, 24, 34, 18, 42, 38, 38, 48, 30, 48, 20, 14, 16, 38, 34, 18, 20, 20, 18];
+  for (const [group, entries] of grouped.entries()) {
+    const sheet = workbook.addWorksheet(uniqueSheetName(group, usedNames));
+    caseSheets.push(sheet); styleSheet(sheet, headers, widths);
+    appendSheetRows(sheet, entries.map(({ item, index }) => [
+      caseId(item, index), functionalGroup(item),
+      cellText([...(item.linkedRequirements || item.e2e?.requirements || []).map((requirement) => requirement?.requirementId ? `${requirement.requirementId} · ${requirement.title || ''}` : requirement), ...(item.linkedUserStories || (item.userStory ? [item.userStory] : [])).map((story) => story?.externalReference?.externalId ? `${story.externalReference.externalId} · ${story.title || ''}` : story?.title || story)].filter(Boolean).join('\n')),
+      cellText((item.linkedUseCases || (item.e2e?.useCase ? [item.e2e.useCase] : [])).map((useCase) => useCase?.code ? `${useCase.code} · ${useCase.name || ''}` : useCase).join('\n')),
+      cellText(item.title), cellText(item.objective), cellText(item.preconditions),
+      (item.testSteps || []).map((step, stepIndex) => `${step.stepNumber || stepIndex + 1}. ${cellText(step.action)}`).join('\n'),
+      generatedDataText(item) || (item.testSteps || []).map((step) => cellText(step.testData)).filter(Boolean).join('\n'),
+      (item.testSteps || []).map((step, stepIndex) => `${step.stepNumber || stepIndex + 1}. ${cellText(step.expectedResult)}`).join('\n'),
+      caseType(item), cellText(item.priority || 'Medium'), cellText(item.status || 'Draft'), cellText(item.targetUrl), '', 'Not Run', '', '', '',
+    ]));
+    sheet.getRow(1).eachCell((header) => { header.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF111827' } }; header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4CCCC' } }; });
+    for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+      sheet.getCell(rowNumber, 11).dataValidation = { type: 'list', allowBlank: true, formulae: ['Lists!$A$2:$A$6'] };
+      sheet.getCell(rowNumber, 12).dataValidation = { type: 'list', allowBlank: false, formulae: ['Lists!$B$2:$B$5'] };
+      sheet.getCell(rowNumber, 16).dataValidation = { type: 'list', allowBlank: false, formulae: ['Lists!$C$2:$C$6'] };
+      const priorityColors = { Critical: 'FFF4CCCC', High: 'FFFCE5CD', Medium: 'FFFFF2CC', Low: 'FFD9EAD3' };
+      const priorityCell = sheet.getCell(rowNumber, 12); if (priorityColors[priorityCell.value]) priorityCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: priorityColors[priorityCell.value] } };
+      sheet.getRow(rowNumber).height = 54;
+    }
+  }
 
   const stepsSheet = workbook.addWorksheet('Steps');
   styleSheet(stepsSheet, ['Test Case ID', 'Step', 'Action', 'Expected Result', 'Test Data', 'DSL Action', 'Locator', 'Value'], [18, 9, 48, 48, 28, 18, 38, 28]);
@@ -114,16 +155,33 @@ async function testCaseExecutionWorkbook(artifacts) {
   appendSheetRows(traceSheet, cases.flatMap((item, caseIndex) => {
     const id = caseId(item, caseIndex);
     return [
-      ...(item.e2e?.requirements || []).map((requirement) => [id, 'Customer requirement', cellText(requirement?.requirementId ? `${requirement.requirementId} · ${requirement.title || ''}` : requirement)]),
-      [id, 'Use Case', cellText(item.e2e?.useCase?.name || item.e2e?.useCase || '')],
-      [id, 'User Story', cellText(item.userStory?.title || item.userStory || '')],
-      ...(item.storyCoverage || []).map((criterion, index) => [id, `Acceptance Criteria ${index + 1}`, cellText(criterion)]),
+      [id, 'Primary test basis', cellText(`${item.primaryTestBasis?.basisType || item.generatedFrom || ''} · ${item.primaryTestBasis?.code || ''} · ${item.primaryTestBasis?.title || ''}`)],
+      ...(item.linkedRequirements || item.e2e?.requirements || []).map((requirement) => [id, 'Requirement', cellText(requirement?.requirementId ? `${requirement.requirementId} · ${requirement.title || ''}` : requirement)]),
+      ...(item.linkedUseCases || (item.e2e?.useCase ? [item.e2e.useCase] : [])).map((useCase) => [id, 'Use Case', cellText(useCase?.code ? `${useCase.code} · ${useCase.name || ''}` : useCase)]),
+      ...(item.linkedUserStories || (item.userStory ? [item.userStory] : [])).map((story) => [id, 'User Story', cellText(story?.externalReference?.externalId ? `${story.externalReference.externalId} · ${story.title || ''}` : story?.title || story)]),
+      ...(item.coverageItems || item.storyCoverage || []).map((criterion, index) => [id, `Coverage item ${index + 1}`, cellText(criterion)]),
       ...(item.testDesignTechniques || []).map((technique) => [id, 'Test design technique', cellText(technique)]),
       ...(item.tags || []).map((tag) => [id, 'Tag', cellText(tag)]),
       [id, 'Setup', arrayText(item.e2e?.setup)],
       [id, 'Cleanup', arrayText(item.e2e?.cleanup)],
     ].filter((entry) => entry[2]);
   }));
+
+  const listsSheet = workbook.addWorksheet('Lists');
+  styleSheet(listsSheet, ['Type', 'Priority', 'Execution Status'], [28, 18, 22]);
+  appendSheetRows(listsSheet, [
+    ['Positive', 'Critical', 'Not Run'],
+    ['Negative', 'High', 'Passed'],
+    ['Boundary', 'Medium', 'Failed'],
+    ['Permission / Security', 'Low', 'Blocked'],
+    ['Integration', '', 'Skipped'],
+  ]);
+  listsSheet.state = 'veryHidden';
+  caseSheets.forEach((sheet) => sheet.addConditionalFormatting({ ref: `P2:P${Math.max(2, sheet.rowCount)}`, rules: [
+    { type: 'containsText', operator: 'containsText', text: 'Passed', style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFC6EFCE' } } } },
+    { type: 'containsText', operator: 'containsText', text: 'Failed', style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFFC7CE' } } } },
+    { type: 'containsText', operator: 'containsText', text: 'Blocked', style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFCE5CD' } } } },
+  ] }));
 
   return writeXlsx(workbook);
 }
@@ -148,20 +206,22 @@ async function genericDocx(title, artifact) {
   return Packer.toBuffer(new Document({ sections: [{ children }] }));
 }
 function pdf(title, rowsToExport) {
-  const chunks = []; const document = new PDFDocument({ size: 'A4', margin: 44, info: { Title: title, Author: 'Enterprise Test Management System' } });
   const font = resolvePdfFont();
+  if (!font) throw new Error('Không tìm thấy font Unicode cho PDF. Cài fonts-dejavu-core hoặc cấu hình PDF_FONT_PATH.');
+  const chunks = []; const document = new PDFDocument({ size: 'A4', margin: 44, info: { Title: title, Author: 'Enterprise Test Management System' } });
   document.on('data', (chunk) => chunks.push(chunk));
-  if (font) document.font(font); else document.font('Helvetica');
+  document.font(font);
   document.fontSize(18).fillColor('#172554').text(title);
   document.moveDown(0.25).fontSize(9).fillColor('#64748b').text(`Xuất lúc: ${new Date().toLocaleString('vi-VN')}`);
   document.moveDown(0.8);
   for (const [field, value] of rowsToExport) {
-    if (document.y > 730) document.addPage();
-    if (font) document.font(font); else document.font('Helvetica-Bold');
-    document.fontSize(10).fillColor('#1e293b').text(String(field), { width: 150, continued: true });
-    if (font) document.font(font); else document.font('Helvetica');
-    document.fillColor('#334155').text(`  ${String(value)}`, { width: 350 });
-    document.moveDown(0.25);
+    const width = document.page.width - document.page.margins.left - document.page.margins.right;
+    document.fontSize(10);
+    const labelHeight = document.heightOfString(String(field), { width });
+    if (document.y + labelHeight + 28 > document.page.height - document.page.margins.bottom) document.addPage();
+    document.fillColor('#172554').text(String(field), document.page.margins.left, document.y, { width });
+    document.moveDown(0.15).fillColor('#334155').text(String(value), document.page.margins.left, document.y, { width });
+    document.moveDown(0.6);
   }
   return new Promise((resolve, reject) => {
     document.once('end', () => resolve(Buffer.concat(chunks)));

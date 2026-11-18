@@ -3,14 +3,17 @@ const c = require('../controllers/executionController');
 const { protect } = require('../middleware/auth');
 const { authorize, authorizeWorkspaceList } = require('../middleware/rbac');
 const { asyncHandler, auditLog } = require('../middleware/error');
+const { uploadTestPlanDocument } = require('../middleware/documentUpload');
 
 router.post('/automation/webhook', asyncHandler(c.automationWebhook));
 router.use(['/test-plans', '/test-runs', '/test-executions', '/automation-results', '/automation', '/integrations'], protect);
 router.get('/integrations/jira/status', authorize('bug:create', 'bug:manage', 'execution:execute'), asyncHandler(c.jiraIntegrationStatus));
 router.get('/test-plans', authorizeWorkspaceList('execution:execute'), asyncHandler(c.listPlans));
+router.get('/test-plans/approval-inbox', authorizeWorkspaceList('execution:execute'), asyncHandler(c.listPlanApprovals));
 router.post('/test-plans', authorize('execution:manage'), auditLog('CREATE', 'TestPlan'), asyncHandler(c.createPlan));
 router.post('/test-plans/suggest', authorize('execution:manage', 'execution:execute'), auditLog('CREATE', 'TestPlan'), asyncHandler(c.suggestPlan));
 router.post('/test-plans/suggest-from-requirements', authorize('execution:manage', 'execution:execute'), asyncHandler(c.suggestPlanFromRequirements));
+router.post('/test-plans/import-document', authorize('execution:manage', 'execution:execute'), uploadTestPlanDocument, auditLog('ANALYZE', 'TestPlan'), asyncHandler(c.importPlanDocument));
 router.post('/test-plans/export-preview', authorize('execution:execute', 'execution:manage', 'report:read'), asyncHandler(c.exportPlanPreview));
 router.patch('/test-plans/:id/decision', authorize('execution:manage'), auditLog('APPROVE', 'TestPlan'), asyncHandler(c.decidePlan));
 router.post('/test-plans/from-approved', authorize('execution:manage', 'execution:execute'), auditLog('CREATE', 'TestPlan'), asyncHandler(c.createPlanFromApproved));
