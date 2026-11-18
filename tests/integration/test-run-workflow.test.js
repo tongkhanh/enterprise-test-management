@@ -73,14 +73,16 @@ test('a Test Run records manual results and runs the reviewed script while retai
     // Document drafts persist before there is any runtime Environment.
     const draftProfile = await m.SystemProfile.create({ project: project._id, name: 'Document scope', mode: 'SystemProfile', createdBy: owner._id });
     const story = await m.UserStory.create({ project: project._id, title: 'Login', description: 'Login to Products', approvalStatus: 'Approved', acceptanceCriteria: [{ criteria: 'Given login When valid Then Products' }], e2e: { systemProfile: draftProfile._id }, createdBy: owner._id });
+    draftProfile.workflow.testBasisSelection = { requirements: [], useCases: [], userStories: [story._id], scopeSummary: 'Login', confirmed: true, confirmedBy: owner._id, confirmedAt: new Date() };
+    await draftProfile.save();
     const feature = await request('/test-plans', 'POST', { project: project._id, systemProfile: draftProfile._id, userStories: [story._id], kind: 'TestPlan', name: 'Saved Feature draft', approvalStatus: 'Draft' }, 201);
     assert.equal(feature.approvalStatus, 'Draft');
     assert.equal((await m.TestPlan.findById(feature._id)).name, 'Saved Feature draft');
     await request(`/test-plans/${feature._id}`, 'PATCH', { name: 'Corrected draft', testData: 'Public test data', approvalStatus: 'Draft' });
     assert.equal((await m.TestPlan.findById(feature._id)).testData, 'Public test data');
     await request(`/test-plans/${feature._id}`, 'PATCH', { approvalStatus: 'PendingApproval' }, 400);
-    await request(`/test-plans/${feature._id}`, 'PATCH', { approvalStatus: 'Approved' }, 409);
-    const submitted = await request(`/test-plans/${feature._id}`, 'PATCH', { scope: 'Login', objectives: ['Products'], testStrategy: 'Functional', entryCriteria: ['Approved story'], exitCriteria: ['Results recorded'], environment: 'Select runtime before execution', approvalStatus: 'PendingApproval' });
+    await request(`/test-plans/${feature._id}`, 'PATCH', { approvalStatus: 'Approved' }, 400);
+    const submitted = await request(`/test-plans/${feature._id}`, 'PATCH', { scope: 'Login', objectives: ['Products'], testStrategy: 'Functional', entryCriteria: ['Approved story'], exitCriteria: ['Results recorded'], testLevels: ['System'], testTypes: ['Functional'], coverageTargets: ['Acceptance Criteria'], environment: 'Select runtime before execution', approvalStatus: 'PendingApproval' });
     assert.equal(submitted.approvalStatus, 'PendingApproval');
     assert.equal(await m.TestPlan.countDocuments({ systemProfile: draftProfile._id }), 1);
     const environment = await m.TestEnvironment.create({ project: project._id, name: 'Test staging', targetUrl: url, status: 'Ready', autoAnalyze: false, createdBy: owner._id });
@@ -92,8 +94,12 @@ test('a Test Run records manual results and runs the reviewed script while retai
     const ExcelJS = require('exceljs');
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(Buffer.from(await exportResponse.arrayBuffer()));
-    assert.equal(workbook.getWorksheet('Test Cases').getCell('M2').value, url);
-    assert.ok(!(await m.TestCase.findById(testCase._id)).targetUrl);
+    const exportedCases = workbook.getWorksheet('Login Suite');
+    assert.ok(exportedCases, 'The workbook should group the exported case by its Project test suite.');
+    const storedTestCase = await m.TestCase.findById(testCase._id);
+    assert.match(String(exportedCases.getCell('A2').value), /^TC-/);
+    assert.ok(workbook.getWorksheet('Summary & Coverage'));
+    assert.ok(!storedTestCase.targetUrl);
     const plan = await m.TestPlan.create({ name: 'Execution Plan', project: project._id, kind: 'ExecutionPlan', approvalStatus: 'Approved', createdBy: owner._id, testCases: [testCase._id] });
     const manual = await request('/test-runs', 'POST', { testPlan: plan._id, name: 'Manual run' }, 201);
     const auto = await request('/test-runs', 'POST', { testPlan: plan._id, name: 'Auto run' }, 201);

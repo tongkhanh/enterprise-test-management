@@ -743,7 +743,7 @@ const jiraIntegrationStatus = async (_req, res) => send(res, getJiraStatus());
 module.exports = {
   exportPlanPreview,
   listPlans, listPlanApprovals, createPlan, suggestPlan, suggestPlanFromRequirements, importPlanDocument, decidePlan, updatePlan, exportPlan, deletePlan, listRuns, createRun, updateRun, getRun,
-  createPlanFromApproved, executeAutomatedRun,
+  createPlanFromApproved, executeAutomatedRun, executeReviewedScript,
   recordExecution, automationWebhook, listAutomationResults,
   runAutomatedTestCase, getAutomationJob, cancelAutomation, downloadAutomationArtifact, triageAutomationResult,
   jiraIntegrationStatus,
