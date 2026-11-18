@@ -4,6 +4,15 @@ const { AppError, assertObjectId } = require('../utils/http');
 const { ROLE_NAMES, WORKSPACE_ROLE_PERMISSIONS } = require('../config/roles');
 
 const systemRoleNameOf = (user) => user?.role?.name || user?.role;
+const acceptedInvitationMembershipUpdate = (invitation, extra = {}) => ({
+  $setOnInsert: {
+    role: invitation.role,
+    invitedBy: invitation.invitedBy,
+    isActive: true,
+    joinedAt: invitation.acceptedAt || new Date(),
+  },
+  ...extra,
+});
 
 // Invitations accepted by older application versions can exist without their
 // corresponding membership documents.  Reconcile them lazily for the invited
@@ -21,19 +30,19 @@ const reconcileAcceptedInvitationMemberships = async (user) => {
 
   await Promise.all(workspaceInvitations.map((invitation) => WorkspaceMembership.updateOne(
     { workspace: invitation.workspace, user: user._id },
-    { $set: { role: invitation.role, invitedBy: invitation.invitedBy, isActive: true, joinedAt: invitation.acceptedAt || new Date() } },
+    acceptedInvitationMembershipUpdate(invitation),
     { upsert: true },
   )));
 
   await Promise.all(projectInvitations.flatMap((invitation) => [
     WorkspaceMembership.updateOne(
       { workspace: invitation.workspace, user: user._id },
-      { $set: { role: invitation.role, invitedBy: invitation.invitedBy, isActive: true, joinedAt: invitation.acceptedAt || new Date() } },
+      acceptedInvitationMembershipUpdate(invitation),
       { upsert: true },
     ),
     ProjectMembership.updateOne(
       { project: invitation.project, user: user._id },
-      { $set: { role: invitation.role, invitedBy: invitation.invitedBy, isActive: true, joinedAt: invitation.acceptedAt || new Date() }, ...(invitation.team ? { $addToSet: { teams: invitation.team } } : {}) },
+      acceptedInvitationMembershipUpdate(invitation, invitation.team ? { $addToSet: { teams: invitation.team } } : {}),
       { upsert: true },
     ),
     Project.updateOne({ _id: invitation.project }, { $addToSet: { members: user._id } }),
@@ -130,6 +139,9 @@ const assertWorkspaceAccess = async (user, workspaceId, options = {}) => {
     ? ROLE_NAMES.OWNER
     : (await WorkspaceMembership.findOne({ workspace: workspace._id, user: user._id, isActive: true }).select('role'))?.role;
   if (!role) throw new AppError('Bạn không phải thành viên Workspace này.', 403);
+  if (Array.isArray(options.roles) && options.roles.length && !options.roles.includes(role)) {
+    throw new AppError(`Chỉ ${options.roles.join(', ')} mới có quyền thực hiện thao tác này trong Workspace.`, 403);
+  }
   // Roles are responsibility labels, not capability gates.  Membership is
   // still required above; permission checks below preserve Project scope.
   if (options.permission && !workspaceRoleHasPermission(role, options.permission)) {
@@ -250,6 +262,7 @@ module.exports = {
   workspaceRoleHasPermission,
   assertWorkspaceAccess,
   getAccessibleWorkspaceIds,
+  acceptedInvitationMembershipUpdate,
   reconcileAcceptedInvitationMemberships,
   getProjectWorkspace,
   resolveWorkspaceIdFromRequest,

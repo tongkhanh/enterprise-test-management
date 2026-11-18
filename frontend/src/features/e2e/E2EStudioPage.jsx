@@ -16,6 +16,8 @@ import {
   FileCheck2,
   FileCode2,
   FileText,
+  Library,
+  Link2,
   GitBranch,
   Layers3,
   PlayCircle,
@@ -24,6 +26,7 @@ import {
   Settings2,
   Sparkles,
   TestTube2,
+  UploadCloud,
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -67,6 +70,7 @@ const blankUseCase = {
   specialRequirements: "",
   summary: "",
   actor: "",
+  secondaryActors: "",
   trigger: "",
   preconditions: "",
   mainFlow: "",
@@ -157,6 +161,7 @@ export default function E2EStudioPage() {
   );
   const [useCase, setUseCase] = useState(blankUseCase);
   const [caseTarget, setCaseTarget] = useState({
+    requirementId: "",
     useCaseId: "",
     storyId: "",
     suiteId: "",
@@ -218,7 +223,7 @@ export default function E2EStudioPage() {
       qc.setQueryData(["system-profiles", activeProject], (current = []) => [result, ...current.filter((item) => item._id !== result._id)]);
       setSelectedProfile(result._id);
       setActiveStep("requirement");
-      setCaseTarget({ useCaseId: "", storyId: "", suiteId: "" });
+      setCaseTarget({ requirementId: "", useCaseId: "", storyId: "", suiteId: "" });
       setUseCase(blankUseCase);
       toast.success(`Đã bắt đầu đợt ${result.workflow?.runNumber || "mới"}. Tài liệu cũ vẫn được giữ nguyên.`);
       qc.invalidateQueries({ queryKey: ["system-profiles", activeProject] });
@@ -307,11 +312,9 @@ export default function E2EStudioPage() {
       String(currentProfile?._id || ""),
   );
   const scopedSuites = { ...suites, data: currentSuites };
-  const reviewers = (members.data || []).filter(
-    (item) =>
-      item.projectRole === "QA_Manager" &&
-      String(item._id) !== String(user?._id),
-  );
+  // Show every Project member so the Workspace Owner can be selected as the
+  // documented fallback. The backend still enforces the approval policy.
+  const reviewers = members.data || [];
   useEffect(() => {
     if (search.get("mode") === "github") {
       // The QA workflow keeps one Project scope/profile and attaches GitHub
@@ -432,7 +435,7 @@ export default function E2EStudioPage() {
     onSuccess: (result) => {
       toast.success(
         result._e2eFallback
-          ? `Gemini đã hết quota: đã tạo ${result.length} Use Case E2E nháp theo Profile`
+          ? `Gemini đang quá tải: đã tạo ${result.length} Use Case nháp từ Requirement đã Baseline`
           : `Gemini đã tạo ${result.length} Use Case nháp`,
       );
       qc.invalidateQueries({ queryKey: ["use-cases"] });
@@ -447,6 +450,7 @@ export default function E2EStudioPage() {
         reference,
         systemProfile: currentProfile._id,
         stakeholders: lines(useCase.stakeholders),
+        secondaryActors: lines(useCase.secondaryActors),
         specialRequirements: lines(useCase.specialRequirements),
         preconditions: lines(useCase.preconditions),
         mainFlow: lines(useCase.mainFlow),
@@ -465,13 +469,22 @@ export default function E2EStudioPage() {
     onError: (error) => toast.error(error.message),
   });
   const approveUseCase = useMutation({
-    mutationFn: (id) =>
+    mutationFn: ({ id, reviewNote }) =>
       e2eApi.decideUseCase(id, {
         decision: "Approved",
-        reviewNote: "Use Case E2E đã được QA Manager duyệt.",
+        reviewNote,
       }),
     onSuccess: () => {
       toast.success("Đã duyệt Use Case");
+      qc.invalidateQueries({ queryKey: ["use-cases"] });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const approveUseCases = useMutation({
+    mutationFn: ({ ids, reviewNote }) => e2eApi.decideUseCasesBulk({ ids, decision: "Approved", reviewNote }),
+    onSuccess: (result) => {
+      const summary = result.summary || {};
+      toast.success(`Đã duyệt ${summary.succeeded || 0}/${summary.requested || 0} Use Case.`);
       qc.invalidateQueries({ queryKey: ["use-cases"] });
     },
     onError: (error) => toast.error(error.message),
@@ -481,7 +494,7 @@ export default function E2EStudioPage() {
     onSuccess: (result) => {
       toast.success(
         result._e2eFallback
-          ? "Gemini đã hết quota: đã tạo User Story E2E nháp"
+          ? "Gemini đang quá tải: đã tạo User Story nháp từ Use Case đã duyệt"
           : "Gemini đã tạo User Story E2E nháp để bạn chỉnh sửa",
       );
       qc.invalidateQueries({ queryKey: ["e2e-stories"] });
@@ -502,7 +515,7 @@ export default function E2EStudioPage() {
       return requirementApi.submitApproval(id);
     },
     onSuccess: () => {
-      toast.success("Đã gửi User Story để PO/BA xác nhận nghiệp vụ");
+      toast.success("Đã gửi User Story để Business Owner xác nhận nghiệp vụ");
       qc.invalidateQueries({ queryKey: ["e2e-stories"] });
     },
     onError: (error) => toast.error(error.message),
@@ -556,34 +569,34 @@ export default function E2EStudioPage() {
     onError: (error) => toast.error(error.message),
   });
   const generateCases = useMutation({
-    mutationFn: () => {
-      const body = {
-        userStoryId: caseTarget.storyId,
-        testSuiteId: caseTarget.suiteId,
-        testPlanId: (plans.data || []).find(
-          (item) =>
-            item.kind === "TestPlan" &&
-            item.approvalStatus === "Approved" &&
-            String(item.systemProfile?._id || item.systemProfile) ===
-              String(currentProfile?._id) &&
-            (item.userStories || []).some(
-              (id) => String(id._id || id) === String(caseTarget.storyId),
-            ),
-        )?._id,
-      };
-      return caseTarget.useCaseId
-        ? e2eApi.generateCases(caseTarget.useCaseId, body)
-        : e2eApi.generateCasesFromStory(caseTarget.storyId, {
-            testSuiteId: body.testSuiteId,
-            testPlanId: body.testPlanId,
+    mutationFn: async (request) => {
+      const requestedTargets = Array.isArray(request) ? request : request?.targets;
+      const fallbackTarget = caseTarget.requirementId ? { kind: "requirement", id: caseTarget.requirementId } : caseTarget.storyId ? { kind: "story", id: caseTarget.storyId } : { kind: "usecase", id: caseTarget.useCaseId };
+      const targets = Array.isArray(requestedTargets) && requestedTargets.length ? requestedTargets : [fallbackTarget];
+      const generated = [];
+      const failures = [];
+      for (const target of targets) {
+        try {
+          const plan = (plans.data || []).find((item) => {
+            if (item.kind !== "TestPlan" || item.approvalStatus !== "Approved") return false;
+            if (String(item.systemProfile?._id || item.systemProfile) !== String(currentProfile?._id)) return false;
+            const ids = target.kind === "requirement" ? item.requirements : target.kind === "story" ? item.userStories : item.useCases;
+            return (ids || []).some((id) => String(id?._id || id) === String(target.id));
           });
+          if (!plan?._id) throw new Error("Không tìm thấy Test Plan đã duyệt chứa nguồn này.");
+          const body = { testSuiteId: caseTarget.suiteId || undefined, testPlanId: plan._id, generationConfig: request?.generationConfig, references: request?.references, environmentContext: request?.environmentContext };
+          const result = target.kind === "requirement" ? await e2eApi.generateCasesFromRequirement(target.id, body) : target.kind === "usecase" ? await e2eApi.generateCases(target.id, body) : await e2eApi.generateCasesFromStory(target.id, body);
+          generated.push(...result);
+        } catch (error) {
+          failures.push({ ...target, message: error.message || "Không thể sinh Test Case." });
+        }
+      }
+      return { generated, failures, requested: targets.length, succeeded: targets.length - failures.length };
     },
     onSuccess: (result) => {
-      toast.success(
-        result._e2eFallback
-          ? `Gemini đã hết quota: đã tạo ${result.length} Test Case E2E nháp`
-          : `Gemini đã tạo ${result.length} E2E Test Case Draft`,
-      );
+      if (result.generated.length) toast.success(`Đã tạo ${result.generated.length} Test Case Draft từ ${result.succeeded}/${result.requested} nguồn.`);
+      if (result.failures.length) toast.error(`${result.failures.length} nguồn chưa sinh được`, { description: result.failures.slice(0, 3).map((item) => item.message).join(" · ") });
+      if (!result.generated.length && !result.failures.length) toast.info("Không còn nguồn nào cần sinh Test Case.");
       qc.invalidateQueries({ queryKey: ["e2e-cases"] });
     },
     onError: (error) => toast.error(error.message),
@@ -595,38 +608,13 @@ export default function E2EStudioPage() {
   });
   const submitCase = useMutation({
     mutationFn: ({ id, body }) => testCaseApi.submitReview(id, body),
-    onSuccess: () => {
-      toast.success("Đã gửi Test Case cho QA Manager");
+    onSuccess: (_, variables) => {
+      if (!variables?.silent) toast.success("Đã gửi Test Case cho QA review");
       qc.invalidateQueries({ queryKey: ["e2e-cases"] });
     },
-    onError: (error) => toast.error(error.message),
-  });
-  const suggestPlan = useMutation({
-    mutationFn: () =>
-      executionApi.suggestPlan({
-        project: activeProject,
-        testCaseIds: currentCases
-          .filter((item) => item.status === "Approved")
-          .map((item) => item._id),
-        environment: currentProfile?.baseUrl || "Staging",
-      }),
-    onSuccess: () => {
-      toast.success("Đã tạo Test Plan E2E");
-      qc.invalidateQueries({ queryKey: ["e2e-plans"] });
+    onError: (error, variables) => {
+      if (!variables?.silent) toast.error(error.message);
     },
-    onError: (error) => toast.error(error.message),
-  });
-  const approvePlan = useMutation({
-    mutationFn: (id) =>
-      executionApi.decidePlan(id, {
-        decision: "Approved",
-        reviewNote: "Test Plan E2E đã được QA Manager duyệt.",
-      }),
-    onSuccess: () => {
-      toast.success("Đã duyệt Test Plan E2E");
-      qc.invalidateQueries({ queryKey: ["e2e-plans"] });
-    },
-    onError: (error) => toast.error(error.message),
   });
   const download = async (request, fileName) => {
     try {
@@ -648,7 +636,7 @@ export default function E2EStudioPage() {
     setProfileEditor("create");
     setProfileMode("SystemProfile");
     setProfile(emptyProfile());
-    setCaseTarget({ useCaseId: "", storyId: "", suiteId: "" });
+    setCaseTarget({ requirementId: "", useCaseId: "", storyId: "", suiteId: "" });
     setUseCase(blankUseCase);
   };
   const selectProfile = (id) => {
@@ -661,7 +649,7 @@ export default function E2EStudioPage() {
     setProfileMode(item.mode || "SystemProfile");
     setProfile(profileToForm(item));
     setActiveStep(item.workflow?.lastStep || "requirement");
-    setCaseTarget({ useCaseId: "", storyId: "", suiteId: "" });
+    setCaseTarget({ requirementId: "", useCaseId: "", storyId: "", suiteId: "" });
     setUseCase(blankUseCase);
   };
   useEffect(() => {
@@ -745,6 +733,7 @@ export default function E2EStudioPage() {
         suggestUseCases,
         addUseCase,
         approveUseCase,
+        approveUseCases,
         generateStory,
         currentStories,
         user,
@@ -769,6 +758,7 @@ export default function E2EStudioPage() {
       }}
     />
   );
+  /* Legacy six-step workspace retained temporarily for migration reference.
   const steps = [
     {
       id: "profile",
@@ -971,6 +961,7 @@ export default function E2EStudioPage() {
       )}
     </div>
   );
+  */
 }
 
 function ProfileStep({
@@ -1175,6 +1166,7 @@ function JourneyStep({
   suggestUseCases,
   addUseCase,
   approveUseCase,
+  approveUseCases,
   generateStory,
   selectProfile,
   download,
@@ -1194,6 +1186,7 @@ function JourneyStep({
         suggestUseCases,
         addUseCase,
         approveUseCase,
+        approveUseCases,
         generateStory,
         download,
       }}
@@ -1386,7 +1379,7 @@ function JourneyStep({
                   {item.status !== "Approved" ? (
                     <Button
                       size="sm"
-                      onClick={() => approveUseCase.mutate(item._id)}
+                      onClick={() => { const reviewNote = window.prompt("Ghi chú duyệt; nếu tự duyệt hãy nêu lý do Project không có Business Owner khác (tối thiểu 10 ký tự):"); if (reviewNote?.trim()) approveUseCase.mutate({ id: item._id, reviewNote: reviewNote.trim() }); }}
                       disabled={approveUseCase.isPending}
                     >
                       <Check className="h-3.5 w-3.5" />
@@ -1505,9 +1498,22 @@ function AcademicJourneyWorkspace({
   suggestUseCases,
   addUseCase,
   approveUseCase,
+  approveUseCases,
   generateStory,
   download,
 }) {
+  const [selectedUseCaseIds, setSelectedUseCaseIds] = useState([]);
+  const listedUseCases = useCases.data || [];
+  const selectableUseCases = listedUseCases.filter((item) => item.status !== "Approved");
+  const allUseCasesSelected = selectableUseCases.length > 0 && selectableUseCases.every((item) => selectedUseCaseIds.includes(item._id));
+  const toggleUseCase = (id) => setSelectedUseCaseIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
+  const toggleAllUseCases = () => setSelectedUseCaseIds((current) => allUseCasesSelected ? current.filter((id) => !selectableUseCases.some((item) => item._id === id)) : [...new Set([...current, ...selectableUseCases.map((item) => item._id)])]);
+  const approveSelectedUseCases = () => {
+    if (!selectedUseCaseIds.length) return;
+    if (!window.confirm(`Duyệt ${selectedUseCaseIds.length} Use Case đã chọn? Các mục không đạt Quality Gate sẽ được báo lỗi riêng.`)) return;
+    const reviewNote = window.prompt("Ghi chú duyệt hàng loạt; nếu có mục tự duyệt hãy nêu lý do Project không có Business Owner khác (tối thiểu 10 ký tự):");
+    if (reviewNote?.trim()) approveUseCases?.mutate({ ids: selectedUseCaseIds, reviewNote: reviewNote.trim() }, { onSuccess: () => setSelectedUseCaseIds([]) });
+  };
   const textFields = [
     [
       "stakeholders",
@@ -1671,10 +1677,13 @@ function AcademicJourneyWorkspace({
           </Button>
         </div>
         <div className="mt-5 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2 dark:border-violet-900 dark:bg-violet-950/20"><label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200"><input type="checkbox" checked={allUseCasesSelected} onChange={toggleAllUseCases} disabled={!selectableUseCases.length} className="h-4 w-4 accent-violet-600" />Chọn các Use Case chưa duyệt</label>{selectedUseCaseIds.length > 0 && <div className="flex items-center gap-2"><span className="text-xs font-semibold text-violet-700 dark:text-violet-300">Đã chọn {selectedUseCaseIds.length}</span><Button size="sm" onClick={approveSelectedUseCases} disabled={approveUseCases?.isPending}><Check className="h-3.5 w-3.5" />{approveUseCases?.isPending ? "Đang duyệt…" : `Duyệt ${selectedUseCaseIds.length} mục`}</Button><button type="button" className="text-xs font-semibold text-slate-500 hover:text-violet-700" onClick={() => setSelectedUseCaseIds([])}>Bỏ chọn</button></div>}</div>
           {(useCases.data || []).map((item) => (
             <article key={item._id} className="rounded-xl border p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
+                <div className="flex min-w-0 items-start gap-3">
+                  <input type="checkbox" aria-label={`Chọn ${item.code || item.name}`} checked={selectedUseCaseIds.includes(item._id)} disabled={item.status === "Approved"} onChange={() => toggleUseCase(item._id)} className="mt-1 h-4 w-4 shrink-0 accent-violet-600" />
+                  <div>
                   <div className="flex flex-wrap gap-2">
                     <Badge tone={statusTone[item.status]}>{item.status}</Badge>
                     <Badge tone="purple">{item.risk}</Badge>
@@ -1685,12 +1694,13 @@ function AcademicJourneyWorkspace({
                     {item.scope || "Chưa khai báo phạm vi"} ·{" "}
                     {item.level || "User-goal"} · Actor: {item.actor}
                   </p>
+                  </div>
                 </div>
                 <div className="flex shrink-0 gap-2">
                   {item.status !== "Approved" ? (
                     <Button
                       size="sm"
-                      onClick={() => approveUseCase.mutate(item._id)}
+                      onClick={() => { const reviewNote = window.prompt("Ghi chú duyệt; nếu tự duyệt hãy nêu lý do Project không có Business Owner khác (tối thiểu 10 ký tự):"); if (reviewNote?.trim()) approveUseCase.mutate({ id: item._id, reviewNote: reviewNote.trim() }); }}
                       disabled={approveUseCase.isPending}
                     >
                       <Check className="h-3.5 w-3.5" />
@@ -1826,7 +1836,6 @@ function StoryStep({
           <StoryDraftCard
             key={`${item._id}-${item.updatedAt || ""}`}
             item={item}
-            currentUser={user}
             updateStory={updateStory}
             submitStory={submitStory}
             download={download}
@@ -1852,16 +1861,12 @@ function StoryStep({
 }
 function StoryDraftCard({
   item,
-  currentUser,
   updateStory,
   submitStory,
   qaReviewStory,
   download,
 }) {
   const [open, setOpen] = useState(false);
-  const isOwner =
-    String(item.createdBy?._id || item.createdBy || "") ===
-    String(currentUser?._id || "");
   // An approved AI story can be reopened by its requester.  Saving changes
   // returns it to Draft and sends it through QA approval again.
   const editable = ["Draft", "Rejected", "Approved"].includes(
@@ -1905,7 +1910,7 @@ function StoryDraftCard({
             </Badge>
             {item.source === "AI" && <Badge tone="purple">AI suggestion</Badge>}
             {item.source === "ImportedDocument" && <Badge tone="blue">Tài liệu User Story</Badge>}
-            <Badge tone={item.businessApprovalStatus === "BusinessConfirmed" ? "green" : item.businessApprovalStatus === "BusinessRejected" ? "red" : item.businessApprovalStatus === "PendingBusinessConfirmation" ? "amber" : "slate"}>Nghiệp vụ: {item.businessApprovalStatus === "BusinessConfirmed" ? "đã xác nhận" : item.businessApprovalStatus === "PendingBusinessConfirmation" ? "chờ PO/BA" : item.businessApprovalStatus === "BusinessRejected" ? "từ chối" : "chưa xác nhận"}</Badge>
+            <Badge tone={item.businessApprovalStatus === "BusinessConfirmed" ? "green" : item.businessApprovalStatus === "BusinessRejected" ? "red" : item.businessApprovalStatus === "PendingBusinessConfirmation" ? "amber" : "slate"}>Nghiệp vụ: {item.businessApprovalStatus === "BusinessConfirmed" ? "đã xác nhận" : item.businessApprovalStatus === "PendingBusinessConfirmation" ? "chờ Business Owner" : item.businessApprovalStatus === "BusinessRejected" ? "từ chối" : "chưa xác nhận"}</Badge>
             <Badge tone={item.qaTestabilityStatus === "Testable" ? "green" : item.qaTestabilityStatus === "NeedsClarification" ? "amber" : "slate"}>QA: {item.qaTestabilityStatus === "Testable" ? "có thể test" : item.qaTestabilityStatus === "NeedsClarification" ? "cần làm rõ" : "chưa rà soát"}</Badge>
             <DocumentQualityBadge quality={item.quality} />
           </div>
@@ -2015,7 +2020,7 @@ function StoryDraftCard({
                 >
                   Lưu nháp
                 </Button>
-                {item.businessApprovalStatus === "BusinessConfirmed" ? <><Button variant="outline" disabled={invalid || qaReviewStory?.isPending} onClick={() => { const reviewNote = window.prompt("Nội dung QA cần PO/BA làm rõ:"); if (reviewNote?.trim()) qaReviewStory?.mutate({ id: item._id, decision: "NeedsClarification", reviewNote }) }}>QA yêu cầu làm rõ</Button><Button disabled={invalid || qaReviewStory?.isPending} onClick={() => qaReviewStory?.mutate({ id: item._id, decision: "Testable", reviewNote: "QA đã rà soát mô tả và Acceptance Criteria; User Story đủ điều kiện thiết kế kiểm thử." })}><Check className="h-4 w-4" />QA xác nhận có thể test</Button></> : <Button disabled={invalid || updateStory.isPending || submitStory.isPending || item.businessApprovalStatus === "PendingBusinessConfirmation"} onClick={() => submitStory.mutate({ id: item._id, body: body() })}><Check className="h-4 w-4" />{item.businessApprovalStatus === "PendingBusinessConfirmation" ? "Đang chờ PO/BA" : "Gửi PO/BA xác nhận"}</Button>}
+                {item.businessApprovalStatus === "BusinessConfirmed" ? <><Button variant="outline" disabled={invalid || qaReviewStory?.isPending} onClick={() => { const reviewNote = window.prompt("Nội dung QA cần Business Owner làm rõ:"); if (reviewNote?.trim()) qaReviewStory?.mutate({ id: item._id, decision: "NeedsClarification", reviewNote }) }}>QA yêu cầu làm rõ</Button><Button disabled={invalid || qaReviewStory?.isPending} onClick={() => { const reviewNote = window.prompt("Ghi chú xác nhận; nếu tự duyệt hãy nêu lý do Project không có QA khác (tối thiểu 10 ký tự):"); if (reviewNote?.trim()) qaReviewStory?.mutate({ id: item._id, decision: "Testable", reviewNote: reviewNote.trim() }); }}><Check className="h-4 w-4" />QA xác nhận có thể test</Button></> : <Button disabled={invalid || updateStory.isPending || submitStory.isPending || item.businessApprovalStatus === "PendingBusinessConfirmation"} onClick={() => submitStory.mutate({ id: item._id, body: body() })}><Check className="h-4 w-4" />{item.businessApprovalStatus === "PendingBusinessConfirmation" ? "Đang chờ Business Owner" : "Gửi Business Owner xác nhận"}</Button>}
               </div>
             </div>
           </div>
@@ -2060,11 +2065,11 @@ function StoryDraftCard({
 function TestCaseStep({
   currentProfile,
   useCases,
+  requirements,
   currentStories,
-  suites,
+  designPlan,
   caseTarget,
   setCaseTarget,
-  createSuite,
   generateCases,
   currentCases,
   reviewers,
@@ -2074,137 +2079,331 @@ function TestCaseStep({
   download,
   setActiveStep,
 }) {
+  const [generationMode, setGenerationMode] = useState(() => (caseTarget?.requirementId || caseTarget?.storyId || caseTarget?.useCaseId) ? "single" : "uncovered");
+  const [selectedGroup, setSelectedGroup] = useState("");
+  const [generationConfig, setGenerationConfig] = useState({ generationMode: "logic", polarity: "both", detailLevel: "Standard", techniques: ["Equivalence Partitioning", "Boundary Value Analysis"], includeSecurity: false, includeAccessibility: false });
+  const [reference, setReference] = useState({ type: "", title: "", url: "", version: "", notes: "" });
+  const [references, setReferences] = useState([]);
+  const [referenceMode, setReferenceMode] = useState("upload");
+  const [selectedLibraryReferenceId, setSelectedLibraryReferenceId] = useState("");
+  const technicalReferenceInputRef = useRef(null);
+  const sourceSelectionRef = useRef(null);
+  const [environmentContext, setEnvironmentContext] = useState({ applicationType: "", browsers: "", operatingSystems: "", devices: "", technicalConstraints: "" });
+  const [planDetailTab, setPlanDetailTab] = useState("scope");
+  const projectId = currentProfile?.project?._id || currentProfile?.project || "";
+  const technicalReferencesQuery = useQuery({ queryKey: ["technical-references", projectId, currentProfile?._id], queryFn: () => e2eApi.technicalReferences(projectId, currentProfile?._id), enabled: Boolean(projectId && currentProfile?._id) });
+  const attachReference = (item) => setReferences((current) => current.some((entry) => String(entry._id || "") === String(item._id || "") || (entry.type === item.type && entry.url && entry.url === item.url)) ? current : [...current, item]);
+  const resetReferenceDraft = () => setReference({ type: "", title: "", url: "", version: "", notes: "" });
+  const uploadTechnicalReference = useMutation({
+    mutationFn: (file) => e2eApi.uploadTechnicalReference(projectId, currentProfile?._id, reference, file),
+    onSuccess: (item) => { attachReference(item); resetReferenceDraft(); technicalReferencesQuery.refetch(); toast.success("Đã tải và gắn tài liệu kỹ thuật cho lần sinh này."); },
+    onError: (error) => toast.error("Không thể tải tài liệu kỹ thuật", { description: error.message }),
+  });
+  const createTechnicalReferenceLink = useMutation({
+    mutationFn: () => e2eApi.createTechnicalReferenceLink({ project: projectId, systemProfile: currentProfile?._id, type: reference.type, title: reference.title, version: reference.version, url: reference.url }),
+    onSuccess: (item) => { attachReference(item); resetReferenceDraft(); technicalReferencesQuery.refetch(); toast.success("Đã kiểm tra và gắn liên kết tài liệu."); },
+    onError: (error) => toast.error("Không thể thêm liên kết", { description: error.message }),
+  });
   if (!currentProfile) return <ProfileRequired />;
   const approvedUseCases = (useCases.data || []).filter(
     (item) => item.status === "Approved",
   );
-  const approvedStories = currentStories.filter(
-    (item) => item.approvalStatus === "Approved" &&
-      (!caseTarget.useCaseId || String(item.e2e?.useCase?._id || item.e2e?.useCase || "") === String(caseTarget.useCaseId)),
+  const approvedRequirements = (requirements?.data || []).filter((item) => item.status === "Baselined");
+  const approvedStories = currentStories.filter((item) => item.approvalStatus === "Approved" && item.businessApprovalStatus === "BusinessConfirmed" && item.qaTestabilityStatus === "Testable");
+  const selectedBasis = caseTarget.requirementId ? `requirement:${caseTarget.requirementId}` : caseTarget.storyId ? `story:${caseTarget.storyId}` : caseTarget.useCaseId ? `usecase:${caseTarget.useCaseId}` : "";
+  const planHas = (field, id) => (designPlan?.[field] || []).some((value) => String(value?._id || value) === String(id));
+  const plannedRequirements = approvedRequirements.filter((item) => planHas("requirements", item._id));
+  const plannedStories = approvedStories.filter((item) => planHas("userStories", item._id));
+  const plannedUseCases = approvedUseCases.filter((item) => planHas("useCases", item._id));
+  const featureFor = (kind, item) => {
+    if (kind === "requirement") return item.scope?.name || item.title || "Chưa phân nhóm";
+    if (kind === "usecase") return item.scope || item.name || "Chưa phân nhóm";
+    const linkedUseCaseId = item.e2e?.useCase || item.e2e?.useCases?.[0];
+    const linkedUseCase = plannedUseCases.find((entry) => String(entry._id) === String(linkedUseCaseId));
+    const linkedRequirementId = item.parentRequirements?.[0]?._id || item.parentRequirements?.[0] || item.e2e?.requirements?.[0]?._id || item.e2e?.requirements?.[0];
+    const linkedRequirement = plannedRequirements.find((entry) => String(entry._id) === String(linkedRequirementId));
+    return linkedUseCase?.scope || linkedUseCase?.name || linkedRequirement?.scope?.name || item.labels?.[0] || item.title || "Chưa phân nhóm";
+  };
+  const basisEntries = [
+    ...plannedRequirements.map((item) => ({ kind: "requirement", id: item._id, item, label: `Requirement · ${item.requirementId} · ${item.title}`, group: featureFor("requirement", item) })),
+    ...plannedStories.map((item) => ({ kind: "story", id: item._id, item, label: `User Story · ${item.externalReference?.externalId ? `${item.externalReference.externalId} · ` : ""}${item.title}`, group: featureFor("story", item) })),
+    ...plannedUseCases.map((item) => ({ kind: "usecase", id: item._id, item, label: `Use Case · ${item.code} · ${item.name}`, group: featureFor("usecase", item) })),
+  ];
+  const compactTargets = (entries) => {
+    const selected = []; const represented = new Set();
+    entries.filter((entry) => entry.kind === "usecase").forEach((entry) => { selected.push(entry); represented.add(String(entry.id)); (entry.item.requirements || []).forEach((value) => represented.add(String(value?._id || value))); (entry.item.userStories || []).forEach((value) => represented.add(String(value?._id || value))); });
+    entries.filter((entry) => entry.kind === "story" && !represented.has(String(entry.id))).forEach((entry) => { selected.push(entry); represented.add(String(entry.id)); [...(entry.item.parentRequirements || []), ...(entry.item.e2e?.requirements || [])].forEach((value) => represented.add(String(value?._id || value))); });
+    entries.filter((entry) => entry.kind === "requirement" && !represented.has(String(entry.id))).forEach((entry) => selected.push(entry));
+    return selected.map(({ kind, id }) => ({ kind, id }));
+  };
+  const groups = [...new Set(basisEntries.map((entry) => entry.group))].sort((left, right) => left.localeCompare(right, "vi"));
+  const coverageKey = (value) => String(value || "").normalize("NFKC").toLocaleLowerCase("vi").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const basisCriteria = (entry) => entry.kind === "requirement"
+    ? (entry.item.acceptanceCriteria || []).map((item) => String(item?.criteria || item || "").trim()).filter(Boolean)
+    : entry.kind === "story"
+      ? (entry.item.acceptanceCriteria || []).map((item) => String(item?.criteria || item || "").trim()).filter(Boolean)
+      : ((entry.item.postconditions || []).length ? entry.item.postconditions : entry.item.mainFlow || []).map((item) => String(item || "").trim()).filter(Boolean);
+  const caseBasisIds = (item) => [item.primaryTestBasis?.basisId, ...(item.linkedRequirements || []), ...(item.e2e?.requirements || []), ...(item.linkedUserStories || []), item.userStory, ...(item.linkedUseCases || []), item.e2e?.useCase].map((value) => String(value?._id || value || "")).filter(Boolean);
+  const caseCoverageText = (item) => coverageKey([...(item.coverageItems || item.storyCoverage || []), item.title, item.objective, item.description, ...(item.testSteps || []).flatMap((step) => [step.action, step.expectedResult])].filter(Boolean).join(" "));
+  const covered = new Set(basisEntries.filter((entry) => {
+    const relatedCases = currentCases.filter((item) => caseBasisIds(item).includes(String(entry.id)));
+    if (!relatedCases.length) return false;
+    const criteria = basisCriteria(entry);
+    if (!criteria.length) return true;
+    return criteria.every((criterion) => relatedCases.some((item) => caseCoverageText(item).includes(coverageKey(criterion))));
+  }).map((entry) => String(entry.id)));
+  const singleTargets = selectedBasis ? [{ kind: selectedBasis.split(":")[0], id: selectedBasis.split(":")[1] }] : [];
+  const generationTargets = generationMode === "single" ? singleTargets : generationMode === "feature" ? compactTargets(basisEntries.filter((entry) => entry.group === selectedGroup)) : compactTargets(basisEntries.filter((entry) => !covered.has(String(entry.id))));
+  const validSelection = Boolean(
+    (caseTarget.requirementId && approvedRequirements.some((item) => item._id === caseTarget.requirementId) && planHas("requirements", caseTarget.requirementId)) ||
+    (caseTarget.storyId && approvedStories.some((item) => item._id === caseTarget.storyId) && planHas("userStories", caseTarget.storyId)) ||
+    (caseTarget.useCaseId && approvedUseCases.some((item) => item._id === caseTarget.useCaseId) && planHas("useCases", caseTarget.useCaseId)),
   );
-  const suiteItems = suites.data || [];
-  const validSelection =
-    approvedStories.some((item) => item._id === caseTarget.storyId) &&
-    suiteItems.some((item) => item._id === caseTarget.suiteId && item.quality?.canApprove !== false) &&
-    (!caseTarget.useCaseId || approvedUseCases.some((item) => item._id === caseTarget.useCaseId));
-  const projectId = currentProfile.project?._id || currentProfile.project;
+  const generationSelectionReady = generationMode === "single" ? validSelection : generationTargets.length > 0;
+  const generationBlockedReason = generationMode === "single"
+    ? (!selectedBasis ? "Bạn chưa chọn nguồn chính trong Test Plan." : !validSelection ? "Nguồn đã chọn không còn hợp lệ hoặc chưa được xác nhận trong Test Plan." : "")
+    : generationMode === "feature"
+      ? (!selectedGroup ? "Bạn chưa chọn nhóm chức năng cần sinh Test Case." : !generationTargets.length ? "Nhóm chức năng này không có Test Basis hợp lệ trong Test Plan." : "")
+      : (!generationTargets.length ? "Tất cả Test Basis trong Test Plan đã có Test Case truy vết." : "");
+  const requestCaseGeneration = () => {
+    if (!generationSelectionReady) {
+      sourceSelectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      toast.error("Chưa thể sinh Test Case", { description: generationBlockedReason });
+      return;
+    }
+    generateCases.mutate({ targets: generationTargets, generationConfig: { ...generationConfig, scopeMode: generationMode }, references, environmentContext: { applicationType: environmentContext.applicationType, browsers: lines(environmentContext.browsers), operatingSystems: lines(environmentContext.operatingSystems), devices: lines(environmentContext.devices), technicalConstraints: environmentContext.technicalConstraints } });
+  };
+  const planTestTypes = designPlan?.testTypes || [];
+  const planTypeText = planTestTypes.join(" ").toLocaleLowerCase("vi");
+  const requiredReferenceGroups = [
+    { active: /(^|\W)ui(\W|$)|user interface|giao diện/.test(planTypeText), type: "UI", accepted: ["Figma/Wireframe", "UI Image"], label: "Figma/wireframe hoặc ảnh giao diện" },
+    { active: /(^|\W)api(\W|$)|web service|rest|graphql/.test(planTypeText), type: "API", accepted: ["OpenAPI/Postman"], label: "OpenAPI hoặc Postman" },
+    { active: /database|(^|\W)db(\W|$)|data integrity|cơ sở dữ liệu/.test(planTypeText), type: "Database", accepted: ["Database Schema"], label: "Database schema" },
+    { active: /integration|interface|tích hợp/.test(planTypeText), type: "Integration", accepted: ["Architecture", "BPMN/Flowchart", "OpenAPI/Postman"], label: "đặc tả interface hoặc architecture" },
+    { active: generationConfig.includeSecurity, type: "Security", accepted: ["Regulation/Standard", "Architecture"], label: "tiêu chuẩn bảo mật hoặc architecture" },
+    { active: generationConfig.includeAccessibility, type: "Accessibility", accepted: ["Regulation/Standard", "Figma/Wireframe"], label: "tiêu chuẩn accessibility hoặc thiết kế UI" },
+  ].filter((item) => item.active);
+  const referenceTypes = new Set(references.map((item) => item.type));
+  const missingReferenceGroups = requiredReferenceGroups.filter((group) => !group.accepted.some((type) => referenceTypes.has(type)));
+  const withTechnicalContext = generationConfig.generationMode === "technicalContext";
+  const technicalContextProvided = Object.values(environmentContext).some((value) => String(value || "").trim());
+  const readinessBlocked = false;
+  const readinessHasAssumptions = missingReferenceGroups.length > 0 || (withTechnicalContext && !technicalContextProvided);
+  const readiness = readinessBlocked
+    ? { title: "Thiếu dữ liệu quan trọng", tone: "border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-900 dark:bg-rose-950/20 dark:text-rose-100" }
+    : readinessHasAssumptions
+      ? { title: "Có thể sinh nhưng còn giả định", tone: "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100" }
+      : { title: "Đủ dữ liệu", tone: "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-100" };
+  const inheritedPlanStats = [
+    { label: "Test level", value: (designPlan?.testLevels || []).length },
+    { label: "Test type", value: planTestTypes.length },
+    { label: "Coverage", value: (designPlan?.coverageTargets || []).length },
+    { label: "Product risk", value: (designPlan?.risks || []).length + (designPlan?.riskMatrix || []).length },
+  ];
+  const planRisks = [
+    ...(designPlan?.risks || []).map((item) => ({ ...item, source: "Risk" })),
+    ...(designPlan?.riskMatrix || []).map((item) => ({ ...item, source: "Risk matrix" })),
+  ];
+  const planDetailTabs = [
+    { id: "scope", label: "Phạm vi" },
+    { id: "levels", label: `Test level (${(designPlan?.testLevels || []).length})` },
+    { id: "types", label: `Test type (${planTestTypes.length})` },
+    { id: "coverage", label: `Coverage (${(designPlan?.coverageTargets || []).length})` },
+    { id: "risks", label: `Rủi ro (${planRisks.length})` },
+  ];
+  const recentCases = [...currentCases].sort((left, right) => new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0)).slice(0, 5);
+  const exportGroups = [...currentCases.reduce((groupsMap, item) => {
+    const group = String(item.module || item.feature || item.primaryTestBasis?.title || item.e2e?.useCase?.scope || item.e2e?.useCase?.name || item.e2e?.requirements?.[0]?.scope?.name || item.e2e?.requirements?.[0]?.title || item.userStory?.labels?.[0] || item.userStory?.title || "Chưa phân nhóm").trim();
+    groupsMap.set(group, (groupsMap.get(group) || 0) + 1);
+    return groupsMap;
+  }, new Map()).entries()].sort(([left], [right]) => left.localeCompare(right, "vi"));
+  const caseLibraryUrl = `/documents?${new URLSearchParams({ project: String(projectId || ""), profile: String(currentProfile._id || ""), type: "Test Case" }).toString()}`;
   return (
     <Card className="p-5">
       <SectionTitle
-        title="Bộ kiểm thử E2E"
-        description="User Story đã được PO/BA và QA xác nhận là đầu vào bắt buộc. Use Case chỉ là ngữ cảnh tùy chọn khi Story thuộc một hành trình."
+        title="Thiết kế Test Case"
+        description="Chọn một nguồn chính, một nhóm chức năng của Project hoặc toàn bộ phần chưa có coverage. Hệ thống tự bổ sung các Requirement, User Story và Use Case đã liên kết."
       />
-      <div className="mt-5 grid gap-4 rounded-xl bg-slate-50 p-4 md:grid-cols-3 dark:bg-slate-900">
-        <div>
-          <Field label="1. Use Case (tùy chọn)">
-            <Select
-              value={caseTarget.useCaseId}
-              disabled={!approvedUseCases.length}
-              onChange={(event) =>
-                setCaseTarget({
-                  ...caseTarget,
-                  useCaseId: event.target.value,
-                  storyId: "",
-                })
-              }
-            >
-              <option value="">Không gắn Use Case · kiểm thử trực tiếp theo User Story</option>
-              {approvedUseCases.map((item) => (
-                <option key={item._id} value={item._id}>
-                  {item.code} · {item.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <p className="mt-1 text-xs text-slate-500">
-            Chỉ chọn khi User Story thực sự thuộc một hành trình đã duyệt.
-          </p>
-          {!approvedUseCases.length && <p className="mt-1 text-xs text-slate-500">Không có Use Case vẫn có thể thiết kế Test Case trực tiếp từ User Story.</p>}
+      <div ref={sourceSelectionRef} className="mt-5 scroll-mt-24 rounded-xl bg-slate-50 p-4 dark:bg-slate-900">
+        <div className="grid gap-2 sm:grid-cols-3">
+          {[["uncovered", "Toàn bộ nguồn chưa bao phủ", "Một lần sinh cho tất cả Test Basis chưa có Test Case"], ["feature", "Một nhóm chức năng", "Sinh hàng loạt theo module/feature thực tế"], ["single", "Một nguồn cụ thể", "Thiết kế hoặc bổ sung riêng một nguồn chính"]].map(([value, title, description]) => <button key={value} type="button" onClick={() => setGenerationMode(value)} className={`rounded-xl border p-3 text-left transition ${generationMode === value ? "border-violet-500 bg-violet-50 ring-1 ring-violet-200 dark:bg-violet-950/30" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950"}`}><span className="flex items-center justify-between gap-2 text-sm font-semibold">{title}{value === "uncovered" && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Khuyến nghị</span>}</span><span className="mt-1 block text-xs text-slate-500">{description}</span></button>)}
         </div>
-        <div>
-          <Field label="2. User Story">
-            <Select
-              value={caseTarget.storyId}
-              disabled={!approvedStories.length}
-              onChange={(event) =>
-                setCaseTarget({ ...caseTarget, storyId: event.target.value })
-              }
-            >
-              <option value="">Chọn yêu cầu đã duyệt</option>
-              {approvedStories.map((item) => (
-                <option key={item._id} value={item._id}>
-                  {item.title}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <p className="mt-1 text-xs text-slate-500">
-            Chỉ hiển thị Story đã được PO/BA xác nhận nghiệp vụ và QA xác nhận khả năng kiểm thử.
-          </p>
-          {!approvedStories.length && (
-            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
-              Chưa có yêu cầu phù hợp trong Test Plan đã duyệt.{" "}
-              <button
-                type="button"
-                className="font-semibold underline"
-                onClick={() => setActiveStep("story")}
-              >
-                Mở User Story
-              </button>{" "}
-              hoặc{" "}
-              <button
-                type="button"
-                className="font-semibold underline"
-                onClick={() => setActiveStep("plan")}
-              >
-                Test Plan
-              </button>
-              .
-            </p>
-          )}
+        {generationMode === "single" && <div className={`mt-4 rounded-xl border p-3 ${!selectedBasis ? "border-amber-300 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20" : "border-transparent"}`}><Field label="Nguồn chính trong Test Plan *">
+          <Select value={selectedBasis} onChange={(event) => { const [kind, id = ""] = event.target.value.split(":"); setCaseTarget({ requirementId: kind === "requirement" ? id : "", storyId: kind === "story" ? id : "", useCaseId: kind === "usecase" ? id : "", suiteId: "" }); }}>
+            <option value="">Chọn Requirement, User Story hoặc Use Case</option>
+            {basisEntries.map((entry) => <option key={`${entry.kind}-${entry.id}`} value={`${entry.kind}:${entry.id}`}>{entry.label}</option>)}
+          </Select>
+        </Field>{!selectedBasis && <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">Chọn một Requirement, User Story hoặc Use Case đã được xác nhận để làm phạm vi chính.</p>}</div>}
+        {generationMode === "feature" && <div className="mt-4"><Field label="Nhóm chức năng được suy ra từ tài liệu Project"><Select value={selectedGroup} onChange={(event) => setSelectedGroup(event.target.value)}><option value="">Chọn nhóm chức năng</option>{groups.map((group) => <option key={group} value={group}>{group} · {basisEntries.filter((entry) => entry.group === group).length} test basis</option>)}</Select></Field></div>}
+        {generationMode === "uncovered" && <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/20 dark:text-sky-100"><p><strong>{generationTargets.length}</strong>/{basisEntries.length} Test Basis trong Test Plan chưa có Test Case truy vết.</p><p className="mt-1 text-xs leading-5">Chỉ cần bấm một lần. Hệ thống lần lượt xử lý toàn bộ nguồn, vẫn giữ nguồn chính và traceability riêng cho từng bộ Test Case; một nguồn lỗi không làm dừng các nguồn còn lại.</p></div>}
+        <p className="mt-2 text-xs text-slate-500">Mỗi lần xử lý vẫn có một nguồn chính. Requirement, User Story và Use Case liên quan được tự động đưa vào làm ngữ cảnh bổ sung và lưu traceability nhiều-nhiều.</p>
+        <details className="group mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 text-sm dark:border-emerald-900 dark:bg-emerald-950/20">
+          <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 p-4">
+            <div><p className="font-semibold text-emerald-900 dark:text-emerald-100">Đã kế thừa Test Plan được duyệt</p><p className="mt-0.5 text-xs text-emerald-700 dark:text-emerald-300">AI tự áp dụng phạm vi, loại kiểm thử, coverage và rủi ro.</p></div>
+            <div className="flex flex-wrap items-center justify-end gap-1.5">{inheritedPlanStats.map((item) => <span key={item.label} className="rounded-full border border-emerald-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{item.label}: {item.value}</span>)}<span className="ml-1 text-xs font-semibold text-emerald-700 group-open:hidden dark:text-emerald-300">Xem chi tiết ▾</span><span className="ml-1 hidden text-xs font-semibold text-emerald-700 group-open:inline dark:text-emerald-300">Thu gọn ▴</span></div>
+          </summary>
+          <div className="border-t border-emerald-200 p-4 dark:border-emerald-900">
+            <div className="flex gap-2 overflow-x-auto pb-2">{planDetailTabs.map((tab) => <button key={tab.id} type="button" onClick={(event) => { event.preventDefault(); setPlanDetailTab(tab.id); }} className={`whitespace-nowrap rounded-lg border px-3 py-2 text-xs font-semibold transition ${planDetailTab === tab.id ? "border-emerald-600 bg-emerald-600 text-white" : "border-emerald-200 bg-white text-emerald-800 hover:border-emerald-400 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"}`}>{tab.label}</button>)}</div>
+            <div className="mt-3 rounded-xl border border-emerald-100 bg-white/80 p-4 text-sm text-slate-800 dark:border-emerald-900 dark:bg-slate-950/30 dark:text-slate-100">
+              {planDetailTab === "scope" && <div className="space-y-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Phạm vi kiểm thử</p><p className="mt-1 whitespace-pre-wrap leading-6">{designPlan?.scope || "Chưa khai báo"}</p></div>{(designPlan?.outOfScope || []).length > 0 && <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ngoài phạm vi</p><div className="mt-2 space-y-2">{designPlan.outOfScope.map((item, index) => <div key={`${item}-${index}`} className="rounded-lg border border-slate-200 px-3 py-2 leading-5 dark:border-slate-700"><span className="mr-2 font-semibold text-emerald-700 dark:text-emerald-300">{index + 1}.</span>{item}</div>)}</div></div>}</div>}
+              {planDetailTab === "levels" && <div><p className="mb-3 text-xs text-slate-500">Các cấp kiểm thử được Test Plan phê duyệt.</p><div className="flex flex-wrap gap-2">{(designPlan?.testLevels || []).length ? designPlan.testLevels.map((item, index) => <span key={`${item}-${index}`} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100">{item}</span>) : <span>Chưa khai báo</span>}</div></div>}
+              {planDetailTab === "types" && <div><p className="mb-3 text-xs text-slate-500">Toàn bộ loại kiểm thử AI phải tuân theo khi thiết kế Test Case.</p><div className="flex flex-wrap gap-2">{planTestTypes.length ? planTestTypes.map((item, index) => <span key={`${item}-${index}`} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-100">{item}</span>) : <span>Chưa khai báo</span>}</div></div>}
+              {planDetailTab === "coverage" && <div><p className="mb-3 text-xs text-slate-500">Mỗi mục tiêu được giữ nguyên nội dung từ Test Plan đã duyệt.</p><div className="space-y-2">{(designPlan?.coverageTargets || []).length ? designPlan.coverageTargets.map((item, index) => <div key={`${item}-${index}`} className="grid grid-cols-[2rem_1fr] gap-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3 leading-6 dark:border-amber-900 dark:bg-amber-950/20"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-100 text-xs font-bold text-amber-800 dark:bg-amber-900 dark:text-amber-100">{index + 1}</span><p className="whitespace-pre-wrap">{item}</p></div>) : <span>Chưa khai báo</span>}</div></div>}
+              {planDetailTab === "risks" && <div><p className="mb-3 text-xs text-slate-500">Rủi ro, tác động, phương án giảm thiểu và người phụ trách được hiển thị đầy đủ nếu Test Plan có khai báo.</p><div className="space-y-3">{planRisks.length ? planRisks.map((item, index) => <article key={`${item.risk}-${index}`} className="rounded-lg border border-rose-200 bg-rose-50/50 p-3 dark:border-rose-900 dark:bg-rose-950/20"><div className="flex items-start gap-2"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-rose-100 text-xs font-bold text-rose-800 dark:bg-rose-900 dark:text-rose-100">{index + 1}</span><div className="min-w-0"><p className="font-semibold leading-6">{item.risk || "Chưa ghi tên rủi ro"}</p><div className="mt-2 grid gap-2 text-xs sm:grid-cols-3">{item.impact && <p><strong>Tác động:</strong> {item.impact}</p>}{item.mitigation && <p><strong>Giảm thiểu:</strong> {item.mitigation}</p>}{item.owner && <p><strong>Phụ trách:</strong> {item.owner}</p>}</div></div></div></article>) : <span>Chưa khai báo</span>}</div></div>}
+            </div>
+          </div>
+        </details>
+        <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/60">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Cấu hình sinh, môi trường và tài liệu tham chiếu</summary>
+          <div className="space-y-4 border-t border-slate-200 p-4 dark:border-slate-700">
+            <section className="rounded-xl border border-violet-200 bg-violet-50/70 p-4 dark:border-violet-900 dark:bg-violet-950/20">
+              <p className="text-sm font-semibold text-violet-950 dark:text-violet-100">1. Chọn loại Test Case cần tạo</p>
+              <p className="mt-1 text-xs text-violet-700 dark:text-violet-300">Hai lựa chọn tạo cùng cấu trúc Test Case manual; điểm khác nhau là mức bằng chứng thực tế được gắn vào tài liệu.</p>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <button type="button" onClick={() => setGenerationConfig((current) => ({ ...current, generationMode: "logic" }))} className={`rounded-xl border p-4 text-left transition ${!withTechnicalContext ? "border-violet-600 bg-white shadow-sm ring-2 ring-violet-200 dark:bg-violet-950/40" : "border-violet-200 bg-white/60 hover:border-violet-400 dark:border-violet-900 dark:bg-slate-950/30"}`}><div className="flex items-start gap-3"><span className={`rounded-lg p-2 ${!withTechnicalContext ? "bg-violet-100 text-violet-700" : "bg-slate-100 text-slate-500"}`}><FileCheck2 className="h-5 w-5" /></span><div><p className="font-semibold">Chỉ dùng Test Basis và Test Plan</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">Tạo Test Case nghiệp vụ để rà soát. Yêu cầu môi trường được kế thừa từ Test Plan; chưa cấu hình môi trường thực thi.</p><p className="mt-2 text-xs font-medium text-violet-700 dark:text-violet-300">Phù hợp cho thiết kế chức năng và nghiệp vụ.</p></div></div></button>
+                <button type="button" onClick={() => setGenerationConfig((current) => ({ ...current, generationMode: "technicalContext" }))} className={`rounded-xl border p-4 text-left transition ${withTechnicalContext ? "border-emerald-600 bg-white shadow-sm ring-2 ring-emerald-200 dark:bg-emerald-950/40" : "border-emerald-200 bg-white/60 hover:border-emerald-400 dark:border-emerald-900 dark:bg-slate-950/30"}`}><div className="flex items-start gap-3"><span className={`rounded-lg p-2 ${withTechnicalContext ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}><Settings2 className="h-5 w-5" /></span><div><p className="font-semibold">Bổ sung bối cảnh kỹ thuật</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">Khai báo loại ứng dụng, trình duyệt, hệ điều hành, thiết bị và ràng buộc để AI thiết kế sát nền tảng hơn. Không gắn Environment Profile.</p><p className="mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">Environment Profile chỉ được chọn ở bước thực thi.</p></div></div></button>
+              </div>
+            </section>
+            <section className="rounded-xl border border-sky-200 bg-sky-50/70 p-4 dark:border-sky-900 dark:bg-sky-950/20">
+              <p className="text-sm font-semibold text-sky-950 dark:text-sky-100">2. Cách AI thiết kế Test Case</p>
+              <div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="Positive / Negative"><Select value={generationConfig.polarity} onChange={(event) => setGenerationConfig((current) => ({ ...current, polarity: event.target.value }))}><option value="both">Cả positive và negative</option><option value="positive">Chỉ positive</option><option value="negative">Chỉ negative</option></Select></Field><Field label="Mức chi tiết"><Select value={generationConfig.detailLevel} onChange={(event) => setGenerationConfig((current) => ({ ...current, detailLevel: event.target.value }))}><option>Scenario</option><option>Standard</option><option>Detailed</option></Select></Field></div>
+              <div className="mt-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">Kỹ thuật kiểm thử</p><span className="text-xs text-sky-700 dark:text-sky-300">Đã chọn {generationConfig.techniques.length}/6 · có thể chọn nhiều</span></div><div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{["Equivalence Partitioning", "Boundary Value Analysis", "Decision Table", "State Transition", "Use Case testing", "Error Guessing"].map((item) => { const selected = generationConfig.techniques.includes(item); return <button key={item} type="button" aria-pressed={selected} onClick={() => setGenerationConfig((current) => ({ ...current, techniques: selected ? current.techniques.filter((value) => value !== item) : [...current.techniques, item] }))} className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition ${selected ? "border-sky-600 bg-sky-600 font-semibold text-white shadow-sm" : "border-sky-200 bg-white/70 text-slate-700 hover:border-sky-400 dark:border-sky-900 dark:bg-slate-950/30 dark:text-slate-200"}`}><span className={`grid h-5 w-5 shrink-0 place-items-center rounded border text-xs ${selected ? "border-white/60 bg-white/20" : "border-slate-300"}`}>{selected ? "✓" : ""}</span>{item}</button>; })}</div></div>
+            </section>
+            <div className="space-y-4">
+              <section className="rounded-xl border border-rose-200 bg-rose-50/70 p-4 dark:border-rose-900 dark:bg-rose-950/20"><p className="text-sm font-semibold text-rose-950 dark:text-rose-100">3. Phạm vi chuyên biệt</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><label className={`flex min-h-20 cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition ${generationConfig.includeSecurity ? "border-rose-500 bg-white shadow-sm dark:bg-rose-950/30" : "border-rose-200 bg-white/60 dark:border-rose-900 dark:bg-slate-950/20"}`}><input className="mt-0.5" type="checkbox" checked={generationConfig.includeSecurity} onChange={(event) => setGenerationConfig((current) => ({ ...current, includeSecurity: event.target.checked }))} /><span><strong>Security</strong><span className="mt-1 block text-xs leading-5 text-slate-500">Bổ sung kiểm thử bảo mật khi Test Plan có phạm vi và tài liệu cung cấp bằng chứng phù hợp.</span></span></label><label className={`flex min-h-20 cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition ${generationConfig.includeAccessibility ? "border-rose-500 bg-white shadow-sm dark:bg-rose-950/30" : "border-rose-200 bg-white/60 dark:border-rose-900 dark:bg-slate-950/20"}`}><input className="mt-0.5" type="checkbox" checked={generationConfig.includeAccessibility} onChange={(event) => setGenerationConfig((current) => ({ ...current, includeAccessibility: event.target.checked }))} /><span><strong>Accessibility</strong><span className="mt-1 block text-xs leading-5 text-slate-500">Bổ sung kiểm thử khả năng tiếp cận khi Test Plan có phạm vi và tiêu chuẩn liên quan.</span></span></label></div></section>
+              <section className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 dark:border-emerald-900 dark:bg-emerald-950/20">
+                <p className="text-sm font-semibold text-emerald-950 dark:text-emerald-100">4. Yêu cầu và bối cảnh kỹ thuật</p>
+                <p className="mt-1 text-xs leading-5 text-emerald-700 dark:text-emerald-300">Không chọn Environment Profile tại bước thiết kế. Test Plan đã cung cấp yêu cầu chung; các trường dưới đây chỉ bổ sung đặc điểm cần dùng để thiết kế Test Case.</p>
+                {withTechnicalContext ? (
+                  <div className="mt-4 space-y-4">
+                    <div className="rounded-xl border border-emerald-200 bg-white/80 p-3 dark:border-emerald-900 dark:bg-slate-950/30">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Nền tảng cần kiểm thử</p>
+                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Chọn một loại nếu đã xác định; có thể bỏ chọn để AI chỉ dựa trên Test Basis và Test Plan.</p>
+                        </div>
+                        {environmentContext.applicationType && <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">Đã chọn 1 nền tảng</span>}
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+                        {["Web", "Mobile Web", "Mobile App", "API / Service", "Desktop", "Hybrid", "Khác"].map((applicationType) => {
+                          const isSelected = environmentContext.applicationType === applicationType;
+                          return (
+                            <button
+                              key={applicationType}
+                              type="button"
+                              aria-pressed={isSelected}
+                              onClick={() => setEnvironmentContext((current) => ({ ...current, applicationType: isSelected ? "" : applicationType }))}
+                              className={`min-h-11 rounded-lg border px-3 py-2 text-sm font-medium transition ${isSelected ? "border-emerald-600 bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-200 dark:ring-emerald-900" : "border-slate-200 bg-white text-slate-700 hover:border-emerald-400 hover:bg-emerald-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-emerald-700"}`}
+                            >
+                              <span className="flex items-center justify-center gap-1.5">{isSelected && <CheckCircle2 className="h-4 w-4" />}{applicationType}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Ma trận tương thích</p>
+                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Mỗi dòng là một giá trị. Chỉ khai báo những cấu hình có căn cứ.</p>
+                        </div>
+                        <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">3 nhóm độc lập</span>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-950/30">
+                          <Field label="Trình duyệt">
+                            <Textarea className="min-h-28 resize-y" rows={4} value={environmentContext.browsers} onChange={(event) => setEnvironmentContext((current) => ({ ...current, browsers: event.target.value }))} placeholder="Chrome 130&#10;Firefox 132&#10;Safari 18" />
+                          </Field>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-950/30">
+                          <Field label="Hệ điều hành">
+                            <Textarea className="min-h-28 resize-y" rows={4} value={environmentContext.operatingSystems} onChange={(event) => setEnvironmentContext((current) => ({ ...current, operatingSystems: event.target.value }))} placeholder="Windows 11&#10;Android 15&#10;iOS 18" />
+                          </Field>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-950/30">
+                          <Field label="Thiết bị / viewport">
+                            <Textarea className="min-h-28 resize-y" rows={4} value={environmentContext.devices} onChange={(event) => setEnvironmentContext((current) => ({ ...current, devices: event.target.value }))} placeholder="Desktop 1440×900&#10;iPhone 15&#10;Pixel 8" />
+                          </Field>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-emerald-200 bg-white/80 p-3 dark:border-emerald-900 dark:bg-slate-950/30">
+                      <Field label="Ràng buộc kỹ thuật cần xét">
+                        <Textarea className="min-h-24 resize-y" rows={3} value={environmentContext.technicalConstraints} onChange={(event) => setEnvironmentContext((current) => ({ ...current, technicalConstraints: event.target.value }))} placeholder="Ví dụ: giới hạn mạng, dependency, dữ liệu, cấu hình hoặc điều kiện tích hợp có bằng chứng" />
+                      </Field>
+                      <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">Không nhập giả định. Chi tiết chưa có bằng chứng sẽ được AI đánh dấu “Cần xác nhận”.</p>
+                    </div>
+                  </div>
+                ) : <div className="mt-3 rounded-lg border border-emerald-200 bg-white/70 p-3 text-xs leading-5 text-slate-600 dark:border-emerald-900 dark:bg-slate-950/30 dark:text-slate-300">Đang dùng yêu cầu môi trường từ Test Plan. Chọn “Bổ sung bối cảnh kỹ thuật” nếu cần khai báo chi tiết nền tảng tại lần sinh này.</div>}
+              </section>
+            </div>
+            <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-900 dark:bg-amber-950/20">
+              <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">5. Tài liệu kỹ thuật dùng cho lần sinh này</p>
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Tải tệp là lựa chọn mặc định. Liên kết và tài liệu trong thư viện chỉ được dùng khi hệ thống truy cập được; tất cả đều là bằng chứng bổ sung, không thay thế Test Basis.</p>
+
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {[
+                  ["upload", "Tải tệp lên", "Đọc trực tiếp nội dung", UploadCloud],
+                  ["link", "Dán liên kết", "Figma, Swagger, wiki…", Link2],
+                  ["library", "Chọn từ thư viện", "Dùng lại đúng phiên bản", Library],
+                ].map(([mode, label, description, Icon]) => (
+                  <button key={mode} type="button" onClick={() => setReferenceMode(mode)} className={`rounded-xl border p-3 text-left transition ${referenceMode === mode ? "border-amber-500 bg-white shadow-sm ring-2 ring-amber-200 dark:bg-amber-950/40" : "border-amber-200 bg-white/60 hover:border-amber-400 dark:border-amber-900 dark:bg-slate-950/20"}`}>
+                    <span className="flex items-center gap-2 text-sm font-semibold"><Icon className="h-4 w-4 text-amber-700" />{label}</span>
+                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{description}</span>
+                  </button>
+                ))}
+              </div>
+
+              {referenceMode !== "library" && <div className="mt-4 rounded-xl border border-amber-200 bg-white/75 p-3 dark:border-amber-900 dark:bg-slate-950/30">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <Field label="Loại tài liệu *"><Select value={reference.type} onChange={(event) => setReference((current) => ({ ...current, type: event.target.value }))}><option value="">Chọn loại tài liệu</option>{["Figma/Wireframe", "UI Image", "BPMN/Flowchart", "OpenAPI/Postman", "Database Schema", "Architecture", "User Manual", "Regulation/Standard", "Repository Snapshot"].map((item) => <option key={item}>{item}</option>)}</Select></Field>
+                  <Field label="Tên tài liệu"><Input value={reference.title} onChange={(event) => setReference((current) => ({ ...current, title: event.target.value }))} placeholder="Ví dụ: OpenAPI Checkout" /></Field>
+                  <Field label="Phiên bản"><Input value={reference.version} onChange={(event) => setReference((current) => ({ ...current, version: event.target.value }))} placeholder="Ví dụ: v2.1" /></Field>
+                </div>
+                {referenceMode === "upload" ? <div className="mt-3 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 p-4 text-center dark:border-amber-800 dark:bg-amber-950/20">
+                  <input ref={technicalReferenceInputRef} className="hidden" type="file" accept=".pdf,.doc,.docx,.xlsx,.json,.yaml,.yml,.txt,.md,.sql,.csv,.png,.jpg,.jpeg,.webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) uploadTechnicalReference.mutate(file); event.target.value = ""; }} />
+                  <UploadCloud className="mx-auto h-6 w-6 text-amber-700" />
+                  <p className="mt-2 text-sm font-semibold">Chọn tài liệu từ máy</p>
+                  <p className="mt-1 text-xs text-slate-500">Tối đa 10 MB · tài liệu, đặc tả, schema hoặc ảnh giao diện.</p>
+                  <Button className="mt-3" size="sm" variant="outline" disabled={!reference.type || uploadTechnicalReference.isPending} onClick={() => technicalReferenceInputRef.current?.click()}>{uploadTechnicalReference.isPending ? "Đang tải và phân tích…" : "Chọn tệp"}</Button>
+                </div> : <div className="mt-3 flex flex-col gap-2 sm:flex-row"><Input value={reference.url} onChange={(event) => setReference((current) => ({ ...current, url: event.target.value }))} placeholder="https://figma.com/… hoặc https://api.example.com/openapi.json" /><Button size="sm" variant="outline" disabled={!reference.type || !reference.url.trim() || createTechnicalReferenceLink.isPending} onClick={() => createTechnicalReferenceLink.mutate()}>{createTechnicalReferenceLink.isPending ? "Đang kiểm tra…" : "Kiểm tra và thêm"}</Button></div>}
+              </div>}
+
+              {referenceMode === "library" && <div className="mt-4 rounded-xl border border-amber-200 bg-white/75 p-3 dark:border-amber-900 dark:bg-slate-950/30">
+                <Field label="Tài liệu kỹ thuật đã lưu trong Project">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Select value={selectedLibraryReferenceId} onChange={(event) => setSelectedLibraryReferenceId(event.target.value)} disabled={technicalReferencesQuery.isLoading}>
+                      <option value="">{technicalReferencesQuery.isLoading ? "Đang tải thư viện…" : "Chọn tài liệu và phiên bản"}</option>
+                      {(technicalReferencesQuery.data || []).map((item) => <option key={item._id} value={item._id}>{item.type} · {item.title}{item.version ? ` · ${item.version}` : ""}</option>)}
+                    </Select>
+                    <Button size="sm" variant="outline" disabled={!selectedLibraryReferenceId} onClick={() => { const item = (technicalReferencesQuery.data || []).find((entry) => String(entry._id) === selectedLibraryReferenceId); if (item) { attachReference(item); setSelectedLibraryReferenceId(""); } }}>Gắn vào lần sinh</Button>
+                  </div>
+                </Field>
+                {!technicalReferencesQuery.isLoading && !(technicalReferencesQuery.data || []).length && <p className="mt-2 text-xs text-slate-500">Thư viện chưa có tài liệu kỹ thuật. Hãy tải tệp hoặc thêm liên kết trước.</p>}
+              </div>}
+
+              {references.length > 0 && <div className="mt-4"><p className="text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">Đang dùng cho lần sinh này · {references.length}</p><div className="mt-2 grid gap-2 sm:grid-cols-2">{references.map((item, index) => <div key={`${item._id || item.type}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white/70 px-3 py-2 text-xs dark:border-amber-900 dark:bg-slate-950/30"><span className="min-w-0"><strong>{item.type}</strong><span className="block truncate text-slate-500">{item.title || item.url}{item.version ? ` · ${item.version}` : ""} · {item.sourceMode === "File" ? "Tệp đã tải" : item.sourceMode === "URL" ? "Liên kết" : "Thư viện"}</span></span><button type="button" className="shrink-0 font-semibold text-rose-600" onClick={() => setReferences((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Bỏ gắn</button></div>)}</div></div>}
+            </section>
+          </div>
+        </details>
+        <div className={`mt-4 rounded-xl border p-3 text-sm ${readiness.tone}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{readiness.title}</span><span className="rounded-full border border-current/20 bg-white/60 px-2 py-0.5 text-xs">{withTechnicalContext ? "Có bối cảnh kỹ thuật" : "Test Basis + Test Plan"}</span>{missingReferenceGroups.map((item) => <span key={item.type} className="rounded-full border border-current/20 bg-white/60 px-2 py-0.5 text-xs">Thiếu {item.type}</span>)}</div>{readinessHasAssumptions && <details className="group w-full"><summary className="mt-1 cursor-pointer list-none text-right text-xs font-semibold underline underline-offset-2"><span className="group-open:hidden">Xem chi tiết</span><span className="hidden group-open:inline">Thu gọn</span></summary><div className="mt-3 grid gap-2 sm:grid-cols-2">{withTechnicalContext && !technicalContextProvided && <div className="rounded-lg border border-current/15 bg-white/60 p-3 text-xs leading-5 dark:bg-slate-950/20"><p className="font-semibold">Bối cảnh kỹ thuật</p><p className="mt-1">Chưa khai báo thành phần kỹ thuật. AI vẫn có thể thiết kế từ Test Basis và Test Plan nhưng phải đánh dấu những chi tiết chưa có bằng chứng là “Cần xác nhận”.</p></div>}{missingReferenceGroups.map((item) => <div key={item.type} className="rounded-lg border border-current/15 bg-white/60 p-3 text-xs leading-5 dark:bg-slate-950/20"><p className="font-semibold">{item.type} Test Case</p><p className="mt-1">Cần bổ sung {item.label}. Nếu chưa có tài liệu này, AI không được suy đoán chi tiết kỹ thuật và kết quả sinh phải được đánh dấu “Cần xác nhận”.</p></div>)}</div></details>}</div>
+          {!readinessHasAssumptions && <p className="mt-1 text-xs opacity-80">Đủ dữ liệu cho mục tiêu đầu ra đã chọn.</p>}
         </div>
-        <div>
-          <Field label="3. Test Suite">
-            <Select
-              value={caseTarget.suiteId}
-              disabled={!suiteItems.length}
-              onChange={(event) =>
-                setCaseTarget({ ...caseTarget, suiteId: event.target.value })
-              }
-            >
-              <option value="">Chọn nhóm kiểm thử</option>
-              {suiteItems.map((item) => (
-                <option key={item._id} value={item._id}>
-                  {item.name}{item.quality?.canApprove === false ? " · cần bổ sung" : ""}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <p className="mt-1 text-xs text-slate-500">
-            Nhóm dùng để lưu các Test Case cùng phạm vi.
-          </p>
-          {!suiteItems.length && (
-            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
-              Chưa có Test Suite. Tạo một nhóm bằng nút bên dưới.
-            </p>
-          )}
-        </div>
-        <div className="flex flex-wrap gap-2 md:col-span-3">
+        <div className="mt-4 rounded-xl border border-slate-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-950/30">
+          {!generationSelectionReady && <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><span className="font-bold">Còn thiếu:</span><span>{generationBlockedReason}</span></div>}
+          <div className="flex flex-wrap gap-2">
           <Button
-            disabled={!validSelection || generateCases.isPending}
-            onClick={() => generateCases.mutate()}
+            disabled={generateCases.isPending || readinessBlocked}
+            onClick={requestCaseGeneration}
           >
             <Sparkles className="h-4 w-4" />
-            {generateCases.isPending ? "Đang sinh…" : "Sinh Test Case"}
+            {generateCases.isPending ? "Đang sinh…" : !generationSelectionReady ? (generationMode === "single" ? "Chọn nguồn chính để sinh" : "Hoàn tất lựa chọn để sinh") : `Sinh Test Case${generationMode === "single" ? "" : ` cho ${generationTargets.length} nguồn`}`}
           </Button>
-          <Button
-            variant="outline"
-            disabled={createSuite.isPending}
-            onClick={() => createSuite.mutate()}
-          >
-            <Plus className="h-4 w-4" />
-            {createSuite.isPending ? "Đang tạo…" : "Tạo Test Suite E2E"}
-          </Button>
+          <Button variant="outline" onClick={() => setActiveStep("plan")}>Kiểm tra phạm vi Test Plan</Button>
+          </div>
         </div>
       </div>
       {!reviewers.length &&
@@ -2223,13 +2422,14 @@ function TestCaseStep({
           </p>
         )}
       {currentCases.length > 0 && (
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50/50 p-4 dark:border-violet-900 dark:bg-violet-950/20">
-          <div>
-            <p className="text-sm font-semibold">Xuất bộ Test Case</p>
+        <div className="mt-7 border-t border-slate-200 pt-5 dark:border-slate-700"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">Test Case đã lưu</p><p className="mt-1 text-xs text-slate-500">Hiển thị 5 mục cập nhật gần nhất; quản lý toàn bộ trong Thư viện tài liệu.</p></div><Button asChild><Link to={caseLibraryUrl}>Mở Thư viện Test Case <ArrowRight className="h-4 w-4" /></Link></Button></div><div className="mt-4 grid gap-3 sm:grid-cols-3"><div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700"><p className="text-2xl font-bold">{currentCases.length}</p><p className="mt-1 text-xs text-slate-500">Tổng Test Case</p></div><div className="rounded-xl border border-amber-300 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/20"><p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{currentCases.filter((item) => ["Draft", "NeedsReview", "Rejected"].includes(item.status)).length}</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Cần rà soát</p></div><div className="rounded-xl border border-emerald-300 bg-emerald-50/60 p-4 dark:border-emerald-900 dark:bg-emerald-950/20"><p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300">{currentCases.filter((item) => item.status === "Approved").length}</p><p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">Đã duyệt</p></div></div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50/50 p-4 dark:border-violet-900 dark:bg-violet-950/20">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">Xuất một workbook Excel theo nhóm chức năng</p>
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-              Một file Excel gồm {currentCases.length} Test Case và các sheet
-              Steps, Test Data, Traceability.
+              Không phụ thuộc Test Case được sinh riêng lẻ hay hàng loạt. Hệ thống sẽ gom {currentCases.length} Test Case thành một file, gồm {exportGroups.length} sheet chức năng và các sheet tổng hợp/truy vết.
             </p>
+            <div className="mt-3 flex flex-wrap gap-1.5">{exportGroups.map(([group, count]) => <span key={group} className="rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-medium text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200">{group} · {count} TC</span>)}</div>
           </div>
           <Button
             variant="outline"
@@ -2241,12 +2441,12 @@ function TestCaseStep({
             }
           >
             <Download className="h-4 w-4" />
-            Tải tất cả (.xlsx)
+            Tải 1 Excel theo nhóm
           </Button>
-        </div>
+        </div></div>
       )}
       <div className="mt-5 space-y-4">
-        {currentCases.map((item) => (
+        {recentCases.map((item) => (
           <div key={item._id} className="rounded-xl border p-3">
             <div className="mb-2 flex justify-end">
               <Button
@@ -2331,7 +2531,7 @@ function PlanStep({ currentCases, plans, suggestPlan, approvePlan, download }) {
               {item.approvalStatus !== "Approved" && (
                 <Button
                   size="sm"
-                  onClick={() => approvePlan.mutate(item._id)}
+                  onClick={() => { const reviewNote = window.prompt("Ghi chú duyệt; nếu tự duyệt hãy nêu lý do Project không có QA khác (tối thiểu 10 ký tự):"); if (reviewNote?.trim()) approvePlan.mutate({ id: item._id, reviewNote: reviewNote.trim() }); }}
                   disabled={approvePlan.isPending}
                 >
                   <Check className="h-3.5 w-3.5" />

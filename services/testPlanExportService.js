@@ -8,16 +8,38 @@ const lines = (value) => (Array.isArray(value) ? value : String(value || '').spl
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function content(plan) {
   const risks = Array.isArray(plan.risks) ? plan.risks : lines(plan.risks).map((line) => { const [risk, mitigation, owner] = line.split('|'); return { risk, mitigation, owner }; });
+  const tableLines = (rows, keys) => (rows || []).map((row) => keys.map((key) => Array.isArray(row?.[key]) ? row[key].join(', ') : row?.[key] || '').join(' | '));
+  const control = plan.documentControl || {};
+  const comprehensive = Boolean(control.documentId || plan.introduction?.purpose || plan.systemUnderTest?.name || plan.traceabilityMatrix?.length);
   return {
     name: plan.name || 'Chưa đặt tên Test Plan', description: plan.description || 'Bản kế hoạch kiểm thử đang được hoàn thiện.',
-    metadata: [['Mã kế hoạch', plan.planId || 'Sẽ tạo khi lưu'], ['Môi trường', plan.environment || 'Chưa xác định'], ['Trạng thái phê duyệt', plan.approvalStatus || 'Draft']],
-    sections: [
+    metadata: [['Document ID', control.documentId || plan.planId || 'Sẽ tạo khi lưu'], ['Phiên bản', control.version || 'Chưa xác định'], ['Trạng thái phê duyệt', plan.approvalStatus || 'Draft']],
+    sections: (comprehensive ? [
+      ['1. Document Control', [`Tiêu đề: ${control.documentTitle || plan.name || ''}`, `Tác giả: ${control.author || ''}`, `Người rà soát: ${control.reviewer || ''}`, `Ngày: ${control.documentDate || ''}`, ...tableLines(control.versionHistory, ['version','date','author','description'])]],
+      ['2. Introduction', [plan.introduction?.purpose, plan.introduction?.background, ...lines(plan.objectives)]],
+      ['3. System Under Test', [`Tên hệ thống: ${plan.systemUnderTest?.name || ''}`, `Target URL: ${plan.systemUnderTest?.targetUrl || ''}`, ...lines(plan.systemUnderTest?.primaryModules)]],
+      ['4. Scope', [...lines(plan.scope), ...lines(plan.outOfScope).map((x) => `Ngoài phạm vi: ${x}`)]],
+      ['5. Test Items & Features', tableLines(plan.testItemMatrix, ['itemId','module','description']).length ? tableLines(plan.testItemMatrix, ['itemId','module','description']) : plan.testItems],
+      ['6. Strategy & Methodology', [...lines(plan.testStrategy), ...lines(plan.methodologies)]],
+      ['7. Test Levels & Types', [...lines(plan.testLevels), ...lines(plan.testTypes), ...tableLines(plan.testTypeMatrix, ['testType','purpose']), ...lines(plan.coverageTargets)]],
+      ['8. Test Environment', [...lines(plan.environmentRequirements || plan.environment), ...tableLines(plan.environmentSpecifications, ['category','specification'])]],
+      ['9. Test Data', [...lines(plan.testDataRequirements), ...lines(plan.testData)]],
+      ['10. Schedule & Milestones', [...tableLines(plan.milestones, ['phase','activity','timeframe']), plan.startDate ? `Bắt đầu: ${plan.startDate}` : '', plan.endDate ? `Kết thúc: ${plan.endDate}` : '']],
+      ['11. Entry & Exit Criteria', [...lines(plan.entryCriteria), ...lines(plan.exitCriteria)]],
+      ['12. Pass / Fail Criteria', [plan.passFailCriteria?.testCasePass, plan.passFailCriteria?.testCaseFail, plan.passFailCriteria?.testCycleCompletion]],
+      ['13. Defect Management', [...lines(plan.defectManagement?.workflow), ...tableLines(plan.defectManagement?.severityDefinitions, ['level','definition']), ...tableLines(plan.defectManagement?.priorityDefinitions, ['level','definition'])]],
+      ['14. Roles & Responsibilities', tableLines(plan.rolesResponsibilities, ['role','responsibilities'])],
+      ['15. Deliverables', plan.deliverables],
+      ['16. Risks, Assumptions & Dependencies', [...tableLines(plan.riskMatrix, ['risk','impact','mitigation','owner']), ...lines(plan.assumptions).map((x) => `Giả định: ${x}`), ...lines(plan.dependencies).map((x) => `Phụ thuộc: ${x}`)]],
+      ['17. Traceability Matrix', tableLines(plan.traceabilityMatrix, ['feature','basisReference','testType','coverageStatus','notes'])],
+      ['18. Approval & Sign-off', tableLines(plan.signOff, ['role','name','date','status'])],
+    ] : [
       ['1. Mục tiêu kiểm thử', plan.objectives], ['2. Phạm vi kiểm thử', plan.scope],
       ['3. Hạng mục kiểm thử', plan.testItems], ['4. Ngoài phạm vi', plan.outOfScope],
       ['5. Chiến lược / phương pháp', plan.testStrategy], ['6. Dữ liệu kiểm thử', plan.testData || (String(plan.description || '').startsWith('Test data: ') ? plan.description.slice(11) : '')],
       ['7. Tiêu chí bắt đầu', plan.entryCriteria], ['8. Tiêu chí kết thúc', plan.exitCriteria],
       ['10. Deliverables', plan.deliverables],
-    ].map(([title, value]) => ({ title, rows: lines(value) })),
+    ]).map(([title, value]) => ({ title, rows: lines(value) })),
     risks: risks.filter((x) => x && (x.risk || x.mitigation || x.owner)).map((x) => [x.risk || '', x.mitigation || 'QA xác nhận khi review.', x.owner || 'Chưa phân công']),
   };
 }
@@ -26,7 +48,7 @@ function planHtml(plan) {
   const section = (s) => s.rows.length ? `<section><h2>${escape(s.title)}</h2><ul>${s.rows.map((x) => `<li>${escape(x)}</li>`).join('')}</ul></section>` : '';
   return `<!doctype html><html lang="vi"><meta charset="utf-8"><style>
     @page{size:A4;margin:12mm}*{box-sizing:border-box}body{font:10px/1.55 Arial,sans-serif;color:#1e293b;margin:0}header{background:#f8fafc;padding:16px;border:1px solid #cbd5e1;border-bottom:3px solid #7c3aed}h1{font-size:17px;color:#0f172a;margin:4px 0}p{margin:4px 0;color:#64748b}.label{color:#7c3aed;font-weight:bold;letter-spacing:2px}.meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:14px}.meta span{display:block;color:#64748b}.body{padding:12px;border:1px solid #cbd5e1;border-top:0}section{border:1px solid #cbd5e1;border-radius:5px;padding:9px;margin-bottom:10px;break-inside:avoid}h2{font-size:9px;text-transform:uppercase;color:#475569;margin:0 0 6px}ul{margin:0;padding-left:17px}li{margin:3px 0;overflow-wrap:anywhere}.pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}.pair section{min-width:0}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{text-align:left;vertical-align:top;padding:7px;border:1px solid #cbd5e1;overflow-wrap:anywhere}th{background:#f8fafc}tr{break-inside:avoid}thead{display:table-header-group}
-    </style><header><div class="label">TEST PLAN</div><h1>${escape(data.name)}</h1><p>${escape(data.description)}</p><div class="meta">${data.metadata.map(([a,b]) => `<div><span>${escape(a)}</span><strong>${escape(b)}</strong></div>`).join('')}</div></header><div class="body">${section(data.sections[0])}${section(data.sections[1])}${[2,4,6].map((i) => `<div class="pair">${section(data.sections[i])}${section(data.sections[i+1])}</div>`).join('')}${data.risks.length ? `<section><h2>9. Rủi ro và phương án xử lý</h2><table><thead><tr>${['Rủi ro','Giảm thiểu','Phụ trách'].map((x) => `<th>${x}</th>`).join('')}</tr></thead><tbody>${data.risks.map((r) => `<tr>${r.map((x) => `<td>${escape(x)}</td>`).join('')}</tr>`).join('')}</tbody></table></section>` : ''}${section(data.sections[8])}</div></html>`;
+    </style><header><div class="label">TEST PLAN</div><h1>${escape(data.name)}</h1><p>${escape(data.description)}</p><div class="meta">${data.metadata.map(([a,b]) => `<div><span>${escape(a)}</span><strong>${escape(b)}</strong></div>`).join('')}</div></header><div class="body">${data.sections.map(section).join('')}${data.risks.length ? `<section><h2>Rủi ro kế thừa</h2><table><thead><tr>${['Rủi ro','Giảm thiểu','Phụ trách'].map((x) => `<th>${x}</th>`).join('')}</tr></thead><tbody>${data.risks.map((r) => `<tr>${r.map((x) => `<td>${escape(x)}</td>`).join('')}</tr>`).join('')}</tbody></table></section>` : ''}</div></html>`;
 }
 async function word(plan) {
   const data = content(plan);

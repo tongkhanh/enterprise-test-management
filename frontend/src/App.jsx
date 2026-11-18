@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
+import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import AppLayout from '@/components/layout/AppLayout'
 import LoginPage from '@/pages/LoginPage'
@@ -14,7 +14,7 @@ import ProjectWorkspacePage from '@/features/projects/ProjectWorkspaceHubPage'
 import TeamsPage from '@/features/teams/TeamDirectoryPage'
 import CyclesPage from '@/features/cycles/CyclesPage'
 import E2EStudioPage from '@/features/e2e/E2EStudioPage'
-import RequirementLibraryPage from '@/features/e2e/RequirementLibraryPage'
+import DocumentLibraryPage from '@/features/e2e/DocumentLibraryPage'
 import ApprovalInboxPage from '@/features/approvals/ApprovalInboxPage'
 import KanbanBoardPage from '@/features/board/KanbanBoardPage'
 import BugTrackingPage from '@/features/bugs/BugTrackingPage'
@@ -40,7 +40,10 @@ function AuthGuard() {
   // Revalidate on every fresh application load.  Workspace roles can change
   // while a user still has a persisted browser session (for example after
   // accepting an invitation from an email link).
-  const query = useQuery({ queryKey: ['me'], queryFn: authApi.me, enabled: Boolean(token) })
+  // Identity data must be isolated by session. Using a shared ['me'] cache key
+  // can briefly restore the previous account after logout/login while that
+  // query is still considered fresh.
+  const query = useQuery({ queryKey: ['me', token], queryFn: authApi.me, enabled: Boolean(token) })
   useEffect(() => { if (query.data) setUser(query.data) }, [query.data, setUser])
   if (!token) return <Navigate to="/login" replace />
   // Do not render Workspace-scoped pages with the persisted profile first.
@@ -48,6 +51,14 @@ function AuthGuard() {
   // granted QA Manager membership through an accepted invitation.
   if (query.isPending) return <div className="grid min-h-screen place-items-center bg-background dark:bg-[#101114]"><div className="h-8 w-8 animate-spin rounded-full border-4 border-violet-100 border-t-violet-600" /></div>
   return <Outlet />
+}
+
+function LegacyRequirementRedirect() {
+  const location = useLocation()
+  const params = new URLSearchParams(location.search)
+  params.set('type', 'Requirement')
+  params.set('mode', 'governance')
+  return <Navigate to={`/documents?${params.toString()}`} replace />
 }
 
 export default function App() {
@@ -68,7 +79,8 @@ export default function App() {
         <Route path="cycles" element={<CyclesPage />} />
         <Route path="issues" element={<AgileIssuesPage />} />
         <Route path="ai-generator" element={<E2EStudioPage />} />
-        <Route path="requirements" element={<RequirementLibraryPage />} />
+        <Route path="requirements" element={<LegacyRequirementRedirect />} />
+        <Route path="documents" element={<DocumentLibraryPage />} />
         <Route path="approvals" element={<ApprovalInboxPage />} />
         <Route path="automation" element={<AutomationLabPage />} />
         <Route path="bugs" element={<BugTrackingPage />} />

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bell, ChevronDown, LogOut, Mail, Menu, Moon, Search, ShieldCheck, Sun, UsersRound } from 'lucide-react'
 import { authApi, invitationApi, workspaceApi, workspaceInvitationApi } from '@/api/client'
 import { useAuthStore } from '@/store/authStore'
@@ -10,13 +10,14 @@ import { useWorkspaceStore } from '@/store/workspaceStore'
 
 const routes = [
   ['/dashboard', 'Tổng quan'], ['/projects', 'Projects'], ['/teams', 'Teams & Members'], ['/cycles', 'Cycles & Planning'],
-  ['/ai-generator', 'AI Test Generator'], ['/requirements', 'Thư viện Requirement'], ['/approvals', 'Approval Inbox'], ['/board', 'Test Board'],
+  ['/ai-generator', 'AI Test Generator'], ['/documents', 'Thư viện tài liệu'], ['/approvals', 'Approval Inbox'], ['/board', 'Test Board'],
   ['/bugs', 'Bug Tracking'], ['/gamification', 'Gamification'], ['/settings', 'Settings'],
 ]
 
 export default function Header({ onMenu }) {
   const location = useLocation()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const user = useAuthStore((state) => state.user)
   const clearSession = useAuthStore((state) => state.clearSession)
   const theme = useThemeStore((state) => state.theme)
@@ -33,7 +34,7 @@ export default function Header({ onMenu }) {
   const activeWorkspace = workspaces.find((item) => item._id === selectedWorkspaceId) || workspaces[0]
   useEffect(() => { if (activeWorkspace && activeWorkspace._id !== selectedWorkspaceId) setSelectedWorkspaceId(activeWorkspace._id) }, [activeWorkspace, selectedWorkspaceId, setSelectedWorkspaceId])
   const initials = (user?.fullName || 'QA').split(/\s+/).slice(-2).map((word) => word[0]).join('').toUpperCase()
-  const logout = async () => { try { await authApi.logout() } catch { /* session may already be expired */ } clearSession(); location.assign('/studio/login') }
+  const logout = async () => { try { await authApi.logout() } catch { /* session may already be expired */ } queryClient.clear(); clearSession(); location.assign('/studio/login') }
 
   const invitationsQuery = useQuery({
     queryKey: ['my-pending-invitations'],

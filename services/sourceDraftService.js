@@ -33,6 +33,9 @@ function fallbackTestCases({ useCase, story, targetUrl }) {
       preconditions: parts?.[1] || texts(useCase.preconditions).join('\n'),
       postconditions: expectedResult,
       priority: story.priority || useCase.risk || 'High', estimatedTime: 5,
+      environmentRequirement: targetUrl
+        ? `Môi trường kiểm thử có thể truy cập tại ${targetUrl}.`
+        : 'Thiết kế logic; URL, trình duyệt và thiết bị thực thi cần được xác nhận trước khi chạy.',
       journeyType: 'E2E', storyCoverage: [criterion],
       testDesignTechniques: ['Acceptance criteria testing'],
       testData: { sourceAcceptanceCriterion: criterion },

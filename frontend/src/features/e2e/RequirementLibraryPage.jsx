@@ -7,7 +7,7 @@ import { Button, Card, Select } from "@/components/ui";
 import { PageHeader } from "@/components/common/PageKit";
 import { RequirementLibrary } from "./QAWorkflow";
 
-export default function RequirementLibraryPage() {
+export default function RequirementLibraryPage({ embedded = false, documentType = "Requirement" }) {
   const navigate = useNavigate();
   const [search, setSearch] = useSearchParams();
   const projects = useQuery({ queryKey: ["projects"], queryFn: workspaceApi.projects });
@@ -25,11 +25,20 @@ export default function RequirementLibraryPage() {
     enabled: Boolean(activeProject && activeProfile?._id),
   });
   const decide = useMutation({
-    mutationFn: ({ id, decision }) => e2eApi.decideRequirement(id, { decision }),
+    mutationFn: ({ id, decision }) => e2eApi.decideRequirement(id, { decision, reviewNote: decision === "Baselined" ? (window.prompt("Ghi chú duyệt; nếu tự duyệt hãy nêu rõ lý do:") || "") : "" }),
     onSuccess: (_, variables) => {
       toast.success(variables.decision === "Baselined" ? "Đã Baseline Requirement." : "Đã từ chối Requirement.");
       requirements.refetch();
       profiles.refetch();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const bulkDecide = useMutation({
+    mutationFn: ({ ids, decision }) => e2eApi.decideRequirementsBulk({ ids, decision, reviewNote: decision === "Baselined" ? (window.prompt("Ghi chú duyệt hàng loạt; nếu có tự duyệt hãy nêu rõ lý do:") || "") : "" }),
+    onSuccess: (result) => {
+      const summary = result.summary || {};
+      toast.success(`Đã xử lý ${summary.succeeded || 0}/${summary.requested || 0} Requirement.`);
+      requirements.refetch(); profiles.refetch();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -46,12 +55,12 @@ export default function RequirementLibraryPage() {
     mutationFn: ({ file, source, scope }) => e2eApi.importRequirements(activeProfile._id, {
       type: "CustomerDocument",
       title: source?.title || file.name,
-      provider: source?.provider || "PO/BA bổ sung",
+      provider: source?.provider || "Business Owner bổ sung",
       receivedAt: source?.receivedAt || new Date().toISOString(),
       version: source?.version || "",
       reference: source?.reference || "",
       section: source?.section || "",
-    }, file, scope || { level: "System", name: activeProfile.name || "Toàn hệ thống" }),
+    }, file, scope || { level: "System", name: activeProfile.name || "Toàn hệ thống" }, documentType),
     onSuccess: (result) => {
       toast.success(result.message || "Đã đối chiếu tài liệu mới và bổ sung các trường còn thiếu.");
       requirements.refetch();
@@ -59,7 +68,7 @@ export default function RequirementLibraryPage() {
     },
     onError: (error) => toast.error(error.message),
   });
-  const items = requirements.data || [];
+  const items = (requirements.data || []).filter((item) => documentType === "Change Request" ? item.type === "ChangeRequest" : item.type !== "ChangeRequest");
   const baselined = items.filter((item) => item.status === "Baselined");
   const workflowUrl = `/ai-generator?${new URLSearchParams({ project: String(activeProject || ""), profile: String(activeProfile?._id || ""), step: "requirement" }).toString()}`;
   const updateContext = (changes) => {
@@ -68,12 +77,16 @@ export default function RequirementLibraryPage() {
     setSearch(next);
   };
 
+  const library = !activeProfile ? <Card className="p-8 text-center text-sm text-slate-500">Chọn Project và đợt tạo tài liệu để mở thư viện.</Card> : <Card className="p-5 sm:p-6">
+    <RequirementLibrary items={items} baselined={baselined} decide={decide} bulkDecide={bulkDecide} update={update} supplementDocument={supplementDocument} initialRequirementId={search.get("requirement") || ""} onNext={() => navigate(`/ai-generator?${new URLSearchParams({ project: String(activeProject), profile: String(activeProfile._id), step: "plan" }).toString()}`)} />
+  </Card>;
+  if (embedded) return library;
   return <div className="space-y-5 pb-8">
     <PageHeader
       eyebrow="Requirement governance"
       title="Thư viện Requirement"
       description="Tra cứu, rà soát và chốt Requirement theo Project và đợt tạo tài liệu. Baseline/Từ chối chỉ thực hiện sau khi mở chi tiết."
-      actions={<Button variant="outline" asChild><Link to={workflowUrl}><ArrowLeft className="h-4 w-4" />Quay lại Nguồn yêu cầu</Link></Button>}
+      actions={<div className="flex flex-wrap gap-2"><Button variant="outline" asChild><Link to={`/documents?${new URLSearchParams({ project: String(activeProject || ""), profile: String(activeProfile?._id || ""), type: "Requirement" }).toString()}`}><BookOpenCheck className="h-4 w-4" />Thư viện tài liệu</Link></Button><Button variant="outline" asChild><Link to={workflowUrl}><ArrowLeft className="h-4 w-4" />Quay lại Nguồn yêu cầu</Link></Button></div>}
     />
     <Card className="border-violet-200 bg-gradient-to-r from-violet-50 via-white to-sky-50 p-5 dark:border-violet-900 dark:from-violet-950/30 dark:via-slate-900 dark:to-sky-950/20">
       <div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-200"><BookOpenCheck className="h-5 w-5" /></span><div><h2 className="font-bold">Phạm vi thư viện</h2><p className="mt-1 text-xs text-slate-500">Mỗi đợt có thư viện riêng; chuyển đợt không làm trộn tài liệu.</p></div></div>
@@ -82,8 +95,6 @@ export default function RequirementLibraryPage() {
         <label><span className="mb-1 block text-xs font-semibold text-slate-600 dark:text-slate-300">Đợt tạo tài liệu</span><Select value={activeProfile?._id || ""} onChange={(event) => updateContext({ profile: event.target.value, requirement: "" })} disabled={!activeProject}><option value="">Chọn đợt</option>{(profiles.data || []).map((item, index) => <option key={item._id} value={item._id}>{`#${item.workflow?.runNumber || profiles.data.length - index} · ${item.name}`}</option>)}</Select></label>
       </div>
     </Card>
-    {!activeProfile ? <Card className="p-8 text-center text-sm text-slate-500">Chọn Project và đợt tạo tài liệu để mở thư viện.</Card> : <Card className="p-5 sm:p-6">
-      <RequirementLibrary items={items} baselined={baselined} decide={decide} update={update} supplementDocument={supplementDocument} initialRequirementId={search.get("requirement") || ""} onNext={() => navigate(`/ai-generator?${new URLSearchParams({ project: String(activeProject), profile: String(activeProfile._id), step: "usecase" }).toString()}`)} />
-    </Card>}
+    {library}
   </div>;
 }

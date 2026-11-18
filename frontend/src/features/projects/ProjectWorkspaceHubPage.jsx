@@ -11,7 +11,7 @@ import { useWorkspaceStore } from '@/store/workspaceStore'
 const items = [
   ['E2E Use Cases', 'Tạo System Profile hoặc phân tích GitHub để thiết kế hành trình E2E.', '/ai-generator', FileText, 'bg-sky-100 text-sky-700'],
   ['E2E Test Generator', 'Sinh User Story và Test Case theo Use Case đã duyệt.', '/ai-generator', Bot, 'bg-violet-100 text-violet-700'],
-  ['Approval Inbox', 'QA Manager duyệt Test Case và Test Plan.', '/approvals', CheckSquare2, 'bg-amber-100 text-amber-700'],
+  ['Approval Inbox', 'QA duyệt Test Case và Test Plan.', '/approvals', CheckSquare2, 'bg-amber-100 text-amber-700'],
   ['Test Board', 'Cycle, backlog và Kanban execution.', '/board', Columns3, 'bg-emerald-100 text-emerald-700'],
   ['Automation Operations', 'Dataset, fixture, schedule, flaky và traceability.', '/automation-operations', Settings2, 'bg-indigo-100 text-indigo-700'],
   ['Automation Lab', 'Environment, runner và evidence.', '/automation', PlayCircle, 'bg-rose-100 text-rose-700'],

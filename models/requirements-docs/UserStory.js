@@ -31,6 +31,7 @@ const userStorySchema = new Schema(
     inScope: { type: [String], default: [] },
     outOfScope: { type: [String], default: [] },
     nonFunctionalRequirements: { type: [String], default: [] },
+    businessRules: { type: [String], default: [] },
     risks: { type: [String], default: [] },
     assumptions: { type: [String], default: [] },
     dependencies: { type: [String], default: [] },
@@ -38,6 +39,7 @@ const userStorySchema = new Schema(
     definitionOfDone: { type: [String], default: [] },
     testDataRequirements: { type: [String], default: [] },
     dataRestrictions: { type: [String], default: [] },
+    sourceEvidence: { type: [String], default: [] },
     estimatedHours: { type: Number, min: 0, max: 10000, default: 0 },
 
     // Tiêu chí chấp nhận
@@ -84,7 +86,7 @@ const userStorySchema = new Schema(
     },
     source: {
       type: String,
-      enum: ['Manual', 'AI', 'GitHub', 'ImportedDocument'],
+      enum: ['Manual', 'AI', 'GitHub', 'ImportedDocument', 'AIDerivedAdopted'],
       default: 'Manual',
     },
     reference: { type: String, trim: true, maxlength: 1000, default: "" },
@@ -112,6 +114,10 @@ const userStorySchema = new Schema(
     businessApprovedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     businessApprovedAt: { type: Date, default: null },
     businessDecisionNote: { type: String, default: '' },
+    businessApprovalException: {
+      mode: { type: String, enum: ['Standard', 'OwnerFallback', 'SelfApproval'], default: 'Standard' },
+      reason: { type: String, default: '' }, responsibility: { type: String, enum: ['Business', 'QA'], default: 'Business' }, recordedAt: { type: Date, default: null },
+    },
     qaTestabilityStatus: {
       type: String,
       enum: ['NotReviewed', 'Testable', 'NeedsClarification'],
@@ -121,6 +127,10 @@ const userStorySchema = new Schema(
     qaReviewedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     qaReviewedAt: { type: Date, default: null },
     qaReviewNote: { type: String, default: '' },
+    qaApprovalException: {
+      mode: { type: String, enum: ['Standard', 'OwnerFallback', 'SelfApproval'], default: 'Standard' },
+      reason: { type: String, default: '' }, responsibility: { type: String, enum: ['Business', 'QA'], default: 'QA' }, recordedAt: { type: Date, default: null },
+    },
     repositorySource: {
       snapshot: { type: Schema.Types.ObjectId, ref: 'RepositorySnapshot', default: null },
       repository: { type: String, default: '' },
@@ -144,6 +154,7 @@ const userStorySchema = new Schema(
     e2e: {
       systemProfile: { type: Schema.Types.ObjectId, ref: 'SystemProfile', default: null },
       useCase: { type: Schema.Types.ObjectId, ref: 'UseCase', default: null },
+      useCases: [{ type: Schema.Types.ObjectId, ref: 'UseCase' }],
       requirements: [{ type: Schema.Types.ObjectId, ref: 'Requirement' }],
       journeyType: { type: String, default: 'E2E' },
       definitionOfDone: { type: [String], default: [] },
