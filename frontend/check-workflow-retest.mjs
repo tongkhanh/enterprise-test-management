@@ -27,7 +27,7 @@ executionApi.updatePlan = async (id, body) => { const plan = { ...body, _id: id 
 function App() {
  const items = useQuery({ queryKey: ['e2e-plans'], queryFn: async () => [...plans] });
  if (location.search.includes('notes')) return e(TestRunExecutionPanel, { runId: 'run', project: 'project', profile: 'profile' });
- return e(TestPlanningDocumentEditor, { activeProject: 'project', profile: { _id: 'profile' }, stories: [{ _id: 'story', title: 'Approved synthetic story', approvalStatus: 'Approved' }], items: items.data || [], onNext: () => {}, setActiveStep: () => {} });
+ return e(TestPlanningDocumentEditor, { activeProject: 'project', profile: { _id: 'profile', workflow: { testBasisSelection: { requirements: [], useCases: [], userStories: ['story'] } } }, stories: [{ _id: 'story', title: 'Approved synthetic story', approvalStatus: 'Approved', source: 'ImportedDocument' }], items: items.data || [], onNext: () => {}, setActiveStep: () => {} });
 }
 createRoot(document.getElementById('root')).render(e(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }, e(BrowserRouter, null, e(App))));
 `;
@@ -56,11 +56,15 @@ try {
     throw error;
   });
   const page = await browser.newPage();
-  page.setDefaultTimeout(15000);
+  // The first Vite transform compiles the large QA workflow on demand. A cold
+  // GitHub runner can legitimately take longer than 15 seconds even though the
+  // page is healthy, so keep assertion waits bounded but give initial
+  // navigation enough time to finish the cold compilation.
+  page.setDefaultTimeout(30000);
   page.on('pageerror', (error) => console.error(error.message));
   page.on('console', (message) => { if (message.type() === 'error') console.error(message.text()); });
   await page.route('**/api/v1/**', (route) => { throw new Error(`Unexpected real API request: ${route.request().url()}`); });
-  await page.goto(`${base}?notes`);
+  await page.goto(`${base}?notes`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   const note = page.getByRole('textbox', { name: 'Ghi chú kết quả' });
   await note.waitFor();
   assert.equal(await note.inputValue(), 'Saved QA note');
@@ -78,18 +82,18 @@ try {
   assert.equal(await note.inputValue(), '');
   console.log('PASS: saved QA notes reload, can be edited without changing verdict, and can be cleared.');
 
-  await page.goto(base);
-  await page.getByText('Tự soạn Test Plan', { exact: true }).click();
-  await page.getByPlaceholder('Feature Test Plan · Nộp bài tập lớn').fill('Synthetic Feature draft');
-  await page.getByRole('button', { name: 'Lưu nháp', exact: true }).click();
+  await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.getByRole('tab', { name: 'Tự soạn / chỉnh sửa', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Soạn Test Plan' }).getByLabel('Tên Test Plan *').fill('Synthetic Feature draft');
+  await page.getByRole('dialog', { name: 'Soạn Test Plan' }).getByRole('button', { name: 'Lưu Draft', exact: true }).click();
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('audit-plans') || '[]').length === 1);
   await page.reload();
   await page.locator('summary').filter({ hasText: 'Synthetic Feature draft' }).click();
-  await page.getByRole('button', { name: 'Chỉnh sửa bản nháp', exact: true }).click();
-  const title = page.getByPlaceholder('Feature Test Plan · Nộp bài tập lớn');
+  await page.getByRole('button', { name: 'Chỉnh sửa', exact: true }).click();
+  const title = page.getByRole('dialog', { name: 'Chỉnh sửa Test Plan' }).getByLabel('Tên Test Plan *');
   assert.equal(await title.inputValue(), 'Synthetic Feature draft');
   await title.fill('Updated Feature draft');
-  await page.getByRole('button', { name: 'Lưu nháp', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Chỉnh sửa Test Plan' }).getByRole('button', { name: 'Lưu Draft', exact: true }).click();
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('audit-plans'))[0].name === 'Updated Feature draft');
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('audit-plans')).length), 1);
   console.log('PASS: draft saves, reloads, reopens for editing, and updates without duplicates.');
