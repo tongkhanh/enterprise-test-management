@@ -16,6 +16,7 @@ async function buildContext(testRunId) {
   if (!run) throw new AppError('Test Run không tồn tại.', 404);
   if (run.testPlan?.approvalStatus && run.testPlan.approvalStatus !== 'Approved') throw new AppError('Test Plan phải được Approved trước khi tạo báo cáo.', 409);
   if (run.status !== 'Completed') throw new AppError('Test Run phải hoàn tất trước khi tạo báo cáo.', 409);
+  if (!run.completionReview?.reviewedAt || run.completionReview?.releaseRecommendation === 'Pending') throw new AppError('Hãy đánh giá Exit Criteria, residual risk và khuyến nghị phát hành trước khi tạo Test Summary.', 409);
   const [executions, automation, bugs] = await Promise.all([
     TestExecution.find({ testRun: run._id })
       .populate('testCase', 'testCaseId title priority type e2e targetUrl')
@@ -64,7 +65,7 @@ async function suggestReport({ testRunId, userId }) {
     bugs: context.bugs.length,
   };
   const input = {
-    run: { name: redact(context.run.name), environment: redact(context.environment), status: context.run.status }, metrics,
+    run: { name: redact(context.run.name), environment: redact(context.environment), status: context.run.status, completionReview: context.run.completionReview }, metrics,
     executions: context.details.map(({ execution: x, mode, targetUrl, latestRunnerStatus, latestFailureAnalysis, previousAttempts }) => ({
       title: redact(x.testCase?.title), priority: x.testCase?.priority, result: x.result,
       mode, environment: redact(targetUrl), latestRunnerStatus, qaVerdict: x.qaVerdict || null,
@@ -111,9 +112,9 @@ async function suggestReport({ testRunId, userId }) {
     title: safe(suggestion.title), executiveSummary: redact(executiveSummary),
     scope: (suggestion.scope || []).map(safe).slice(0, 30), environment: redact(context.environment).slice(0, 500),
     highlights: (suggestion.highlights || []).map(safe).slice(0, 20),
-    risks: (suggestion.risks || []).map(safe).slice(0, 20),
-    recommendations: (suggestion.recommendations || []).map(safe).slice(0, 20),
-    releaseRecommendation: ['Go', 'GoWithRisk', 'NoGo', 'Pending'].includes(suggestion.releaseRecommendation) ? suggestion.releaseRecommendation : 'Pending',
+    risks: [...new Set([...(context.run.completionReview?.residualRisks || []), ...(suggestion.risks || [])].map(safe))].slice(0, 20),
+    recommendations: [...new Set([...(context.run.completionReview?.lessonsLearned || []).map((item) => `Lesson learned: ${item}`), ...(suggestion.recommendations || [])].map(safe))].slice(0, 20),
+    releaseRecommendation: ({ Go: 'Go', ConditionalGo: 'GoWithRisk', NoGo: 'NoGo' })[context.run.completionReview?.releaseRecommendation] || (['Go', 'GoWithRisk', 'NoGo', 'Pending'].includes(suggestion.releaseRecommendation) ? suggestion.releaseRecommendation : 'Pending'),
     coverage,
     executionDetails: context.details.map(({ execution: x, mode, targetUrl, latestRunnerStatus, previousAttempts }) => ({
       testCaseId: x.testCase?.testCaseId || '', title: redact(x.testCase?.title), priority: x.testCase?.priority,

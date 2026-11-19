@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Download, FileSpreadsheet, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { executionApi, workspaceApi } from "@/api/client";
-import { Badge, Button, Card, Select, Skeleton } from "@/components/ui";
+import { Badge, Button, Card, Select, Skeleton, Textarea } from "@/components/ui";
 import {
   EmptyState,
   PageHeader,
@@ -21,6 +21,8 @@ export default function TestReportsPage() {
   const qc = useQueryClient();
   const [project, setProject] = useState("");
   const [run, setRun] = useState("");
+  const [completionRun, setCompletionRun] = useState("");
+  const [completion, setCompletion] = useState({ exitCriteriaMet: false, releaseRecommendation: 'Pending', residualRisks: '', deviations: '', lessonsLearned: '' });
   const projects = useQuery({
     queryKey: ["projects"],
     queryFn: workspaceApi.projects,
@@ -54,6 +56,7 @@ export default function TestReportsPage() {
     },
     onError: (error) => toast.error(error.message),
   });
+  const saveCompletion = useMutation({ mutationFn: () => executionApi.updateRun(completionRun, { completionReview: { ...completion, residualRisks: completion.residualRisks.split('\n').filter(Boolean), deviations: completion.deviations.split('\n').filter(Boolean), lessonsLearned: completion.lessonsLearned.split('\n').filter(Boolean) } }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['test-runs', active] }); toast.success('Đã lưu đánh giá hoàn tất và residual risk') }, onError: (error) => toast.error(error.message) });
   const download = async (item, format) => {
     try {
       const response = await executionApi.exportReport(item._id, format);
@@ -100,7 +103,7 @@ export default function TestReportsPage() {
           <Select value={run} onChange={(event) => setRun(event.target.value)}>
             <option value="">Chọn Test Run đã hoàn tất</option>
             {(runs.data || [])
-              .filter((item) => item.status === "Completed")
+              .filter((item) => item.status === "Completed" && item.completionReview?.reviewedAt && item.completionReview?.releaseRecommendation !== 'Pending')
               .map((item) => (
                 <option key={item._id} value={item._id}>
                   {item.name} · {item.status}
@@ -116,6 +119,7 @@ export default function TestReportsPage() {
           </Button>
         </div>
       </Card>
+      {!!(runs.data || []).length && <Card className="p-5"><SectionTitle title="Tiến độ Test Run" description="Theo dõi trực tiếp trong khi thực thi; Test Summary chỉ được tạo khi Run đã hoàn tất." /><div className="mt-4 grid gap-3 lg:grid-cols-2">{runs.data.map((item) => { const executed = item.passedCount + item.failedCount + item.blockedCount + item.skippedCount; const percent = item.totalCases ? Math.round(executed * 100 / item.totalCases) : 0; return <div key={item._id} className="rounded-xl border p-4"><div className="flex items-center justify-between gap-3"><strong>{item.name}</strong><Badge tone={item.status === 'Completed' ? 'green' : item.status === 'InProgress' ? 'purple' : 'slate'}>{item.status}</Badge></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full bg-violet-500" style={{ width: `${percent}%` }} /></div><div className="mt-2 flex flex-wrap gap-2 text-xs"><Badge tone="green">Pass {item.passedCount}</Badge><Badge tone="red">Fail {item.failedCount}</Badge><Badge tone="amber">Blocked {item.blockedCount}</Badge><Badge>Skipped {item.skippedCount}</Badge><span className="ml-auto">{executed}/{item.totalCases} · {percent}%</span></div>{item.status === 'Completed' && <Button className="mt-3" size="sm" variant="outline" onClick={() => { setCompletionRun(item._id); setCompletion({ exitCriteriaMet: item.completionReview?.exitCriteriaMet || false, releaseRecommendation: item.completionReview?.releaseRecommendation || 'Pending', residualRisks: (item.completionReview?.residualRisks || []).join('\n'), deviations: (item.completionReview?.deviations || []).join('\n'), lessonsLearned: (item.completionReview?.lessonsLearned || []).join('\n') }) }}>Đánh giá hoàn tất</Button>}</div> })}</div>{completionRun && <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4"><div className="grid gap-3 md:grid-cols-2"><label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={completion.exitCriteriaMet} onChange={(event) => setCompletion({ ...completion, exitCriteriaMet: event.target.checked })} />Đã đối chiếu và đáp ứng Exit Criteria</label><label><span className="label">Khuyến nghị phát hành</span><Select value={completion.releaseRecommendation} onChange={(event) => setCompletion({ ...completion, releaseRecommendation: event.target.value })}>{['Pending','Go','ConditionalGo','NoGo'].map((item) => <option key={item}>{item}</option>)}</Select></label><label><span className="label">Residual risk · mỗi dòng một mục</span><Textarea value={completion.residualRisks} onChange={(event) => setCompletion({ ...completion, residualRisks: event.target.value })} /></label><label><span className="label">Sai lệch so với Test Plan</span><Textarea value={completion.deviations} onChange={(event) => setCompletion({ ...completion, deviations: event.target.value })} /></label><label className="md:col-span-2"><span className="label">Lessons learned</span><Textarea value={completion.lessonsLearned} onChange={(event) => setCompletion({ ...completion, lessonsLearned: event.target.value })} /></label></div><div className="mt-3 flex gap-2"><Button disabled={saveCompletion.isPending} onClick={() => saveCompletion.mutate()}>Lưu đánh giá hoàn tất</Button><Button variant="ghost" onClick={() => setCompletionRun('')}>Đóng</Button></div></div>}</Card>}
       {reports.isLoading ? (
         <Skeleton className="h-80" />
       ) : (reports.data || []).length ? (

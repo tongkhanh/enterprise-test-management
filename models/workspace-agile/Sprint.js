@@ -29,6 +29,20 @@ const sprintSchema = new Schema(
 
     description: { type: String, trim: true, default: '', maxlength: 1000 },
 
+    // Test Cycle is the execution timebox. It can optionally be linked to a
+    // product Sprint, but the two concepts are not treated as synonyms.
+    cycleType: {
+      type: String,
+      enum: ['Smoke', 'Functional', 'Regression', 'ReleaseValidation', 'Exploratory', 'Custom'],
+      default: 'Custom',
+    },
+    // Optional traceability to the Agile delivery timebox. Test Cycle remains
+    // independently schedulable and never becomes a Delivery Cycle itself.
+    deliveryCycle: { type: Schema.Types.ObjectId, ref: 'DeliveryCycle', default: null },
+    linkedProductSprint: { type: Schema.Types.ObjectId, ref: 'Sprint', default: null },
+    buildLabel: { type: String, trim: true, default: '', maxlength: 200 },
+    releaseLabel: { type: String, trim: true, default: '', maxlength: 200 },
+
     sequence: { type: Number, min: 1, default: 1 },
 
     capacity: { type: Number, min: 0, default: 0 },
@@ -37,6 +51,8 @@ const sprintSchema = new Schema(
     sourceTestPlans: [{ type: Schema.Types.ObjectId, ref: 'TestPlan' }],
     planningUpdatedAt: { type: Date, default: null },
     planningUpdatedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    planningOrigin: { type: String, enum: ['Manual', 'AI', 'PriorityRules'], default: 'Manual' },
+    planningAssumptions: { type: [String], default: [] },
 
     color: { type: String, default: '#6D5DFB', match: /^#[0-9A-F]{6}$/i },
 

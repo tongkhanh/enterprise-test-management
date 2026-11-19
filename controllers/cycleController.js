@@ -19,7 +19,7 @@ const listCycles = async (req, res) => {
     filters: ['status'],
     searchFields: ['name', 'goal', 'description'],
     sort: 'startDate',
-    populate: [{ path: 'project', select: 'name key' }, { path: 'createdBy', select: 'fullName' }],
+    populate: [{ path: 'project', select: 'name key' }, { path: 'deliveryCycle', select: 'name status startDate endDate' }, { path: 'createdBy', select: 'fullName' }],
   });
   const items = await BoardItem.find({ cycle: { $in: result.data.map((cycle) => cycle._id) }, isArchived: false }).select('cycle testCase status assignee estimate reviewState sourceTestPlan testRun').populate('testCase', 'testCaseId title priority status estimatedTime').populate('assignee', 'fullName').populate('sourceTestPlan', 'name').lean();
   send(res, result.data.map((cycle) => { const cases = items.filter((item) => String(item.cycle) === String(cycle._id)); return { ...(cycle.toObject ? cycle.toObject() : cycle), planningSummary: summarize(cases), plannedCases: cases }; }), 200, { pagination: result.pagination });
@@ -27,10 +27,10 @@ const listCycles = async (req, res) => {
 
 const createCycle = async (req, res) => {
   if (!req.body.project) throw new AppError('Project là bắt buộc.', 400);
-  if (!req.body.name?.trim()) throw new AppError('Tên Cycle là bắt buộc.', 400);
+  if (!req.body.name?.trim()) throw new AppError('Tên Test Cycle là bắt buộc.', 400);
   await assertProjectAccess(req.user, req.body.project, { manage: true });
   if (!req.body.startDate || !req.body.endDate || new Date(req.body.endDate) <= new Date(req.body.startDate)) {
-    throw new AppError('Ngày kết thúc Cycle phải sau ngày bắt đầu.', 400);
+    throw new AppError('Ngày kết thúc Test Cycle phải sau ngày bắt đầu.', 400);
   }
   const latest = await Sprint.findOne({ project: req.body.project }).sort('-sequence').select('sequence');
   const cycle = await Sprint.create({
@@ -39,7 +39,7 @@ const createCycle = async (req, res) => {
     sequence: req.body.sequence || (latest?.sequence || 0) + 1,
     createdBy: req.user._id,
   });
-  await recordProjectActivity({ project: cycle.project, actor: req.user._id, action: 'CREATED', entityType: 'Cycle', entityId: cycle._id, title: `Đã tạo Cycle ${cycle.name}`, description: cycle.goal });
+  await recordProjectActivity({ project: cycle.project, actor: req.user._id, action: 'CREATED', entityType: 'TestCycle', entityId: cycle._id, title: `Đã tạo Test Cycle ${cycle.name}`, description: cycle.goal });
   send(res, cycle, 201);
 };
 
@@ -47,15 +47,15 @@ const updateCycle = async (req, res) => {
   const cycle = await getById(Sprint, req.params.id);
   await assertProjectAccess(req.user, cycle.project, { manage: true });
   const before = cycle.toObject();
-  ['name', 'goal', 'description', 'startDate', 'endDate', 'status', 'velocity', 'capacity', 'color'].forEach((key) => {
+  ['name', 'goal', 'description', 'startDate', 'endDate', 'status', 'velocity', 'capacity', 'color', 'deliveryCycle'].forEach((key) => {
     if (req.body[key] !== undefined) cycle[key] = req.body[key];
   });
-  if (new Date(cycle.endDate) <= new Date(cycle.startDate)) throw new AppError('Ngày kết thúc Cycle phải sau ngày bắt đầu.', 400);
+  if (new Date(cycle.endDate) <= new Date(cycle.startDate)) throw new AppError('Ngày kết thúc Test Cycle phải sau ngày bắt đầu.', 400);
   await cycle.save();
   await recordProjectActivity({
     project: cycle.project, actor: req.user._id,
     action: before.status !== cycle.status ? 'STATUS_CHANGED' : 'UPDATED',
-    entityType: 'Cycle', entityId: cycle._id, title: `Đã cập nhật Cycle ${cycle.name}`,
+    entityType: 'TestCycle', entityId: cycle._id, title: `Đã cập nhật Test Cycle ${cycle.name}`,
     changes: { before, after: cycle.toObject() },
   });
   send(res, cycle);
@@ -65,9 +65,9 @@ const deleteCycle = async (req, res) => {
   const cycle = await getById(Sprint, req.params.id);
   await assertProjectAccess(req.user, cycle.project, { manage: true });
   const assignedStories = await UserStory.countDocuments({ sprint: cycle._id });
-  if (assignedStories) throw new AppError(`Không thể xóa Cycle đang chứa ${assignedStories} User Story. Hãy chuyển chúng về Backlog trước.`, 409);
+  if (assignedStories) throw new AppError(`Không thể xóa Test Cycle đang chứa ${assignedStories} User Story. Hãy chuyển chúng về Backlog trước.`, 409);
   await cycle.deleteOne();
-  await recordProjectActivity({ project: cycle.project, actor: req.user._id, action: 'DELETED', entityType: 'Cycle', entityId: cycle._id, title: `Đã xóa Cycle ${cycle.name}` });
+  await recordProjectActivity({ project: cycle.project, actor: req.user._id, action: 'DELETED', entityType: 'TestCycle', entityId: cycle._id, title: `Đã xóa Test Cycle ${cycle.name}` });
   send(res, { _id: cycle._id });
 };
 

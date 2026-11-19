@@ -2,7 +2,7 @@
 const models = require('./models');
 
 const keys = Object.keys(models);
-const expected = 56;
+const expected = 62;
 console.log('============================================');
 console.log('  MODEL VERIFICATION REPORT');
 console.log('============================================');

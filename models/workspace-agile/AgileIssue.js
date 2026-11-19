@@ -10,7 +10,7 @@ const schema = new mongoose.Schema({
   priority: { type: String, enum: ['Urgent', 'High', 'Medium', 'Low', 'None'], default: 'None' },
   parent: { type: mongoose.Schema.Types.ObjectId, ref: 'AgileIssue', default: null }, children: [{ type: mongoose.Schema.Types.ObjectId, ref: 'AgileIssue' }],
   blocks: [{ type: mongoose.Schema.Types.ObjectId, ref: 'AgileIssue' }], blockedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'AgileIssue' }],
-  cycle: { type: mongoose.Schema.Types.ObjectId, ref: 'Sprint', default: null }, assignee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  cycle: { type: mongoose.Schema.Types.ObjectId, ref: 'DeliveryCycle', default: null }, assignee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   testCase: { type: mongoose.Schema.Types.ObjectId, ref: 'TestCase', default: null }, testPlan: { type: mongoose.Schema.Types.ObjectId, ref: 'TestPlan', default: null },
   estimate: { type: Number, default: 0 }, position: { type: Number, default: 1000 }, labels: [{ type: mongoose.Schema.Types.ObjectId, ref: 'ProjectLabel' }],
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },

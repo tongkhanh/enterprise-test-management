@@ -40,6 +40,8 @@ const stepResultSchema = new Schema(
 
 const testExecutionSchema = new Schema(
   {
+    executionMode: { type: String, enum: ['Manual', 'Automation'], default: 'Manual', index: true },
+    automationScript: { type: Schema.Types.ObjectId, ref: 'AutomationScript', default: null },
     result: {
       type: String,
       enum: {

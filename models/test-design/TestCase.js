@@ -86,6 +86,23 @@ const testCaseSchema = new Schema(
       eligible: { type: Boolean, default: false },
       reason: { type: String, default: '' },
     },
+    // Khả năng thực thi là metadata thiết kế, không khóa Test Case vào một
+    // phương thức duy nhất. Một Test Case có thể hỗ trợ cả Manual và Automation.
+    executionProfile: {
+      manualSupported: { type: Boolean, default: true },
+      automationSuitability: {
+        type: String,
+        enum: ['NotAssessed', 'Candidate', 'Recommended', 'NotSuitable'],
+        default: 'NotAssessed',
+      },
+      recommendedMode: { type: String, enum: ['Manual', 'Automation', 'Either'], default: 'Manual' },
+      recommendationReason: { type: String, default: '' },
+      preferredEngine: {
+        type: String,
+        enum: ['', 'Playwright', 'Selenium', 'Cypress', 'WebdriverIO', 'RobotFramework'],
+        default: '',
+      },
+    },
     generationContext: {
       scopeMode: { type: String, enum: ['single', 'feature', 'uncovered'], default: 'single' },
       polarity: { type: String, enum: ['positive', 'negative', 'both'], default: 'both' },

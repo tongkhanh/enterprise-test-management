@@ -79,4 +79,79 @@ const apply = async (req, res) => {
   await recordProjectActivity({ project, actor: req.user._id, action: 'UPDATED', entityType: 'Cycle', entityId: cycleId, title: `Đã lập kế hoạch ${result.assignedCount} Test Case từ Test Plan vào Cycle` });
   send(res, result);
 };
-module.exports = { list, suggest, apply };
+
+const suggestRoadmap = async (req, res) => {
+  const { project, testPlanId } = req.body;
+  await assertProjectAccess(req.user, project);
+  const { plan, items } = await source(project, testPlanId);
+  const options = planning.roadmapLimits(req.body);
+  const candidates = items.filter((item) => !item.cycle && item.status === 'Backlog' && item.reviewState === 'Approved');
+  let ranked = []; let generatedBy = 'PriorityRules';
+  let note = 'Đề xuất theo risk, priority, estimate và capacity. AI chưa được cấu hình.';
+  if (ai.isAiConfigured() && candidates.length) {
+    try {
+      const response = await ai.complete({
+        system: 'Bạn là QA Test Cycle Planner. Chỉ dùng ID và dữ liệu được cung cấp. Không tạo Test Case, dependency, kết quả hay trạng thái mới. Trả JSON duy nhất.',
+        prompt: `Xếp hạng Test Case và đề xuất Cycle tương đối. JSON {"recommendations":[{"boardItemId":"ID có sẵn","cycleNumber":1,"reason":"lý do ngắn, dựa trên dữ liệu"}],"assumptions":["giả định"]}. Nếu thiếu dependency hoặc lịch sử thì phải ghi giả định, không tự bịa.\n${JSON.stringify({ testPlan: { name: plan.name, scope: plan.scope, objectives: plan.objectives, risks: plan.risks, testTypes: plan.testTypes, coverageTarget: plan.coverageTarget }, constraints: options, candidates: candidates.map((item) => ({ boardItemId: String(item._id), title: item.testCase?.title, priority: item.testCase?.priority, estimateMinutes: planning.minutes(item) })) })}`,
+        json: true, temperature: 0.1, maxTokens: 6000,
+      });
+      const parsed = ai.parseJson(response.text);
+      if (!Array.isArray(parsed.recommendations)) throw new AppError('AI không trả về roadmap hợp lệ.', 502);
+      ranked = parsed.recommendations.filter((row) => candidates.some((item) => String(item._id) === String(row.boardItemId)));
+      generatedBy = 'AI';
+      note = 'AI đã đề xuất roadmap nháp. Hãy chỉnh sửa tên, mục tiêu, ngày và phân bổ trước khi áp dụng.';
+      req._planningAssumptions = Array.isArray(parsed.assumptions) ? parsed.assumptions.map(String).slice(0, 20) : [];
+    } catch (error) {
+      if (!ai.isGeminiQuotaExhausted(error)) throw error;
+      note = 'AI hết hạn mức; hệ thống dùng quy tắc risk/priority/capacity để tạo roadmap nháp.';
+    }
+  }
+  const roadmap = planning.buildRoadmap(items, options, ranked);
+  send(res, { ...roadmap, generatedBy, note, assumptions: req._planningAssumptions || ['Chưa có dữ liệu dependency, kỹ năng thành viên và lịch sử flaky trong lần lập kế hoạch này.'] });
+};
+
+const applyRoadmap = async (req, res) => {
+  const { project, testPlanId } = req.body;
+  const groups = Array.isArray(req.body.cycles) ? req.body.cycles : [];
+  await assertProjectAccess(req.user, project, { manage: true });
+  if (!groups.length || groups.length > 20) throw new AppError('Roadmap phải có từ 1 đến 20 Cycle.', 400);
+  const allIds = groups.flatMap((group) => Array.isArray(group.boardItemIds) ? group.boardItemIds.map(String) : []);
+  if (!allIds.length || allIds.length > 500 || new Set(allIds).size !== allIds.length) throw new AppError('Roadmap phải có Test Case và không được trùng giữa các Cycle.', 400);
+  allIds.forEach((value) => assertObjectId(value, 'Board Item'));
+  const session = await mongoose.startSession();
+  const created = [];
+  try {
+    await session.withTransaction(async () => {
+      const { plan, items } = await source(project, testPlanId, session);
+      const byId = new Map(items.map((item) => [String(item._id), item]));
+      if (allIds.some((value) => { const item = byId.get(value); return !item || item.cycle || item.status !== 'Backlog' || item.reviewState !== 'Approved' || !planning.minutes(item); })) throw new AppError('Có Test Case đã đổi trạng thái, thiếu estimate hoặc không còn trong Backlog.', 409);
+      const latest = await Sprint.findOne({ project }).sort('-sequence').select('sequence').session(session);
+      let sequence = latest?.sequence || 0;
+      for (let index = 0; index < groups.length; index++) {
+        const group = groups[index];
+        const name = String(group.name || '').trim().slice(0, 200);
+        const startDate = new Date(group.startDate);
+        const endDate = new Date(group.endDate);
+        const budget = planning.roadmapLimits(group);
+        const selected = group.boardItemIds.map((value) => byId.get(String(value)));
+        const totalMinutes = selected.reduce((sum, item) => sum + planning.minutes(item), 0);
+        if (!name || !Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime()) || endDate <= startDate) throw new AppError(`Cycle ${index + 1} thiếu tên hoặc ngày hợp lệ.`, 400);
+        if (selected.length > budget.maxCases || totalMinutes > budget.capacityMinutes) throw new AppError(`${name} vượt capacity hoặc số Test Case tối đa.`, 409);
+        const cycle = await Sprint.create([{
+          project, name, goal: String(group.goal || '').slice(0, 1000), description: String(group.description || '').slice(0, 1000),
+          cycleType: group.cycleType || 'Custom', startDate, endDate, sequence: ++sequence,
+          planningCapacityMinutes: budget.capacityMinutes, planningMaxCases: budget.maxCases,
+          planningUpdatedAt: new Date(), planningUpdatedBy: req.user._id, planningOrigin: req.body.generatedBy === 'AI' ? 'AI' : 'PriorityRules',
+          planningAssumptions: Array.isArray(req.body.assumptions) ? req.body.assumptions.map(String).slice(0, 20) : [], sourceTestPlans: [plan._id], createdBy: req.user._id,
+        }], { session }).then((rows) => rows[0]);
+        const updated = await BoardItem.updateMany({ _id: { $in: group.boardItemIds }, project, cycle: null, status: 'Backlog', reviewState: 'Approved', isArchived: false }, { $set: { cycle: cycle._id, status: 'Todo', sourceTestPlan: plan._id, lastMovedBy: req.user._id }, $push: { statusHistory: { from: 'Backlog', to: 'Todo', movedBy: req.user._id, movedAt: new Date() } } }, { session });
+        if (updated.matchedCount !== selected.length) throw new AppError('Dữ liệu Board vừa thay đổi. Hãy tạo lại roadmap.', 409);
+        created.push({ _id: cycle._id, name: cycle.name, assignedCount: selected.length, estimatedMinutes: totalMinutes });
+      }
+    });
+  } finally { await session.endSession(); }
+  await recordProjectActivity({ project, actor: req.user._id, action: 'CREATED', entityType: 'Cycle', entityId: created[0]._id, title: `Đã áp dụng roadmap ${created.length} Cycle với ${allIds.length} Test Case` });
+  send(res, { cycles: created, assignedCount: allIds.length }, 201);
+};
+
+module.exports = { list, suggest, apply, suggestRoadmap, applyRoadmap };

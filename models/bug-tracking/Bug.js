@@ -33,6 +33,14 @@ const bugSchema = new Schema(
       default: '',
       // VD: "1. Mở trang Login\n2. Nhập email sai\n3. Click Đăng nhập\n4. Bug xảy ra"
     },
+    expectedResult: { type: String, default: '' },
+    actualResult: { type: String, default: '' },
+    anomalyType: {
+      type: String,
+      enum: ['Untriaged', 'ProductBug', 'TestScript', 'TestData', 'Environment', 'FlakyTest', 'RequirementMismatch', 'Duplicate', 'ExpectedBehavior'],
+      default: 'Untriaged',
+    },
+    resolution: { type: String, default: '', maxlength: 5000 },
 
     // -------------------------------------------
     // Phân loại mức độ
@@ -170,6 +178,12 @@ const bugSchema = new Schema(
       confidence: { type: Number, default: null, min: 0, max: 1 },
       failureType: { type: String, default: null },
       evidence: { type: [String], default: [] },
+      alternativeCauses: { type: [String], default: [] },
+      recommendedActions: { type: [String], default: [] },
+      suggestedByAi: { type: Boolean, default: false },
+      reviewStatus: { type: String, enum: ['NotReviewed', 'Accepted', 'Edited', 'Rejected'], default: 'NotReviewed' },
+      reviewedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+      reviewedAt: { type: Date, default: null },
     },
 
     externalIssue: {

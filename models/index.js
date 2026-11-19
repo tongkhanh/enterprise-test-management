@@ -28,6 +28,8 @@ const AuditLog = require('./system-security/AuditLog');
 const Workspace = require('./workspace-agile/Workspace');
 const Project = require('./workspace-agile/Project');
 const Sprint = require('./workspace-agile/Sprint');
+const DeliveryCycle = require('./workspace-agile/DeliveryCycle');
+const DeliveryCycleConfig = require('./workspace-agile/DeliveryCycleConfig');
 const Release = require('./workspace-agile/Release');
 const Team = require('./workspace-agile/Team');
 const ProjectMembership = require('./workspace-agile/ProjectMembership');
@@ -126,6 +128,8 @@ module.exports = {
   Workspace,
   Project,
   Sprint,
+  DeliveryCycle,
+  DeliveryCycleConfig,
   Release,
   Team,
   ProjectMembership,

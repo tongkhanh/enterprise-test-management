@@ -177,7 +177,13 @@ export const workspaceInvitationApi = {
 };
 export const bugApi = {
   list: (params = "limit=100") => api.get(`/bugs?${params}`).then(data),
+  get: (id) => api.get(`/bugs/${id}`).then(data),
   create: (body) => api.post("/bugs", body).then(data),
+  update: (id, body) => api.patch(`/bugs/${id}`, body).then(data),
+  retest: (id, body) => api.post(`/bugs/${id}/retests`, body).then(data),
+  analyzeRootCause: (id) => api.post(`/bugs/${id}/root-cause/analyze`).then(data),
+  reviewRootCause: (id, body) => api.patch(`/bugs/${id}/root-cause/review`, body).then(data),
+  comment: (id, body) => api.post(`/bugs/${id}/comments`, { body }).then(data),
   decide: (id, body) => api.patch(`/bugs/${id}/decision`, body).then(data),
 };
 export const gamificationApi = {
@@ -220,6 +226,8 @@ export const agileApi = {
   suggestCyclePlan: (body) =>
     api.post("/cycle-planning/suggest", body).then(data),
   applyCyclePlan: (body) => api.post("/cycle-planning/apply", body).then(data),
+  suggestCycleRoadmap: (body) => api.post("/cycle-planning/roadmap/suggest", body).then(data),
+  applyCycleRoadmap: (body) => api.post("/cycle-planning/roadmap/apply", body).then(data),
   cycles: (project = "") =>
     api
       .get(`/cycles?limit=100${project ? `&project=${project}` : ""}`)
@@ -227,6 +235,10 @@ export const agileApi = {
   createCycle: (body) => api.post("/cycles", body).then(data),
   updateCycle: (id, body) => api.patch(`/cycles/${id}`, body).then(data),
   deleteCycle: (id) => api.delete(`/cycles/${id}`).then(data),
+  deliveryCycles: (project = "") =>
+    api.get(`/delivery-cycles${project ? `?project=${project}` : ""}`).then(data),
+  configureDeliveryCycles: (body) => api.post("/delivery-cycles/configure", body).then(data),
+  updateDeliveryCycle: (id, body) => api.patch(`/delivery-cycles/${id}`, body).then(data),
   labels: (project) =>
     api.get(`/labels?project=${project}&limit=100`).then(data),
   createLabel: (body) => api.post("/labels", body).then(data),
@@ -556,9 +568,15 @@ export const executionApi = {
     api.post(`/test-executions/${id}/auto`, body).then(data),
   recordExecution: (id, body) =>
     api.patch(`/test-executions/${id}`, body).then(data),
+  uploadExecutionEvidence: (id, files) => {
+    const body = new FormData();
+    Array.from(files || []).forEach((file) => body.append('evidence', file));
+    return api.post(`/test-executions/${id}/evidence`, body, { timeout: 180_000, headers: { 'Content-Type': 'multipart/form-data' } }).then(data);
+  },
   createPlan: (body) => api.post("/test-plans", body).then(data),
   updatePlan: (id, body) => api.patch(`/test-plans/${id}`, body).then(data),
   createRun: (body) => api.post("/test-runs", body).then(data),
+  updateRun: (id, body) => api.patch(`/test-runs/${id}`, body).then(data),
   executeRun: (id, body = {}) =>
     api.post(`/test-runs/${id}/execute`, body).then(data),
   suggestPlanFromRequirements: (body, options = {}) =>

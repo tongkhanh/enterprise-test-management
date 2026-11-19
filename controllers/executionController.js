@@ -1,4 +1,5 @@
 const path = require('node:path');
+const fs = require('node:fs/promises');
 const { TestPlan, TestRun, TestExecution, AutomationResult, AutomationScript, TestCase, TestSuite, TestEnvironment, SystemProfile, Requirement, UserStory, UseCase, Project, Bug, Notification, ExecutionArtifact } = require('../models');
 const { AppError, list, getById, send } = require('../utils/http');
 const { addKpiPoints } = require('../services/kpiService');
@@ -10,7 +11,6 @@ const ai = require('../services/aiService');
 const { resolveCaseRuntime } = require('../services/e2eRuntimeService');
 const { recalculateRun } = require('../services/testRunProgressService');
 const { createAutomationRun } = require('../services/multiEngineRunnerService');
-const { validateTestCase } = require('../services/automationScriptService');
 const { evaluateTestPlan, qualityErrorDetails } = require('../services/documentQualityService');
 const { authorizeArtifactApproval, getArtifactApprovalEligibility } = require('../services/approvalPolicyService');
 const { extractDocumentText } = require('../services/documentExtractionService');
@@ -484,19 +484,28 @@ const createRun = async (req, res) => {
   await ensureProjectAccess(req, plan.project);
   if (plan.kind === 'ExecutionPlan' && (plan.approvalStatus !== 'Approved' || !plan.testCases.length)) throw new AppError('Execution Plan phải được duyệt và có Test Case trước khi tạo Test Run.', 409);
   const run = await TestRun.create({ ...req.body, totalCases: plan.testCases.length, createdBy: req.user._id });
-  if (plan.testCases.length) await TestExecution.insertMany(plan.testCases.map((testCase) => ({ testRun: run._id, testCase })));
+  if (plan.testCases.length) await TestExecution.insertMany(plan.testCases.map((testCase) => ({
+    testRun: run._id,
+    testCase,
+    executionMode: run.executionMode || 'Manual',
+  })));
   send(res, run, 201);
 };
 
-const updateRun = async (req, res) => { const item = await getById(TestRun, req.params.id); const plan = await getById(TestPlan, item.testPlan); await ensureProjectAccess(req, plan.project); req._auditBefore = item.toObject(); Object.assign(item, req.body); if (item.status === 'InProgress' && !item.startedAt) item.startedAt = new Date(); if (item.status === 'Completed' && !item.completedAt) item.completedAt = new Date(); await item.save(); send(res, item); };
+const updateRun = async (req, res) => { const item = await getById(TestRun, req.params.id); const plan = await getById(TestPlan, item.testPlan); await ensureProjectAccess(req, plan.project); req._auditBefore = item.toObject(); const editable = ['name', 'description', 'environment', 'status', 'assignee']; editable.forEach((key) => { if (req.body[key] !== undefined) item[key] = req.body[key]; }); if (req.body.completionReview) item.completionReview = { exitCriteriaMet: Boolean(req.body.completionReview.exitCriteriaMet), residualRisks: normalizeStringList(req.body.completionReview.residualRisks, 50), deviations: normalizeStringList(req.body.completionReview.deviations, 50), lessonsLearned: normalizeStringList(req.body.completionReview.lessonsLearned, 50), releaseRecommendation: req.body.completionReview.releaseRecommendation || 'Pending', reviewedBy: req.user._id, reviewedAt: new Date() }; if (item.status === 'InProgress' && !item.startedAt) item.startedAt = new Date(); if (item.status === 'Completed' && !item.completedAt) item.completedAt = new Date(); await item.save(); send(res, item); };
 
 const getRun = async (req, res) => {
-  const run = await getById(TestRun, req.params.id, [{ path: 'testPlan', select: 'name project environment kind approvalStatus' }, { path: 'assignee', select: 'fullName' }]);
+  const run = await getById(TestRun, req.params.id, [
+    { path: 'testPlan', select: 'name project environment kind approvalStatus' },
+    { path: 'assignee', select: 'fullName' },
+    { path: 'testEnvironment', select: 'name status targetUrl kind healthCheckStatus' },
+  ]);
   await ensureProjectAccess(req, run.testPlan.project);
   const executions = await TestExecution.find({ testRun: run._id })
     .populate('testCase', 'title testSteps priority type status e2e targetUrl updatedAt')
     .populate('executedBy', 'fullName')
     .populate('automationRun', 'status engine script result error')
+    .populate('automationScript', 'status engine filename sourceCaseUpdatedAt runtimeUrl')
     .sort('createdAt').lean();
   await Promise.all(executions.map(async (execution) => {
     let runtime;
@@ -505,9 +514,10 @@ const getRun = async (req, res) => {
     } catch (error) {
       if (error.statusCode !== 409) throw error;
     }
-    const url = URL.parse(runtime?.targetUrl || '');
-    execution.runtimeUrl = url && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? runtime.targetUrl : '';
-    execution.environmentId = runtime?.environmentId || null;
+    const selectedTarget = run.testEnvironment?.targetUrl || runtime?.targetUrl || '';
+    const url = URL.parse(selectedTarget);
+    execution.runtimeUrl = url && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? selectedTarget : '';
+    execution.environmentId = run.testEnvironment?._id || runtime?.environmentId || null;
   }));
   const scripts = await AutomationScript.find({
     project: run.testPlan.project, status: 'Approved', testCase: { $in: executions.flatMap((execution) => execution.testCase ? [execution.testCase._id] : []) },
@@ -523,33 +533,25 @@ const executeAutomatedRun = async (req, res) => {
   const plan = run.testPlan;
   await ensureProjectAccess(req, plan.project);
   if (!['NotStarted', 'Aborted'].includes(run.status)) throw new AppError('Test Run này đã bắt đầu hoặc đã hoàn tất.', 409);
-  const cases = await TestCase.find({ _id: { $in: plan.testCases } });
+  if (run.executionMode !== 'Automation') throw new AppError('Chỉ Automation Run mới có thể khởi chạy bằng Automation Runner.', 409);
   if (plan.kind === 'ExecutionPlan' && plan.approvalStatus !== 'Approved') throw new AppError('Execution Plan phải được duyệt trước khi chạy.', 409);
-  let chosenEnvironment = null;
-  if (req.body.testEnvironmentId) {
-    chosenEnvironment = await TestEnvironment.findById(req.body.testEnvironmentId);
-    if (!chosenEnvironment || String(chosenEnvironment.project) !== String(plan.project) || chosenEnvironment.status !== 'Ready' || !chosenEnvironment.targetUrl) throw new AppError('Test Environment phải thuộc Project và ở trạng thái Ready.', 409);
-  }
-  const invalid = [];
-  for (const item of cases) {
-    const runtime = await resolveCaseRuntime(item);
-    const targetUrl = chosenEnvironment?.targetUrl || runtime?.targetUrl || '';
-    const validation = validateTestCase({ targetUrl, testSteps: item.testSteps });
-    if (!['Approved', 'Active'].includes(item.status) || item.type !== 'Automated' || validation.some((issue) => issue.level === 'error')) invalid.push(item);
-  }
-  if (invalid.length || cases.length !== plan.testCases.length) throw new AppError('Test Plan chứa Test Case chưa Approved, thiếu runtime, locator hoặc còn bước thủ công.', 409);
-  run.status = 'InProgress'; run.startedAt = new Date(); run.completedAt = null; await run.save();
+  const environmentId = req.body.testEnvironmentId || run.testEnvironment;
+  const chosenEnvironment = await TestEnvironment.findById(environmentId);
+  if (!chosenEnvironment || String(chosenEnvironment.project) !== String(plan.project) || chosenEnvironment.status !== 'Ready' || !chosenEnvironment.targetUrl) throw new AppError('Test Environment phải thuộc Project và ở trạng thái Ready.', 409);
+  const executions = await TestExecution.find({ testRun: run._id, executionMode: 'Automation' });
+  if (!executions.length || executions.some((item) => !item.automationScript)) throw new AppError('Automation Run có Test Case chưa gắn script đã duyệt.', 409);
   const jobs = [];
-  for (const testCase of cases) {
-    jobs.push(await createAutomationJob({
-      testCaseId: testCase._id, userId: req.user._id, testRunId: run._id, testPlanId: plan._id,
-      browserName: req.body.browser || 'chromium',
-      viewport: { width: req.body.viewportWidth, height: req.body.viewportHeight },
-      testData: req.body.testData || {}, environment: run.environment || plan.environment || 'Staging',
-      testEnvironmentId: req.body.testEnvironmentId,
+  for (const execution of executions) {
+    jobs.push(await createAutomationRun({
+      scriptId: execution.automationScript,
+      environmentId: chosenEnvironment._id,
+      userId: req.user._id,
+      execution,
+      dataset: req.body.dataset,
+      fixture: req.body.fixture,
     }));
   }
-  send(res, { plan, run, jobs }, 202, { message: `Đã xếp hàng ${jobs.length} Playwright job.` });
+  send(res, { plan, run, jobs }, 202, { message: `Đã xếp hàng ${jobs.length} Automation job từ script đã duyệt.` });
 };
 
 const executeReviewedScript = async (req, res) => {
@@ -560,9 +562,13 @@ const executeReviewedScript = async (req, res) => {
   if (plan.kind === 'ExecutionPlan' && plan.approvalStatus !== 'Approved') throw new AppError('Execution Plan phải được duyệt trước khi chạy.', 409);
   const testCase = await getById(TestCase, execution.testCase);
   const runtime = await resolveCaseRuntime(testCase);
-  if (!runtime?.environmentId) throw new AppError('Hãy gắn Environment Ready trước khi chạy script.', 409);
+  const environmentId = run.testEnvironment?._id || run.testEnvironment || runtime?.environmentId;
+  if (!environmentId) throw new AppError('Hãy gắn Test Environment Ready trước khi chạy Automation.', 409);
+  if (run.executionMode !== 'Automation' || execution.executionMode !== 'Automation') throw new AppError('Test Execution này thuộc Manual Run, không thể chạy Automation.', 409);
+  const scriptId = execution.automationScript || req.body.scriptId;
+  if (!scriptId) throw new AppError('Automation Run chưa được gắn script đã duyệt.', 409);
   const automationRun = await createAutomationRun({
-    scriptId: req.body.scriptId, environmentId: runtime.environmentId, userId: req.user._id,
+    scriptId, environmentId, userId: req.user._id,
     execution, dataset: req.body.dataset, fixture: req.body.fixture,
   });
   send(res, automationRun, 202);
@@ -582,6 +588,36 @@ const recordExecution = async (req, res) => {
   await addKpiPoints({ user: req.user._id, project: plan.project, points: 1, reason: 'Thực thi test case', entityType: 'TestExecution', entityId: execution._id, counters: { testCasesExecuted: 1 } });
   if (run.status === 'Completed' && run.assignee) await Notification.create({ type: 'TestRunCompleted', title: 'Test Run hoàn tất', message: `Đợt chạy “${run.name}” đã hoàn tất.`, recipient: run.assignee, sender: req.user._id, relatedEntity: { entityType: 'TestRun', entityId: run._id }, link: `/execution.html?run=${run._id}` });
   send(res, { execution, run });
+};
+
+const safeEvidenceName = (value) => String(value || 'evidence').normalize('NFKD').replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-').slice(-180);
+const uploadExecutionEvidence = async (req, res) => {
+  const execution = await getById(TestExecution, req.params.id);
+  const run = await getById(TestRun, execution.testRun, 'testPlan');
+  await ensureProjectAccess(req, run.testPlan.project);
+  if (!req.files?.length) throw new AppError('Chọn ít nhất một evidence.', 400);
+  const directory = path.resolve('storage', 'execution-evidence', String(execution._id));
+  await fs.mkdir(directory, { recursive: true });
+  const uploaded = [];
+  for (const file of req.files) {
+    const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeEvidenceName(file.originalname)}`;
+    await fs.writeFile(path.join(directory, filename), file.buffer, { flag: 'wx' });
+    uploaded.push({ name: file.originalname, type: file.mimetype, size: file.size, url: `/api/v1/test-executions/${execution._id}/evidence/${encodeURIComponent(filename)}` });
+  }
+  execution.evidence.push(...uploaded.map((item) => item.url));
+  await execution.save();
+  send(res, { uploaded, evidence: execution.evidence }, 201);
+};
+const downloadExecutionEvidence = async (req, res) => {
+  const execution = await getById(TestExecution, req.params.id);
+  const run = await getById(TestRun, execution.testRun, 'testPlan');
+  await ensureProjectAccess(req, run.testPlan.project);
+  const filename = path.basename(req.params.name);
+  const expected = `/api/v1/test-executions/${execution._id}/evidence/${encodeURIComponent(filename)}`;
+  if (!execution.evidence.includes(expected)) throw new AppError('Evidence không thuộc Test Execution này.', 404);
+  const filePath = path.resolve('storage', 'execution-evidence', String(execution._id), filename);
+  res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/["\r\n]/g, '')}"`);
+  res.sendFile(filePath);
 };
 
 const automationWebhook = async (req, res) => {
@@ -744,7 +780,7 @@ module.exports = {
   exportPlanPreview,
   listPlans, listPlanApprovals, createPlan, suggestPlan, suggestPlanFromRequirements, importPlanDocument, decidePlan, updatePlan, exportPlan, deletePlan, listRuns, createRun, updateRun, getRun,
   createPlanFromApproved, executeAutomatedRun, executeReviewedScript,
-  recordExecution, automationWebhook, listAutomationResults,
+  recordExecution, uploadExecutionEvidence, downloadExecutionEvidence, automationWebhook, listAutomationResults,
   runAutomatedTestCase, getAutomationJob, cancelAutomation, downloadAutomationArtifact, triageAutomationResult,
   jiraIntegrationStatus,
   parseImportedTestPlanText, normalizeImportedTestPlan, importedPlanMissingFields,

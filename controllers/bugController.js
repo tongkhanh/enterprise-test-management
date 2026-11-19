@@ -4,6 +4,8 @@ const { addKpiPoints } = require('../services/kpiService');
 const { getAccessibleProjectIds } = require('../services/projectAccessService');
 const { assertProjectAccess } = require('../services/projectAccessService');
 const { createJiraBug } = require('../services/jiraService');
+const path = require('node:path');
+const bugTransitions = { New: ['Open', 'Closed'], Open: ['InProgress', 'Resolved', 'Closed'], InProgress: ['Open', 'Resolved'], Resolved: ['Verified', 'Reopened'], Verified: ['Closed', 'Reopened'], Closed: ['Reopened'], Reopened: ['InProgress', 'Resolved'] };
 
 const listBugs = async (req, res) => {
   const accessibleProjects = req.allowedProjectIds || await getAccessibleProjectIds(req.user);
@@ -58,7 +60,8 @@ const updateBug = async (req, res) => {
   req._auditBefore = bug.toObject();
   const previousStatus = bug.status;
   const previousAssignee = bug.assignedTo && String(bug.assignedTo);
-  const editable = ['title', 'description', 'stepsToReproduce', 'severity', 'priority', 'status', 'environment', 'browser', 'os', 'attachments', 'tags', 'assignedTo', 'userStory', 'sprint', 'release'];
+  if (req.body.status && req.body.status !== previousStatus && !bugTransitions[previousStatus]?.includes(req.body.status)) throw new AppError(`Không thể chuyển Bug trực tiếp từ ${previousStatus} sang ${req.body.status}.`, 409);
+  const editable = ['title', 'description', 'stepsToReproduce', 'expectedResult', 'actualResult', 'anomalyType', 'resolution', 'severity', 'priority', 'status', 'environment', 'browser', 'os', 'attachments', 'tags', 'assignedTo', 'userStory', 'sprint', 'release'];
   editable.forEach((key) => { if (req.body[key] !== undefined) bug[key] = req.body[key]; });
   await bug.save();
   if (previousStatus !== bug.status) {
@@ -73,6 +76,49 @@ const updateBug = async (req, res) => {
   }
   if (bug.externalIssue?.provider === 'Jira') await require('../services/integrationSyncService').enqueueJiraBugSync({ bugId: bug._id, comment: req.body.statusComment, userId: req.user._id });
   send(res, bug);
+};
+
+const analyzeBug = async (req, res) => {
+  const bug = await getById(Bug, req.params.id);
+  await assertProjectAccess(req.user, bug.project);
+  const ai = require('../services/aiService');
+  if (!ai.isAiConfigured()) throw new AppError('AI chưa được cấu hình.', 409);
+  const response = await ai.complete({
+    system: 'Bạn là QA defect triage assistant. Chỉ suy luận từ evidence được cung cấp. Không khẳng định root cause khi thiếu bằng chứng. Trả JSON duy nhất.',
+    prompt: `Phân tích anomaly và gợi ý điều tra/giải pháp. JSON {"failureType":"ProductBug|TestScript|TestData|Environment|FlakyTest|RequirementMismatch","mostLikelyRootCause":"...","confidence":0.0,"evidence":["..."],"alternativeCauses":["..."],"recommendedActions":["..."]}.\n${JSON.stringify({ title: bug.title, description: bug.description, steps: bug.stepsToReproduce, expected: bug.expectedResult, actual: bug.actualResult, environment: bug.environment, browser: bug.browser, os: bug.os, attachments: bug.attachments.map((item) => ({ name: item.fileName, type: item.fileType })) })}`,
+    json: true, temperature: 0.1, maxTokens: 2500,
+  });
+  const parsed = ai.parseJson(response.text);
+  bug.rootCause = {
+    summary: String(parsed.mostLikelyRootCause || '').slice(0, 5000), confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0)),
+    failureType: String(parsed.failureType || 'ProductBug').slice(0, 100), evidence: Array.isArray(parsed.evidence) ? parsed.evidence.map(String).slice(0, 20) : [],
+    alternativeCauses: Array.isArray(parsed.alternativeCauses) ? parsed.alternativeCauses.map(String).slice(0, 20) : [], recommendedActions: Array.isArray(parsed.recommendedActions) ? parsed.recommendedActions.map(String).slice(0, 20) : [],
+    suggestedByAi: true, reviewStatus: 'NotReviewed', reviewedBy: null, reviewedAt: null,
+  };
+  await bug.save({ validateBeforeSave: false });
+  send(res, bug);
+};
+
+const reviewRootCause = async (req, res) => {
+  const bug = await getById(Bug, req.params.id);
+  await assertProjectAccess(req.user, bug.project);
+  if (!['Accepted', 'Edited', 'Rejected'].includes(req.body.decision)) throw new AppError('Quyết định RCA không hợp lệ.', 400);
+  if (req.body.decision === 'Edited' && !String(req.body.summary || '').trim()) throw new AppError('Nhập root cause đã chỉnh sửa.', 400);
+  if (req.body.decision === 'Edited') bug.rootCause.summary = String(req.body.summary).trim().slice(0, 5000);
+  bug.rootCause.reviewStatus = req.body.decision; bug.rootCause.reviewedBy = req.user._id; bug.rootCause.reviewedAt = new Date();
+  await bug.save({ validateBeforeSave: false });
+  send(res, bug);
+};
+
+const addComment = async (req, res) => {
+  const bug = await getById(Bug, req.params.id);
+  await assertProjectAccess(req.user, bug.project);
+  const body = String(req.body.body || '').trim().slice(0, 5000);
+  if (!body) throw new AppError('Nội dung bình luận là bắt buộc.', 400);
+  bug.comments.push({ body, source: 'ETMS', createdAt: new Date() });
+  await bug.save({ validateBeforeSave: false });
+  if (bug.externalIssue?.provider === 'Jira') await require('../services/integrationSyncService').enqueueJiraBugSync({ bugId: bug._id, comment: body, userId: req.user._id });
+  send(res, bug.comments.at(-1), 201);
 };
 
 const deleteBug = async (req, res) => {
@@ -102,11 +148,16 @@ const decideBug = async (req, res) => {
   bug.approvalStatus = req.body.decision; bug.reviewNote = String(req.body.reviewNote || '').trim().slice(0, 2000);
   bug.approvedBy = req.body.decision === 'Approved' ? req.user._id : null; bug.approvedAt = req.body.decision === 'Approved' ? new Date() : null;
   if (req.body.decision === 'Approved' && (bug.jiraRequested || req.body.createJira) && !bug.externalIssue?.key) {
-    const issue = await createJiraBug({ summary: bug.title, rootCause: bug.rootCause?.summary, confidence: bug.rootCause?.confidence, severity: bug.severity, priority: bug.priority, environment: bug.environment, steps: bug.stepsToReproduce, evidence: bug.rootCause?.evidence || [] });
+    const jiraAttachments = bug.attachments.flatMap((item) => {
+      const match = String(item.fileUrl || '').match(/^\/api\/v1\/test-executions\/([a-f\d]{24})\/evidence\/([^/?#]+)$/i);
+      if (!match) return [];
+      return [{ path: path.resolve('storage', 'execution-evidence', match[1], path.basename(decodeURIComponent(match[2]))), name: item.fileName, type: item.fileType }];
+    });
+    const issue = await createJiraBug({ summary: bug.title, rootCause: bug.rootCause?.summary, confidence: bug.rootCause?.confidence, severity: bug.severity, priority: bug.priority, environment: bug.environment, steps: `${bug.stepsToReproduce}\n\nExpected: ${bug.expectedResult}\nActual: ${bug.actualResult}`, evidence: bug.rootCause?.evidence || [], targetUrl: bug.environment, attachments: jiraAttachments });
     bug.externalIssue = { provider: 'Jira', id: issue.id, key: issue.key, url: issue.url, syncedAt: issue.syncedAt, attachmentWarnings: issue.warnings || [] };
   }
   await bug.save({ validateBeforeSave: false });
   send(res, bug);
 };
 
-module.exports = { listBugs, getBug, createBug, updateBug, deleteBug, createRetest, decideBug };
+module.exports = { listBugs, getBug, createBug, updateBug, deleteBug, createRetest, decideBug, analyzeBug, reviewRootCause, addComment };

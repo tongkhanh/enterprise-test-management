@@ -38,3 +38,17 @@ test('source scope requires explicit plan cases or profile and story linkage', (
 test('planning limits reject zero, nonfinite, and fractional case counts', () => {
   for (const body of [{ capacityMinutes: 0 }, { capacityMinutes: Infinity }, { maxCases: 1.5 }]) assert.throws(() => planning.limits(body, {}), /Nhập thời gian/);
 });
+test('roadmap calculates the minimum Cycle count and assigns every estimated case once', () => {
+  const result = planning.buildRoadmap([item('critical', 'Critical', 40), item('high', 'High', 40), item('low', 'Low', 20)], { capacityMinutes: 60, maxCases: 2, cycleCount: 0 });
+  assert.equal(result.summary.minimumCycles, 2);
+  assert.equal(result.cycles.length, 2);
+  const assigned = result.cycles.flatMap((cycle) => cycle.assignments.map((row) => row.boardItemId));
+  assert.deepEqual([...assigned].sort(), ['critical', 'high', 'low']);
+  assert.equal(new Set(assigned).size, assigned.length);
+  assert.ok(result.cycles.every((cycle) => cycle.estimatedMinutes <= cycle.capacityMinutes));
+});
+test('roadmap keeps unknown estimates visible but unassigned instead of inventing effort', () => {
+  const result = planning.buildRoadmap([item('ready', 'High', 15), item('unknown', 'Critical', 0)], { capacityMinutes: 60, maxCases: 10 });
+  assert.equal(result.summary.missingEstimates, 1);
+  assert.deepEqual(result.unassigned, [{ boardItemId: 'unknown', reason: 'Thiếu thời gian ước tính.' }]);
+});

@@ -28,7 +28,7 @@ const groups = [
   {
     label: 'Kế hoạch & thực thi',
     items: [
-      { label: 'Cycles & Planning', to: '/cycles', icon: Repeat2 },
+      { label: 'Cycles & Test Planning', to: '/cycles', icon: Repeat2 },
       { label: 'Backlog & Test Board', to: '/board', icon: Columns3 },
       { label: 'Công việc Agile', to: '/issues', icon: ListTodo },
     ],

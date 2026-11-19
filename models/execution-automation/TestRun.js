@@ -33,6 +33,12 @@ const testRunSchema = new Schema(
       default: '',
       // VD: "iOS 16 - iPhone 14 Pro", "Chrome 120 - Windows 11"
     },
+    executionMode: { type: String, enum: ['Manual', 'Automation'], default: 'Manual', index: true },
+    testEnvironment: { type: Schema.Types.ObjectId, ref: 'TestEnvironment', default: null },
+    buildLabel: { type: String, trim: true, default: '' },
+    browser: { type: String, trim: true, default: '' },
+    operatingSystem: { type: String, trim: true, default: '' },
+    device: { type: String, trim: true, default: '' },
 
     status: {
       type: String,
@@ -51,6 +57,15 @@ const testRunSchema = new Schema(
     completedAt: {
       type: Date,
       default: null,
+    },
+    completionReview: {
+      exitCriteriaMet: { type: Boolean, default: false },
+      residualRisks: { type: [String], default: [] },
+      deviations: { type: [String], default: [] },
+      lessonsLearned: { type: [String], default: [] },
+      releaseRecommendation: { type: String, enum: ['Pending', 'Go', 'ConditionalGo', 'NoGo'], default: 'Pending' },
+      reviewedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+      reviewedAt: { type: Date, default: null },
     },
 
     // -------------------------------------------

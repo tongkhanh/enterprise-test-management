@@ -12,5 +12,8 @@ router.patch('/bugs/:id', authorize('bug:update', 'bug:manage'), auditLog('UPDAT
 router.delete('/bugs/:id', authorize('bug:manage'), auditLog('DELETE', 'Bug'), asyncHandler(c.deleteBug));
 router.post('/bugs/:id/retests', authorize('bug:retest', 'bug:manage'), auditLog('CREATE', 'BugRetest'), asyncHandler(c.createRetest));
 router.patch('/bugs/:id/decision', authorize('bug:manage'), auditLog('APPROVE', 'Bug'), asyncHandler(c.decideBug));
+router.post('/bugs/:id/root-cause/analyze', authorize('bug:create', 'bug:manage'), auditLog('ANALYZE', 'Bug'), asyncHandler(c.analyzeBug));
+router.patch('/bugs/:id/root-cause/review', authorize('bug:update', 'bug:manage'), auditLog('UPDATE', 'Bug'), asyncHandler(c.reviewRootCause));
+router.post('/bugs/:id/comments', authorize('bug:update', 'bug:create', 'bug:manage'), auditLog('UPDATE', 'Bug'), asyncHandler(c.addComment));
 
 module.exports = router;

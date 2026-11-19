@@ -1,11 +1,12 @@
 const router = require('express').Router();
 const c = require('../controllers/agileController');
 const cycles = require('../controllers/cycleController');
+const deliveryCycles = require('../controllers/deliveryCycleController');
 const { protect } = require('../middleware/auth');
 const { authorize, authorizeWorkspaceList } = require('../middleware/rbac');
 const { asyncHandler, auditLog } = require('../middleware/error');
 
-router.use(['/workspaces', '/projects', '/sprints', '/cycles', '/labels', '/releases'], protect);
+router.use(['/workspaces', '/projects', '/sprints', '/cycles', '/delivery-cycles', '/labels', '/releases'], protect);
 // Listing workspaces must derive the caller's WorkspaceMembership before the
 // controller builds its filter.  Using the scoped middleware keeps invited
 // QA Managers aligned with Project listings and avoids falling back to their
@@ -29,6 +30,9 @@ router.get('/cycles', authorizeWorkspaceList('project:read'), asyncHandler(cycle
 router.post('/cycles', authorize('agile:manage'), auditLog('CREATE', 'Sprint'), asyncHandler(cycles.createCycle));
 router.patch('/cycles/:id', authorize('agile:manage'), auditLog('UPDATE', 'Sprint'), asyncHandler(cycles.updateCycle));
 router.delete('/cycles/:id', authorize('agile:manage'), auditLog('DELETE', 'Sprint'), asyncHandler(cycles.deleteCycle));
+router.get('/delivery-cycles', authorizeWorkspaceList('project:read'), asyncHandler(deliveryCycles.list));
+router.post('/delivery-cycles/configure', authorize('agile:manage'), auditLog('CREATE', 'DeliveryCycle'), asyncHandler(deliveryCycles.configure));
+router.patch('/delivery-cycles/:id', authorize('agile:manage'), auditLog('UPDATE', 'DeliveryCycle'), asyncHandler(deliveryCycles.update));
 router.get('/labels', authorize('project:read'), asyncHandler(cycles.listLabels));
 router.post('/labels', authorize('agile:manage'), auditLog('CREATE', 'ProjectLabel'), asyncHandler(cycles.createLabel));
 router.patch('/labels/:id', authorize('agile:manage'), auditLog('UPDATE', 'ProjectLabel'), asyncHandler(cycles.updateLabel));

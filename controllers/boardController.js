@@ -1,12 +1,13 @@
 const mongoose = require('mongoose');
 const {
   BoardItem, Sprint, ProjectLabel, ProjectMembership, TestCase,
-  TestPlan, TestRun, TestExecution,
+  TestPlan, TestRun, TestExecution, AutomationScript, TestEnvironment,
 } = require('../models');
 const { AppError, assertObjectId, send } = require('../utils/http');
 const { assertProjectAccess } = require('../services/projectAccessService');
 const { recordProjectActivity } = require('../services/projectActivityService');
 const { nextPosition } = require('../services/boardService');
+const { deriveExecutionReadiness, assignExecutionModes } = require('../services/executionModeService');
 
 const STATUSES = ['Backlog', 'Todo', 'InProgress', 'InReview', 'Done'];
 const transitions = {
@@ -20,7 +21,7 @@ const transitions = {
 const itemPopulate = [
   {
     path: 'testCase',
-    select: 'title description preconditions priority type status estimatedTime testSteps tags storyCoverage targetUrl e2e.systemProfile testSuite userStory createdBy',
+    select: 'title description preconditions priority type status estimatedTime testSteps tags storyCoverage targetUrl automationCandidate executionProfile e2e.systemProfile testSuite userStory createdBy updatedAt',
     populate: [
       { path: 'testSuite', select: 'name project' },
       { path: 'userStory', select: 'title acceptanceCriteria' },
@@ -31,8 +32,28 @@ const itemPopulate = [
   { path: 'assignee createdBy lastMovedBy', select: 'fullName email avatar' },
   { path: 'labels', select: 'name color description' },
   { path: 'testPlan', select: 'name status systemProfile' },
-  { path: 'testRun', select: 'name status passedCount failedCount totalCases' },
+  { path: 'testRun', select: 'name status executionMode passedCount failedCount totalCases' },
 ];
+
+const attachReadiness = async (items) => {
+  const caseIds = items.map((item) => item.testCase?._id).filter(Boolean);
+  const scripts = caseIds.length
+    ? await AutomationScript.find({ testCase: { $in: caseIds } }).select('testCase sourceCaseUpdatedAt status engine createdAt').sort('-createdAt').lean()
+    : [];
+  const byCase = new Map();
+  scripts.forEach((script) => {
+    const key = String(script.testCase);
+    if (!byCase.has(key)) byCase.set(key, []);
+    byCase.get(key).push(script);
+  });
+  return items.map((item) => {
+    const plain = typeof item.toObject === 'function' ? item.toObject() : item;
+    return {
+      ...plain,
+      executionReadiness: deriveExecutionReadiness(plain.testCase, byCase.get(String(plain.testCase?._id)) || []),
+    };
+  });
+};
 
 const listBoard = async (req, res) => {
   if (!req.query.project) throw new AppError('Project là bắt buộc.', 400);
@@ -49,9 +70,10 @@ const listBoard = async (req, res) => {
     filter.testCase = { $in: caseIds };
   }
   const items = await BoardItem.find(filter).sort({ status: 1, position: 1, createdAt: 1 }).populate(itemPopulate);
+  const enriched = await attachReadiness(items);
   const columns = Object.fromEntries(STATUSES.map((status) => [status, []]));
-  items.forEach((item) => columns[item.status].push(item));
-  send(res, { columns, items, statuses: STATUSES, transitions });
+  enriched.forEach((item) => columns[item.status].push(item));
+  send(res, { columns, items: enriched, statuses: STATUSES, transitions });
 };
 
 const getBoardItem = async (req, res) => {
@@ -59,7 +81,7 @@ const getBoardItem = async (req, res) => {
   const item = await BoardItem.findById(req.params.id).populate(itemPopulate);
   if (!item) throw new AppError('Board Item không tồn tại.', 404);
   await assertProjectAccess(req.user, item.project);
-  send(res, item);
+  send(res, (await attachReadiness([item]))[0]);
 };
 
 const updateBoardItem = async (req, res) => {
@@ -105,7 +127,13 @@ const moveBoardItem = async (req, res) => {
     throw new AppError(`Không thể chuyển trực tiếp từ ${fromStatus} sang ${toStatus}.`, 409);
   }
   if (toStatus === 'InReview' && item.reviewState !== 'Approved') throw new AppError('Test Case cần được QA duyệt lại trước khi vào In Review.', 409);
-  if (toStatus === 'Done' && !item.testRun) throw new AppError('Hãy tạo Test Plan/Test Run cho thẻ trước khi chuyển Done.', 409);
+  if (toStatus === 'Done') {
+    if (!item.testRun) throw new AppError('Hãy tạo Execution Plan/Test Run cho thẻ trước khi chuyển Done.', 409);
+    const execution = await TestExecution.findOne({ testRun: item.testRun, testCase: item.testCase }).select('result actualResult notes bugReported');
+    if (!execution || execution.result === 'NotRun') throw new AppError('Test Case phải được thực thi và có kết quả trước khi chuyển Done.', 409);
+    if (execution.result === 'Failed' && !execution.bugReported) throw new AppError('Kết quả Failed phải được triage và liên kết Bug trước khi chuyển Done.', 409);
+    if (['Blocked', 'Skipped'].includes(execution.result) && !String(execution.actualResult || execution.notes || '').trim()) throw new AppError(`${execution.result} phải có lý do hoặc residual risk trước khi chuyển Done.`, 409);
+  }
 
   const destinationCycle = req.body.cycle === undefined ? item.cycle : req.body.cycle || null;
   if (toStatus !== 'Backlog' && !destinationCycle) throw new AppError('Hãy gán Test Case vào một Cycle trước khi bắt đầu thực hiện.', 409);
@@ -138,11 +166,19 @@ const reorderColumn = async (req, res) => {
 };
 
 const createPlanFromBoard = async (req, res) => {
-  const { project, cycle, boardItemIds, name, environment = 'Staging' } = req.body;
+  const {
+    project, cycle, boardItemIds, name, environment = 'Staging',
+    executionMode = 'Mixed', caseModes = [], testEnvironment,
+    buildLabel = '', browser = '', operatingSystem = '', device = '',
+  } = req.body;
   if (!project || !Array.isArray(boardItemIds) || !boardItemIds.length) throw new AppError('Project và danh sách Board Item là bắt buộc.', 400);
+  if (!Array.isArray(caseModes) || caseModes.some((entry) => !entry || !boardItemIds.map(String).includes(String(entry.boardItemId)) || !['Manual', 'Automation'].includes(entry.mode))) {
+    throw new AppError('Cấu hình phương thức theo Test Case không hợp lệ.', 400);
+  }
   if (boardItemIds.length > 100) throw new AppError('Mỗi Test Plan hỗ trợ tối đa 100 Test Case.', 400);
   await assertProjectAccess(req.user, project);
-  const items = await BoardItem.find({ _id: { $in: boardItemIds }, project, isArchived: false }).populate('testCase', 'title status e2e.systemProfile');
+  const items = await BoardItem.find({ _id: { $in: boardItemIds }, project, isArchived: false })
+    .populate('testCase', 'title status type automationCandidate executionProfile e2e.systemProfile updatedAt');
   if (items.length !== new Set(boardItemIds.map(String)).size) throw new AppError('Có Board Item không tồn tại trong Project.', 404);
   const existingRunIds = [...new Set(items.map((item) => String(item.testRun || '')).filter(Boolean))];
   if (existingRunIds.length === 1 && items.every((item) => String(item.testRun || '') === existingRunIds[0])) {
@@ -157,6 +193,34 @@ const createPlanFromBoard = async (req, res) => {
   const profileIds = [...new Set(items.map((item) => String(item.testCase?.e2e?.systemProfile || '')).filter(Boolean))];
   if (profileIds.length > 1) throw new AppError('Các Test Case E2E phải thuộc cùng một System Profile để tạo một Test Run.', 409);
 
+  const scripts = await AutomationScript.find({ testCase: { $in: items.map((item) => item.testCase._id) } })
+    .select('testCase sourceCaseUpdatedAt status engine createdAt').sort('-createdAt').lean();
+  const scriptsByCase = new Map();
+  scripts.forEach((script) => {
+    const key = String(script.testCase);
+    if (!scriptsByCase.has(key)) scriptsByCase.set(key, []);
+    scriptsByCase.get(key).push(script);
+  });
+  const assignments = assignExecutionModes({
+    executionMode,
+    caseModes,
+    items: items.map((item) => ({
+      boardItemId: String(item._id),
+      boardItem: item,
+      readiness: deriveExecutionReadiness(item.testCase, scriptsByCase.get(String(item.testCase._id)) || []),
+    })),
+  });
+  if (assignments.blocked.length) {
+    throw new AppError('Một số Test Case chưa sẵn sàng cho phương thức thực thi đã chọn.', 409, { blocked: assignments.blocked });
+  }
+  let selectedEnvironment = null;
+  if (assignments.groups.Automation.length) {
+    if (!testEnvironment) throw new AppError('Automation Run cần một Test Environment đang Ready.', 409);
+    assertObjectId(testEnvironment, 'Test Environment ID');
+    selectedEnvironment = await TestEnvironment.findOne({ _id: testEnvironment, project, status: 'Ready' });
+    if (!selectedEnvironment) throw new AppError('Test Environment không thuộc Project hoặc chưa sẵn sàng.', 409);
+  }
+
   const session = await mongoose.startSession();
   let result;
   try {
@@ -169,16 +233,43 @@ const createPlanFromBoard = async (req, res) => {
         kind: 'ExecutionPlan', planLevel: 'CycleExecution', origin: 'Board', systemProfile: profileIds[0] || null,
         environment, project, cycle: cycle || null, boardItems: items.map((item) => item._id),
         testCases: items.map((item) => item.testCase._id), assignee: req.body.assignee || req.user._id,
+        approvalStatus: 'Approved', approvedBy: req.user._id, approvedAt: now,
         createdBy: req.user._id, startDate: now,
       }], { session });
-      const [run] = await TestRun.create([{
-        name: req.body.runName || `Run · ${plan.name}`, description: 'Execution từ Kanban Board',
-        environment, status: 'NotStarted', totalCases: items.length,
-        testPlan: plan._id, assignee: plan.assignee, createdBy: req.user._id,
-      }], { session });
-      await TestExecution.insertMany(items.map((item) => ({ testRun: run._id, testCase: item.testCase._id, result: 'NotRun' })), { session });
-      await BoardItem.updateMany({ _id: { $in: items.map((item) => item._id) } }, { $set: { testPlan: plan._id, testRun: run._id } }, { session });
-      result = { plan, run };
+      const runs = [];
+      for (const mode of ['Manual', 'Automation']) {
+        const group = assignments.groups[mode];
+        if (!group.length) continue;
+        const suffix = assignments.groups.Manual.length && assignments.groups.Automation.length ? ` · ${mode}` : '';
+        const [run] = await TestRun.create([{
+          name: `${req.body.runName || `Run · ${plan.name}`}${suffix}`,
+          description: `${mode} Execution từ Test Board`, executionMode: mode,
+          environment: mode === 'Automation' ? selectedEnvironment.name : environment,
+          testEnvironment: mode === 'Automation' ? selectedEnvironment._id : null,
+          buildLabel, browser, operatingSystem, device,
+          status: 'NotStarted', totalCases: group.length,
+          testPlan: plan._id, assignee: plan.assignee, createdBy: req.user._id,
+        }], { session });
+        await TestExecution.insertMany(group.map((entry) => ({
+          testRun: run._id,
+          testCase: entry.boardItem.testCase._id,
+          executionMode: mode,
+          automationScript: mode === 'Automation' ? entry.readiness.automationScript : null,
+          result: 'NotRun',
+        })), { session });
+        await BoardItem.updateMany(
+          { _id: { $in: group.map((entry) => entry.boardItem._id) } },
+          { $set: { testPlan: plan._id, testRun: run._id } },
+          { session },
+        );
+        runs.push(run);
+      }
+      result = {
+        plan,
+        runs,
+        run: runs[0],
+        summary: { Manual: assignments.groups.Manual.length, Automation: assignments.groups.Automation.length },
+      };
     });
   } finally { await session.endSession(); }
   await recordProjectActivity({ project, actor: req.user._id, action: 'CREATED', entityType: 'TestCase', entityId: items[0].testCase._id, title: `Đã tạo Test Plan “${result.plan.name}” từ ${items.length} thẻ` });
