@@ -19,7 +19,7 @@ import { TestPlanningDocumentEditor } from '/src/features/e2e/QAWorkflow.jsx';
 const e = React.createElement;
 const read = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 let plans = read('audit-plans', []);
-let execution = read('audit-execution', { _id: 'execution', testCase: { _id: 'case', title: 'Synthetic login' }, result: 'Passed', qaVerdict: 'Passed', actualResult: 'Saved QA note', runtimeUrl: 'https://example.test/' });
+let execution = read('audit-execution', { _id: 'execution', testCase: { _id: 'case', title: 'Synthetic login', testSteps: [{ stepNumber: 1, action: 'Previously checked', expectedResult: 'Confirmed' }, { stepNumber: 2, action: 'Untested step', expectedResult: 'Must be checked' }] }, stepResults: [{ stepNumber: 1, status: 'Passed', actualResult: 'Confirmed previously' }], result: 'Passed', qaVerdict: 'Passed', actualResult: 'Saved QA note', runtimeUrl: 'https://example.test/' });
 executionApi.run = async () => ({ run: { _id: 'run', testPlan: { kind: 'ExecutionPlan', approvalStatus: 'Approved' } }, scripts: [], automationJobs: [], executions: [execution] });
 executionApi.recordExecution = async (_id, body) => { execution = { ...execution, ...body }; localStorage.setItem('audit-execution', JSON.stringify(execution)); return { execution }; };
 executionApi.startManualBrowser = async () => { localStorage.setItem('audit-browser-starts', String(Number(localStorage.getItem('audit-browser-starts') || 0) + 1)); return { status: 'Ready' }; };
@@ -84,6 +84,8 @@ try {
   const note = page.getByRole('textbox', { name: 'Ghi chú kết quả' });
   await note.waitFor();
   assert.equal(await note.inputValue(), 'Saved QA note');
+  assert.equal(await page.getByLabel('Kết quả bước 1', { exact: true }).inputValue(), 'Passed');
+  assert.equal(await page.getByLabel('Kết quả bước 2', { exact: true }).inputValue(), 'NotRun');
   await note.fill('Updated QA note');
   await page.getByRole('button', { name: 'Lưu kết quả QA' }).click();
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('audit-execution')).actualResult === 'Updated QA note');

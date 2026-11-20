@@ -51,6 +51,11 @@ test('Manual browser API enforces project/mode/approval, ignores client target U
     const saved = await request('/screenshot', 'POST', {}, 201);
     assert.ok((await m.TestExecution.findById(executionId)).evidence.includes(saved.url));
     assert.equal((await m.TestExecution.findById(executionId)).result, 'NotRun');
+    const saveResult = await fetch(`${base}/test-executions/${executionId}`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ result: 'Blocked', stepResults: [{ stepNumber: 1, status: 'NotRun', actualResult: '' }] }) });
+    assert.equal(saveResult.status, 200);
+    const reopened = await fetch(`${base}/test-runs/${run._id}`, { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json());
+    assert.equal(reopened.data.executions[0].stepResults[0].status, 'NotRun');
+
     const before = calls.length;
     await request('/input', 'POST', { events: [{ type: 'eval', script: 'no' }] }, 400);
     assert.equal(calls.length, before);
