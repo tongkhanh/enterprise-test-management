@@ -6,8 +6,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
+process.chdir(root);
 const harness = `
 import React from 'react';
+import '/src/styles.css';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
@@ -20,6 +22,19 @@ let plans = read('audit-plans', []);
 let execution = read('audit-execution', { _id: 'execution', testCase: { _id: 'case', title: 'Synthetic login' }, result: 'Passed', qaVerdict: 'Passed', actualResult: 'Saved QA note', runtimeUrl: 'https://example.test/' });
 executionApi.run = async () => ({ run: { _id: 'run', testPlan: { kind: 'ExecutionPlan', approvalStatus: 'Approved' } }, scripts: [], automationJobs: [], executions: [execution] });
 executionApi.recordExecution = async (_id, body) => { execution = { ...execution, ...body }; localStorage.setItem('audit-execution', JSON.stringify(execution)); return { execution }; };
+executionApi.startManualBrowser = async () => { localStorage.setItem('audit-browser-starts', String(Number(localStorage.getItem('audit-browser-starts') || 0) + 1)); return { status: 'Ready' }; };
+executionApi.endManualBrowser = async () => ({ status: 'Ended' });
+executionApi.manualBrowserInput = async () => ({});
+executionApi.captureManualBrowser = async () => { localStorage.setItem('audit-browser-capture', 'saved'); return { url: '/fixture.png' }; };
+const actualFetch = window.fetch.bind(window);
+window.fetch = async (url, options) => {
+ if (!String(url).includes('/manual-browser/stream')) return actualFetch(url, options);
+ const body = new ReadableStream({ start(controller) {
+  controller.enqueue(new TextEncoder().encode('event: state\\ndata: '+JSON.stringify({tabs:[],url:'https://example.test/',width:1440,height:900})+'\\n\\n'));
+  options.signal.addEventListener('abort', () => controller.close(), { once: true });
+ } });
+ return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
+};
 automationLabApi.datasets = async () => [];
 automationLabApi.fixtures = async () => [];
 executionApi.createPlan = async (body) => { const plan = { ...body, _id: 'plan-' + plans.length }; plans.push(plan); localStorage.setItem('audit-plans', JSON.stringify(plans)); return plan; };
@@ -56,6 +71,7 @@ try {
     throw error;
   });
   const page = await browser.newPage();
+  await page.route('https://fonts.googleapis.com/**', (route) => route.fulfill({ contentType: 'text/css', body: '' }));
   // The first Vite transform compiles the large QA workflow on demand. A cold
   // GitHub runner can legitimately take longer than 15 seconds even though the
   // page is healthy, so keep assertion waits bounded but give initial
@@ -81,6 +97,24 @@ try {
   await note.waitFor();
   assert.equal(await note.inputValue(), '');
   console.log('PASS: saved QA notes reload, can be edited without changing verdict, and can be cleared.');
+
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.getByRole('button', { name: 'Bắt đầu Manual Test', exact: true }).click();
+  const workspace = page.getByRole('dialog', { name: 'Không gian thực thi Manual', exact: true });
+  await workspace.getByText('● Đã kết nối', { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => localStorage.getItem('audit-browser-starts')), '1');
+  await note.fill('Manual workspace QA note');
+  await page.getByRole('button', { name: 'Lưu kết quả QA' }).click();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('audit-execution')).actualResult === 'Manual workspace QA note');
+  assert.equal(await page.evaluate(() => localStorage.getItem('audit-browser-starts')), '1', 'saving QA results must not restart the browser');
+  await page.getByRole('button', { name: 'Chụp evidence', exact: true }).click();
+  await page.waitForFunction(() => localStorage.getItem('audit-browser-capture') === 'saved');
+  const width = await page.getByLabel('Màn hình website kiểm thử tương tác').evaluate((element) => element.getBoundingClientRect().width);
+  assert.ok(width > 600, 'remote browser should have usable space beside QA controls');
+  await page.getByRole('button', { name: 'Kết thúc & quay lại Test Run', exact: true }).click();
+  assert.equal(await note.inputValue(), 'Manual workspace QA note');
+  assert.equal(await page.getByRole('dialog', { name: 'Không gian thực thi Manual', exact: true }).count(), 0);
+  console.log('PASS: split Manual workspace, evidence capture, result saving without browser restart, and return to Test Run.');
 
   await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.getByRole('tab', { name: 'Tự soạn / chỉnh sửa', exact: true }).click();

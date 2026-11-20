@@ -5,6 +5,7 @@ const { authorize, authorizeWorkspaceList } = require('../middleware/rbac');
 const { asyncHandler, auditLog } = require('../middleware/error');
 const { uploadTestPlanDocument } = require('../middleware/documentUpload');
 const uploadExecutionEvidence = require('../middleware/executionEvidenceUpload');
+const manualBrowser = require('../controllers/manualBrowserController');
 
 router.post('/automation/webhook', asyncHandler(c.automationWebhook));
 router.use(['/test-plans', '/test-runs', '/test-executions', '/automation-results', '/automation', '/integrations'], protect);
@@ -27,6 +28,12 @@ router.get('/test-runs/:id', authorize('execution:manage', 'execution:execute'),
 router.post('/test-runs/:id/execute', authorize('execution:manage', 'execution:execute'), asyncHandler(c.executeAutomatedRun));
 router.patch('/test-runs/:id', authorize('execution:manage'), auditLog('UPDATE', 'TestRun'), asyncHandler(c.updateRun));
 router.patch('/test-executions/:id', authorize('execution:execute', 'execution:manage'), auditLog('UPDATE', 'TestExecution'), asyncHandler(c.recordExecution));
+router.post('/test-executions/:id/manual-browser', authorize('execution:execute', 'execution:manage'), asyncHandler(manualBrowser.start));
+router.get('/test-executions/:id/manual-browser', authorize('execution:execute', 'execution:manage'), asyncHandler(manualBrowser.status));
+router.delete('/test-executions/:id/manual-browser', authorize('execution:execute', 'execution:manage'), asyncHandler(manualBrowser.end));
+router.get('/test-executions/:id/manual-browser/stream', authorize('execution:execute', 'execution:manage'), asyncHandler(manualBrowser.stream));
+router.post('/test-executions/:id/manual-browser/input', authorize('execution:execute', 'execution:manage'), asyncHandler(manualBrowser.input));
+router.post('/test-executions/:id/manual-browser/screenshot', authorize('execution:execute', 'execution:manage'), auditLog('UPDATE', 'TestExecution'), asyncHandler(manualBrowser.screenshot));
 router.post('/test-executions/:id/evidence', authorize('execution:execute', 'execution:manage'), uploadExecutionEvidence, auditLog('UPDATE', 'TestExecution'), asyncHandler(c.uploadExecutionEvidence));
 router.get('/test-executions/:id/evidence/:name', authorize('execution:execute', 'execution:manage'), asyncHandler(c.downloadExecutionEvidence));
 router.post('/test-executions/:id/auto', authorize('execution:execute', 'execution:manage'), asyncHandler(c.executeReviewedScript));

@@ -502,7 +502,7 @@ const getRun = async (req, res) => {
   ]);
   await ensureProjectAccess(req, run.testPlan.project);
   const executions = await TestExecution.find({ testRun: run._id })
-    .populate('testCase', 'title testSteps priority type status e2e targetUrl updatedAt')
+    .populate('testCase', 'title testSteps generatedTestData priority type status e2e targetUrl updatedAt')
     .populate('executedBy', 'fullName')
     .populate('automationRun', 'status engine script result error')
     .populate('automationScript', 'status engine filename sourceCaseUpdatedAt runtimeUrl')

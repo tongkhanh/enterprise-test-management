@@ -54,7 +54,7 @@ test('reports distinguish execution modes and retries, and exports resolve the c
       testSteps: [{ stepNumber: 1, action: 'Check login', expectedResult: 'Expected login outcome' }],
     })));
     const plan = await m.TestPlan.create({ name: 'Login plan', project: project._id, kind: 'ExecutionPlan', approvalStatus: 'Approved', testCases: cases.map((item) => item._id), createdBy: owner._id });
-    const run = await m.TestRun.create({ name: 'Manual and Auto run', testPlan: plan._id, status: 'Completed', environment: 'environment binding pending', totalCases: 2, passedCount: 2, createdBy: owner._id });
+    const run = await m.TestRun.create({ name: 'Manual and Auto run', testPlan: plan._id, status: 'Completed', environment: 'environment binding pending', totalCases: 2, passedCount: 2, completionReview: { exitCriteriaMet: true, releaseRecommendation: 'Go', reviewedBy: owner._id, reviewedAt: new Date() }, createdBy: owner._id });
     const executions = await m.TestExecution.insertMany(cases.map((item) => ({
       testRun: run._id, testCase: item._id, result: 'Passed', qaVerdict: 'Passed',
       executedAt: new Date(), executedBy: owner._id,
