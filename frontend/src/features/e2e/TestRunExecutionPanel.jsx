@@ -6,19 +6,21 @@ import { toast } from "sonner";
 import { automationLabApi, bugApi, executionApi } from "@/api/client";
 import { Badge, Button, Card, Input, Select, Textarea } from "@/components/ui";
 import RemoteManualBrowser from "./RemoteManualBrowser";
+import AutomationLiveView from "./AutomationLiveView";
 
 const activeStatuses = new Set(["Queued", "Preparing", "Running", "Collecting"]);
 
 function ExecutionCase({ execution, scripts, jobs, project, profile, run, refresh }) {
   const mode = execution.executionMode || run.executionMode || (execution.automationRun ? "Automation" : "Manual");
   const [manualOpen, setManualOpen] = useState(false);
+  const [automationOpen, setAutomationOpen] = useState(false);
   const [split, setSplit] = useState(40);
   const [closing, setClosing] = useState(false);
   useEffect(() => {
-    if (!manualOpen) return;
+    if (!manualOpen && !automationOpen) return;
     const previous = document.body.style.overflow; document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = previous; };
-  }, [manualOpen]);
+  }, [manualOpen, automationOpen]);
   const [script, setScript] = useState("");
   const [dataset, setDataset] = useState("");
   const [fixture, setFixture] = useState("");
@@ -39,13 +41,15 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
     (!item.runtimeUrl || item.runtimeUrl === execution.runtimeUrl) &&
     (!testCase?.e2e?.systemProfile || item.sourceCaseUpdatedAt === testCase.updatedAt),
   );
-  const selectedScript = options.find((item) => item._id === script)?._id || options[0]?._id || "";
+  const boundScript = execution.automationScript?._id || execution.automationScript;
+  const selectedScript = options.find((item) => item._id === script)?._id || options.find((item) => item._id === boundScript)?._id || options[0]?._id || "";
   const planReady = run.testPlan.kind !== "ExecutionPlan" || run.testPlan.approvalStatus === "Approved";
   const params = new URLSearchParams({ project, run: run._id, testCase: testCase?._id || "" });
   if (profile) params.set("profile", profile);
   const datasets = useQuery({ queryKey: ["ops-data", project], queryFn: () => automationLabApi.datasets(project), enabled: mode === "Automation" });
   const fixtures = useQuery({ queryKey: ["ops-fixtures", project], queryFn: () => automationLabApi.fixtures(project), enabled: mode === "Automation" });
   const readyFixtures = (fixtures.data || []).filter((item) => (item.environment?._id || item.environment) === execution.environmentId);
+  const preflight = useQuery({ queryKey: ['automation-preflight', execution._id, selectedScript, dataset, fixture, runner?.status, runner?.attempt], queryFn: () => executionApi.automationPreflight(execution._id, { scriptId: selectedScript || undefined, dataset: dataset || undefined, fixture: fixture || undefined }), enabled: mode === 'Automation', refetchOnWindowFocus: true });
 
   const save = useMutation({
     mutationFn: () => executionApi.recordExecution(execution._id, { result: verdict || execution.result, actualResult: note.trim(), stepResults }),
@@ -59,7 +63,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
   });
   const start = useMutation({
     mutationFn: () => executionApi.executeScript(execution._id, { scriptId: selectedScript, dataset: dataset || undefined, fixture: readyFixtures.some((item) => item._id === fixture) ? fixture : undefined }),
-    onSuccess: () => { refresh(); toast.success("Đã xếp hàng script được duyệt"); },
+    onSuccess: () => { setAutomationOpen(true); preflight.refetch(); refresh(); toast.success("Đã xếp hàng script được duyệt"); },
     onError: (error) => toast.error(error.message),
   });
   const logBug = useMutation({
@@ -100,6 +104,8 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
       ) : (
         <div className="space-y-2">
           <Button asChild variant="outline"><Link to={`/automation?${params}`}>Sinh / chỉnh script trong Automation Lab</Link></Button>
+          {!!testCase?.testSteps?.length && <details className="rounded border p-3 text-sm"><summary>Các bước Test Case / Expected result</summary><ol className="mt-2 list-inside list-decimal space-y-2">{testCase.testSteps.map((step, index) => <li key={index}>{step.action}<p className="text-xs text-slate-500">Expected: {step.expectedResult}</p></li>)}</ol></details>}
+          <div aria-label="Automation readiness" className="rounded border p-3 text-sm"><strong>{preflight.isPending ? 'Đang kiểm tra readiness…' : preflight.data?.ready ? 'Sẵn sàng Automation' : 'Cần chuẩn bị trước khi chạy'}</strong>{preflight.isError && <p className="text-red-600">{preflight.error.message}</p>}<ul className="mt-2 space-y-1">{preflight.data?.checks.map((item) => <li key={item.name} className={item.ready ? 'text-emerald-700' : 'text-amber-700'}>{item.ready ? '✓' : '○'} {item.name}{!item.ready && ` · ${item.detail}`}</li>)}</ul><Button size="sm" variant="ghost" onClick={() => preflight.refetch()}>Kiểm tra lại</Button></div>
           <label className="block">
             <span className="label">Script đã duyệt</span>
             <Select value={selectedScript} onChange={(event) => setScript(event.target.value)}>
@@ -111,7 +117,8 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
           {!!readyFixtures.length && <label className="block"><span className="label">Fixture</span><Select value={fixture} onChange={(event) => setFixture(event.target.value)}><option value="">Không dùng fixture</option>{readyFixtures.map((item) => <option key={item._id} value={item._id}>{item.name}</option>)}</Select></label>}
           {!planReady && <p className="text-sm text-amber-700">QA Manager cần duyệt Execution Plan trước khi chạy.</p>}
           {!execution.environmentId && <p className="text-sm text-amber-700">Hãy gắn Test Environment Ready cho Automation.</p>}
-          <Button disabled={!selectedScript || !execution.environmentId || !planReady || runnerActive || start.isPending} onClick={() => start.mutate()}>Chạy script đã duyệt</Button>
+          <Button disabled={!selectedScript || !execution.environmentId || !planReady || !preflight.data?.ready || runnerActive || start.isPending} onClick={() => start.mutate()}>{runner ? 'Retest bằng script đã duyệt' : 'Chạy script đã duyệt'}</Button>
+          {runner && <Button variant="outline" onClick={() => setAutomationOpen(true)}>Theo dõi runner & lịch sử</Button>}
         </div>
       )}
       {runner && <div className="space-y-1 rounded-md border p-3 text-sm">
@@ -145,6 +152,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
       </form>}
     </Card>
   );
+  if (automationOpen) return createPortal(<div role="dialog" aria-modal="true" aria-label="Không gian thực thi Automation" className="fixed inset-0 z-[100] flex flex-col bg-white dark:bg-slate-950"><header className="flex items-center justify-between gap-3 border-b p-3"><div><h2 className="font-semibold">Automation Test · {testCase?.title}</h2><p className="text-xs text-slate-500">Runner điều khiển trình duyệt; QA theo dõi kết quả, assertions và evidence.</p></div><Button variant="outline" onClick={() => setAutomationOpen(false)}>Quay lại Test Run</Button></header><div className="flex min-h-0 flex-1 flex-col md:flex-row"><div className="overflow-auto md:w-2/5">{card}</div><div className="min-h-80 min-w-0 flex-1"><AutomationLiveView executionId={execution._id} runner={runner} history={preflight.data?.history || []} /></div></div></div>, document.body);
   if (!manualOpen) return card;
   return createPortal(<div role="dialog" aria-modal="true" aria-label="Không gian thực thi Manual" className="fixed inset-0 z-[100] flex flex-col bg-white dark:bg-slate-950">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b p-3 dark:border-slate-800"><div><h2 className="font-semibold">Manual Test · {testCase?.title}</h2><p className="text-xs text-slate-500">Thao tác website bên phải, ghi nhận kết quả và evidence bên trái.</p></div><label className="flex items-center gap-2 text-xs">Độ rộng QA<input aria-label="Độ rộng bảng kết quả QA" type="range" min="30" max="65" value={split} onChange={(event) => setSplit(Number(event.target.value))} /></label><Button variant="ghost" title="Giữ phiên để tiếp tục; tự đóng sau 15 phút không thao tác" onClick={() => setManualOpen(false)}>Thu gọn</Button><Button variant="outline" disabled={closing} onClick={async () => { setClosing(true); try { await executionApi.endManualBrowser(execution._id); setManualOpen(false); } catch (error) { if ([404, 410].includes(error.status)) setManualOpen(false); else toast.error(error.message); } finally { setClosing(false); } }}>{closing ? 'Đang đóng…' : 'Kết thúc & quay lại Test Run'}</Button></header>

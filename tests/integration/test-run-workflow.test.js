@@ -35,6 +35,7 @@ test('a Test Run records manual results and runs the reviewed script while retai
   }));
   t.mock.method(queue, 'enqueueAutomationRun', async () => ({ id: 'integration-job' }));
   t.mock.method(Docker.prototype, 'pull', async () => ({}));
+  t.mock.method(Docker.prototype, 'getImage', () => ({ inspect: async () => ({}) }));
   t.mock.method(Modem.prototype, 'followProgress', (_stream, done) => done());
   t.mock.method(Docker.prototype, 'createContainer', async (options) => {
     const directory = options.HostConfig.Binds[0].slice(0, -'/workspace'.length - 1);
@@ -43,7 +44,7 @@ test('a Test Run records manual results and runs the reviewed script while retai
     assert.match(code, /Alternate login completed/);
     return {
       start: async () => {},
-      wait: async () => ({ StatusCode: 1 }),
+      wait: async () => { await fs.mkdir(path.join(directory, '.etms-live'), { recursive: true }); await fs.writeFile(path.join(directory, '.etms-live/state.json'), JSON.stringify({ status: 'Failed' })); return { StatusCode: 1 }; },
       logs: async () => Buffer.from('Expected alternate login confirmation was absent'),
       remove: async () => {},
     };
@@ -115,6 +116,9 @@ test('a Test Run records manual results and runs the reviewed script while retai
     const execution = (await request(`/test-runs/${auto._id}`)).executions[0];
     const draft = await request('/automation-scripts', 'POST', { testCase: testCase._id, engine: 'Playwright' }, 201);
     assert.equal(draft.status, 'Generated');
+    const blockedReadiness = await request(`/test-executions/${execution._id}/automation-preflight?scriptId=${draft._id}`);
+    assert.equal(blockedReadiness.ready, false);
+    assert.equal(blockedReadiness.checks.find((item) => item.name === 'Script').ready, false);
     assert.ok(draft.generationNote);
     assert.equal((await request(`/automation-scripts/${draft._id}/validate`, 'POST', { code: draft.code })).status, 'Generated');
     aiConfigured = true;
@@ -127,6 +131,7 @@ test('a Test Run records manual results and runs the reviewed script while retai
     const validated = await request(`/automation-scripts/${generated._id}/validate`, 'POST', { code });
     assert.equal(validated.status, 'Validated');
     await request(`/automation-scripts/${generated._id}/review`, 'PATCH', { status: 'Approved' });
+    assert.equal((await request(`/test-executions/${execution._id}/automation-preflight?scriptId=${generated._id}`)).ready, true);
     const queued = await request(`/test-executions/${execution._id}/auto`, 'POST', { scriptId: generated._id }, 202);
     automationRunId = queued._id;
     await request(`/test-executions/${execution._id}/auto`, 'POST', { scriptId: generated._id }, 409);
@@ -140,8 +145,26 @@ test('a Test Run records manual results and runs the reviewed script while retai
     assert.equal(detail.executions[0].automationRun.status, 'Failed');
     assert.equal(detail.automationJobs[0].status, 'Failed');
     assert.ok(detail.automationJobs[0].artifacts.Log[0].url);
+    const readiness = await request(`/test-executions/${execution._id}/automation-preflight?scriptId=${generated._id}`);
+    assert.equal(readiness.history[0]._id, automationRunId);
+    const monitored = await fetch(`${base}/test-executions/${execution._id}/automation-live`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(monitored.status, 200);
+    assert.match(await monitored.text(), /"status":"Failed"/);
+    await m.AutomationRun.updateOne({ _id: automationRunId }, { status: 'Passed', attempt: 2 });
+    const historical = await fetch(`${base}/test-executions/${execution._id}/automation-live?attempt=1`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.match(await historical.text(), /"status":"Failed"/, 'an older attempt must retain its own outcome instead of inheriting the latest retry');
+    await m.AutomationRun.updateOne({ _id: automationRunId }, { status: 'Failed', attempt: 1 });
+    await request(`/test-executions/${manualExecution._id}/automation-live?run=${automationRunId}`, 'GET', undefined, 404);
     const reported = await request('/bugs', 'POST', { project: project._id, testExecution: execution._id, title: 'Runner discrepancy', description: 'Runner did not see the confirmation', severity: 'Minor', priority: 'Low' }, 201);
     assert.equal(reported.bug.automationResult, detail.automationJobs[0]._id);
+    const replacement = await request('/automation-scripts', 'POST', { testCase: testCase._id, engine: 'Playwright' }, 201);
+    await request(`/test-executions/${execution._id}/auto`, 'POST', { scriptId: replacement._id }, 409);
+    await request(`/automation-scripts/${replacement._id}/validate`, 'POST', { code });
+    await request(`/automation-scripts/${replacement._id}/review`, 'PATCH', { status: 'Approved' });
+    const retest = await request(`/test-executions/${execution._id}/auto`, 'POST', { scriptId: replacement._id }, 202);
+    assert.notEqual(retest._id, automationRunId);
+    assert.equal(String((await m.TestExecution.findById(execution._id)).automationScript), replacement._id);
+    assert.equal((await m.AutomationRun.findById(automationRunId)).status, 'Failed', 'Retest must preserve the prior attempt and outcome');
 
     const negative = await m.TestCase.create({
       title: 'Incorrect password', type: 'Automated', status: 'Approved', testSuite: suite._id, createdBy: owner._id,

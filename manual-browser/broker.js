@@ -29,9 +29,10 @@ function createBroker({ secret, docker = new Docker(), image = process.env.MANUA
     const existing = sessions.get(key);
     if (existing) {
       if (existing.targetUrl !== targetUrl) throw Object.assign(new Error('URL đã thay đổi. Kết thúc phiên cũ trước khi mở lại.'), { status: 409 });
-      return existing;
+      try { if ((await requestRuntime(existing, '/health', { signal: AbortSignal.timeout(2500) })).ok) return existing; } catch { /* expired/crashed browser */ }
+      await destroy(key);
     }
-    if (sessions.size + pending.size >= maxSessions || [...sessions.keys(), ...pending.keys()].some((entry) => entry.startsWith(`${identity.userId}:`) && entry !== key)) throw Object.assign(new Error('Đã đạt giới hạn phiên. Kết thúc phiên Manual đang mở trước.'), { status: 409 });
+    if (sessions.size + [...pending.keys()].filter((entry) => entry !== key).length >= maxSessions || [...sessions.keys(), ...pending.keys()].some((entry) => entry.startsWith(`${identity.userId}:`) && entry !== key)) throw Object.assign(new Error('Đã đạt giới hạn phiên. Kết thúc phiên Manual đang mở trước.'), { status: 409 });
     try { await validateUrl(targetUrl); }
     catch (error) { throw Object.assign(new Error(error.message), { status: error.statusCode || 400 }); }
     const token = crypto.randomBytes(32).toString('hex');
@@ -48,7 +49,8 @@ function createBroker({ secret, docker = new Docker(), image = process.env.MANUA
       if (!ip) throw new Error('Manual browser network unavailable.');
       const item = { container, token, url: `http://${ip}:3101`, targetUrl, createdAt: Date.now(), lastActivity: Date.now() };
       let ready = false;
-      for (let attempt = 0; attempt < 30; attempt++) {
+      const deadline = Date.now() + 45000;
+      while (Date.now() < deadline) {
         try { const response = await requestRuntime(item, '/health', { signal: AbortSignal.timeout(1500) }); if (response.ok) { ready = true; break; } } catch { /* browser startup */ }
         await wait(500);
       }

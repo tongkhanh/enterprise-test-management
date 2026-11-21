@@ -7,6 +7,7 @@ import { Button, Input, Select } from '@/components/ui';
 export default function RemoteManualBrowser({ executionId, onEvidence }) {
   const canvas = useRef(null); const stream = useRef(null); const pending = useRef([]); const timer = useRef(null); const sending = useRef(false);
   const alive = useRef(false); const lastMove = useRef(0); const generation = useRef(0);
+  const control = useRef(null); const acknowledgement = useRef(null); const sequence = useRef(0);
   const [phase, setPhase] = useState('starting'); const [message, setMessage] = useState('Đang mở trình duyệt riêng…');
   const [state, setState] = useState({ tabs: [], url: '' }); const [address, setAddress] = useState(''); const [dialog, setDialog] = useState(null); const [dialogText, setDialogText] = useState('');
   const [capturing, setCapturing] = useState(false);
@@ -17,7 +18,16 @@ export default function RemoteManualBrowser({ executionId, onEvidence }) {
     if (sending.current || !alive.current || !pending.current.length) return;
     sending.current = true;
     const events = pending.current.splice(0, 32);
-    try { await executionApi.manualBrowserInput(executionId, events); }
+    try {
+      if (control.current?.readyState === WebSocket.OPEN) {
+        const ws = control.current; const seq = ++sequence.current;
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => { acknowledgement.current = null; ws.close(); reject(new Error('Thao tác chưa được xác nhận. Kiểm tra màn hình trước khi thử lại.')); }, 10000);
+          acknowledgement.current = { seq, resolve: () => { clearTimeout(timeout); resolve(); }, reject: (error) => { clearTimeout(timeout); reject(error); } };
+          ws.send(JSON.stringify({ seq, events }));
+        });
+      } else await executionApi.manualBrowserInput(executionId, events);
+    }
     catch (error) { pending.current = []; if (alive.current) { setMessage(error.message); if ([404, 410, 503].includes(error.status)) setPhase('disconnected'); } }
     finally { sending.current = false; if (pending.current.length && alive.current) timer.current = setTimeout(flush, 20); }
   }
@@ -32,13 +42,22 @@ export default function RemoteManualBrowser({ executionId, onEvidence }) {
   async function connect() {
     const version = ++generation.current;
     pending.current = []; clearTimeout(timer.current); setDialog(null);
-    stream.current?.abort(); const controller = new AbortController(); stream.current = controller;
+    stream.current?.abort(); control.current?.close(); const controller = new AbortController(); stream.current = controller;
     setPhase('starting'); setMessage('Đang mở hoặc kết nối lại phiên trình duyệt…');
     try {
       await executionApi.startManualBrowser(executionId);
       if (!alive.current || version !== generation.current) return;
       const token = useAuthStore.getState().token || localStorage.getItem('etms_token');
       const base = api.defaults.baseURL.replace(/\/$/, '');
+      try {
+        const ticket = await executionApi.manualBrowserTicket(executionId);
+        if (!alive.current || version !== generation.current) return;
+        const url = new URL(ticket.path, new URL(base, window.location.href)); url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(url, ['etms-manual', ticket.ticket]); control.current = ws;
+        ws.onmessage = (event) => { const data = JSON.parse(event.data); const ack = acknowledgement.current; if (ack?.seq === data.seq) { acknowledgement.current = null; if (data.ok) ack.resolve(); else ack.reject(new Error(data.error)); } };
+        ws.onclose = () => { if (acknowledgement.current) { acknowledgement.current.reject(new Error('Kết nối thao tác đã ngắt. Kiểm tra màn hình trước khi thử lại.')); acknowledgement.current = null; } };
+        ws.onerror = () => {};
+      } catch { /* HTTP control remains available when WebSockets are unavailable. */ }
       const response = await fetch(`${base}/test-executions/${executionId}/manual-browser/stream`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
       if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.message || body.error || 'Không kết nối được trình duyệt.'); }
       if (!alive.current || version !== generation.current) return;
@@ -53,7 +72,7 @@ export default function RemoteManualBrowser({ executionId, onEvidence }) {
           const type = block.match(/^event: (.+)$/m)?.[1]; const raw = block.match(/^data: (.+)$/m)?.[1];
           if (!raw || !alive.current || version !== generation.current) continue;
           const data = JSON.parse(raw);
-          if (type === 'state') { setState(data); setAddress(data.url); }
+          if (type === 'state') { setState(data); setAddress(data.url); if (data.navigation === 'loading') setMessage('Đang tải website…'); else if (data.navigation === 'error') setMessage('Website chưa tải được. Bấm Tải lại; phiên đăng nhập vẫn được giữ.'); else setMessage('Nhấp vào màn hình để thao tác. Dán văn bản bằng Ctrl+V.'); }
           if (type === 'frame') {
             const number = ++receivedFrame;
             const image = new Image(); image.onload = () => { if (alive.current && version === generation.current && canvas.current && number > renderedFrame) { renderedFrame = number; canvas.current.getContext('2d').drawImage(image, 0, 0, 1440, 900); } };
@@ -69,11 +88,11 @@ export default function RemoteManualBrowser({ executionId, onEvidence }) {
   }
   useEffect(() => {
     alive.current = true; connect();
-    return () => { alive.current = false; generation.current++; stream.current?.abort(); clearTimeout(timer.current); pending.current = []; };
+    return () => { alive.current = false; generation.current++; stream.current?.abort(); control.current?.close(); clearTimeout(timer.current); pending.current = []; };
   }, [executionId]);
 
   async function endSession() {
-    try { await executionApi.endManualBrowser(executionId); stream.current?.abort(); pending.current = []; setPhase('ended'); setMessage('Đã kết thúc phiên và đóng trình duyệt.'); }
+    try { await executionApi.endManualBrowser(executionId); stream.current?.abort(); control.current?.close(); pending.current = []; setPhase('ended'); setMessage('Đã kết thúc phiên và đóng trình duyệt.'); }
     catch (error) { toast.error(error.message); }
   }
   function pointer(event, action) {

@@ -31,12 +31,12 @@ test('broker requests bind identity, operation and body; browser JWTs cannot be 
 });
 
 test('broker isolates owners, reuses reconnects, caps containers, reaps idle sessions and cleans failed starts', async (t) => {
-  const realFetch = global.fetch; const options = []; const removed = [];
+  const realFetch = global.fetch; const options = []; const removed = []; let crashed = false;
   const docker = {
     listContainers: async () => [],
     createContainer: async (config) => { options.push(config); const id = options.length; return { start: async () => {}, inspect: async () => ({ NetworkSettings: { Networks: { 'etms-manual-browsers': { IPAddress: `172.30.0.${id}` } } } }), remove: async () => removed.push(id) }; },
   };
-  t.mock.method(global, 'fetch', async (url, config) => String(url).startsWith('http://172.30.') ? new Response(JSON.stringify({ url: 'https://example.test/' }), { headers: { 'Content-Type': 'application/json' } }) : realFetch(url, config));
+  t.mock.method(global, 'fetch', async (url, config) => { if (crashed && String(url).startsWith('http://172.30.0.2')) throw new Error('Browser crashed'); return String(url).startsWith('http://172.30.') ? new Response(JSON.stringify({ url: 'https://example.test/' }), { headers: { 'Content-Type': 'application/json' } }) : realFetch(url, config); });
   const broker = createBroker({ secret, docker, maxSessions: 2, validateUrl: async () => {} });
   const server = broker.app.listen(0, '127.0.0.1'); await new Promise((resolve) => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -56,10 +56,13 @@ test('broker isolates owners, reuses reconnects, caps containers, reaps idle ses
     assert.equal(options.length, 2);
     assert.notEqual(options[0].Env[0], options[1].Env[0]);
     await request({ ...identity, executionId: 'dddddddddddddddddddddddd' }, 'POST', '/session', { targetUrl: 'https://example.test/' }, 409);
+    crashed = true;
+    await request(other, 'POST', '/session', { targetUrl: 'https://example.test/' });
+    assert.equal(options.length, 3, 'reconnecting replaces a dead browser instead of returning a stale session');
     await request(identity, 'DELETE', '/session');
     await request(identity, 'GET', '/session', undefined, 404);
     for (const session of broker.sessions.values()) session.lastActivity = Date.now() - 16 * 60 * 1000;
-    await broker.reap(); assert.equal(broker.sessions.size, 0); assert.equal(removed.length, 2);
+    await broker.reap(); assert.equal(broker.sessions.size, 0); assert.equal(removed.length, 3);
     t.mock.method(docker, 'createContainer', async () => ({ start: async () => { throw new Error('start failure'); }, remove: async () => removed.push('failed') }));
     await request(identity, 'POST', '/session', { targetUrl: 'https://example.test/' }, 503);
     assert.ok(removed.includes('failed'));

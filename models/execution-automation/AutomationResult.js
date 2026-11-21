@@ -15,7 +15,7 @@ const automationResultSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ['Queued', 'Running', 'Passed', 'Failed', 'Error', 'Cancelled'],
+      enum: ['Queued', 'Running', 'Passed', 'Failed', 'Error', 'Skipped', 'Cancelled'],
       required: true,
     },
     duration: { type: Number, default: 0, min: 0 },

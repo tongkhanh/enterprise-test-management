@@ -11,8 +11,9 @@ const { recalculateRun } = require('./testRunProgressService');
 const { Dataset, Fixture } = require('../models/execution-automation/AutomationResources');
 const docker = new Docker(process.env.DOCKER_HOST ? { host: process.env.DOCKER_HOST } : undefined);
 const root = path.resolve(path.join(__dirname, '..', 'storage', 'multi-engine'));
+const legacyPlaywright = { image: 'mcr.microsoft.com/playwright:v1.55.0-noble', command: ['sh', '-lc', 'cd /workspace && npm init -y >/dev/null 2>&1 && npm i @playwright/test@1.55.0 >/dev/null 2>&1 && npx playwright test "$SCRIPT_FILE" --reporter=line'] };
 const defaults = {
-  Playwright: { image: 'mcr.microsoft.com/playwright:v1.55.0-noble', command: ['sh', '-lc', 'cd /workspace && npm init -y >/dev/null 2>&1 && npm i @playwright/test@1.55.0 >/dev/null 2>&1 && npx playwright test "$SCRIPT_FILE" --reporter=line'] },
+  Playwright: { image: 'etms-playwright-runner:local', command: ['sh', '-lc', 'cd /workspace && ln -s /app/node_modules node_modules && node /app/node_modules/@playwright/test/cli.js test "$SCRIPT_FILE"'] },
   Cypress: { image: 'cypress/included:13.15.0', command: ['sh', '-lc', 'cd /workspace && cypress run --spec "$SCRIPT_FILE" --browser chrome'] },
   Selenium: { image: 'node:22-bookworm', command: ['sh', '-lc', 'cd /workspace && npm init -y >/dev/null 2>&1 && npm i selenium-webdriver >/dev/null 2>&1 && node "$SCRIPT_FILE"'] },
   WebdriverIO: { image: 'node:22-bookworm', command: ['sh', '-lc', 'cd /workspace && npm init -y >/dev/null 2>&1 && npm i webdriverio >/dev/null 2>&1 && node "$SCRIPT_FILE"'] },
@@ -27,6 +28,10 @@ const adapters = Object.fromEntries(Object.keys(defaults).map((engine) => [engin
 async function ensureDefaultProfile({ project, engine, userId }) {
   let profile = await AutomationProfile.findOne({ project, engine, isDefault: true });
   if (!profile) profile = await AutomationProfile.create({ project, engine, name: `${engine} default`, ...defaults[engine], isDefault: true, createdBy: userId });
+  else if (engine === 'Playwright' && profile.image === legacyPlaywright.image && JSON.stringify(profile.command) === JSON.stringify(legacyPlaywright.command)) {
+    // Upgrade only our exact legacy default. Custom runner profiles keep their behavior.
+    profile.image = defaults.Playwright.image; profile.command = defaults.Playwright.command; await profile.save();
+  }
   return profile;
 }
 const codeHash = (script) => createHash('sha256').update(script.code).digest('hex');
@@ -61,7 +66,7 @@ async function createAutomationRun({ scriptId, environmentId, profileId, userId,
   if (tc.quarantined) throw new AppError('Test Case đang bị quarantine.', 409);
   const run = await AutomationRun.create({ project: script.project, testCase: script.testCase, script: script._id, profile: profile._id, environment: environment._id, commitSha: environment.repository?.commitSha, targetUrl: environment.targetUrl, engine: script.engine, requestedBy: userId, dataset, fixture, matrix, dataRow, groupId, schedule, triggeredBy, testExecution: execution?._id, approvedCodeHash: execution ? codeHash(script) : undefined });
   if (execution) {
-    const linked = await TestExecution.updateOne({ _id: execution._id, automationRun: execution.automationRun || null }, { automationRun: run._id });
+    const linked = await TestExecution.updateOne({ _id: execution._id, automationRun: execution.automationRun || null }, { automationRun: run._id, automationScript: script._id });
     if (!linked.matchedCount) {
       await run.deleteOne();
       throw new AppError('Test Case vừa được đưa vào lượt chạy khác.', 409);
@@ -88,37 +93,49 @@ async function executeAutomationRun(runId, progress = async () => {}) {
   if ((run.approvedCodeHash && run.approvedCodeHash !== codeHash(script)) || (script.runtimeUrl && script.runtimeUrl !== environment.targetUrl) || (run.testExecution && run.targetUrl !== environment.targetUrl)) throw new AppError('Script hoặc URL đã thay đổi sau khi xếp hàng.', 409);
   adapter.validate({ profile }); const values = await resources.runtimeData(run);
   const directory = path.join(root, String(run._id), `attempt-${run.attempt + 1}`); await fs.mkdir(directory, { recursive: true }); await adapter.prepare({ directory, script: { filename: script.filename, code: resources.substitute(script.code, values, run.engine) }, environment, profile });
+  const liveEnabled = run.engine === 'Playwright' && profile.image === defaults.Playwright.image && JSON.stringify(profile.command) === JSON.stringify(defaults.Playwright.command);
   if (run.engine === 'Playwright') {
     const matrix = run.matrix || {}; const browserName = ['chrome', 'edge'].includes(matrix.browser) ? 'chromium' : matrix.browser || 'chromium';
     const channel = matrix.browser === 'chrome' ? 'chrome' : matrix.browser === 'edge' ? 'msedge' : undefined;
-    await fs.writeFile(path.join(directory, 'playwright.config.cjs'), `const {devices}=require('@playwright/test'); module.exports=${JSON.stringify({ timeout: Math.min(profile.timeoutMs, 300000), retries: 0, use: { browserName, channel, viewport: matrix.device ? require('playwright').devices[matrix.device]?.viewport : { width: matrix.width || 1440, height: matrix.height || 900 }, screenshot: 'only-on-failure', video: 'retain-on-failure', trace: 'retain-on-failure' } }).replace('"use":{', `"use":{...(devices[${JSON.stringify(matrix.device || '')}]||{}),`)};`);
+    if (liveEnabled) await fs.copyFile(path.resolve(__dirname, '../automation/playwrightLiveReporter.cjs'), path.join(directory, 'etms-live-reporter.cjs'));
+    await fs.writeFile(path.join(directory, 'playwright.config.cjs'), `const {devices}=require('@playwright/test'); module.exports=${JSON.stringify({ timeout: Math.min(profile.timeoutMs, 300000), retries: 0, ...(liveEnabled ? { workers: 1, reporter: [['line'], ['./etms-live-reporter.cjs']] } : {}), use: { browserName, channel, ...(liveEnabled && browserName === 'chromium' ? { launchOptions: { args: ['--remote-debugging-port=9222', '--remote-debugging-address=127.0.0.1'] } } : {}), viewport: matrix.device ? require('playwright').devices[matrix.device]?.viewport : { width: matrix.width || 1440, height: matrix.height || 900 }, screenshot: 'only-on-failure', video: 'retain-on-failure', trace: 'retain-on-failure' } }).replace('"use":{', `"use":{...(devices[${JSON.stringify(matrix.device || '')}]||{}),`)};`);
   }
   if (run.engine === 'Cypress') await fs.writeFile(path.join(directory, 'cypress.config.js'), "module.exports={video:true,screenshotOnRunFailure:true,e2e:{supportFile:false,specPattern:'**/*.cy.js'}};");
   const execution = run.testExecution ? await TestExecution.findById(run.testExecution).populate('testRun', 'testPlan') : null;
   const result = await AutomationResult.create({ suiteName: script.filename, framework: run.engine === 'RobotFramework' ? 'Robot' : run.engine, status: 'Running', triggeredBy: run.triggeredBy, project: run.project, testCase: run.testCase, targetUrl: environment.targetUrl, testEnvironment: environment._id, requestedBy: run.requestedBy, startedAt: new Date(), testExecution: execution?._id, testRun: execution?.testRun?._id, testPlan: execution?.testRun?.testPlan });
-  run.result = result._id; run.status = 'Running'; run.startedAt = new Date(); run.attempt += 1; await run.save(); await progress(20);
+  run.result = result._id; run.status = 'Preparing'; run.startedAt = new Date(); run.attempt += 1; await run.save(); await progress(20);
   let container; let sidecar; let network; let seleniumHost = 'selenium'; let timeout;
   try {
     await resources.applyFixture(run.fixture, 'setup', environment.targetUrl, values);
-    await docker.pull(profile.image).then((stream) => new Promise((resolve, reject) => docker.modem.followProgress(stream, (error) => error ? reject(error) : resolve())));
+    if (profile.image === defaults.Playwright.image) {
+      try { await docker.getImage(profile.image).inspect(); }
+      catch { throw new AppError('Playwright runner image chưa được build. Chạy docker compose -f docker-compose.yml build playwright-runner-image.', 503); }
+    } else await docker.pull(profile.image).then((stream) => new Promise((resolve, reject) => docker.modem.followProgress(stream, (error) => error ? reject(error) : resolve())));
     if (['Selenium', 'WebdriverIO', 'RobotFramework'].includes(run.engine)) { await docker.pull('selenium/standalone-chrome:latest').then((stream) => new Promise((resolve, reject) => docker.modem.followProgress(stream, (error) => error ? reject(error) : resolve()))); network = await docker.createNetwork({ Name: `etms-run-${run._id}` }); seleniumHost = `selenium-${run._id}`; sidecar = await docker.createContainer({ Image: 'selenium/standalone-chrome:latest', name: seleniumHost, HostConfig: { AutoRemove: true, ShmSize: 2 * 1024 * 1024 * 1024, NetworkMode: network.id } }); await sidecar.start(); await new Promise((resolve) => setTimeout(resolve, 5000)); }
     // Docker-in-Docker socket mounts must use the shared named volume, not an API-container path on the host.
     const volume = process.env.RUNNER_STORAGE_VOLUME;
     const workingDir = '/workspace';
     const command = profile.command.map((part) => part.replace(/cd \/workspace\b/g, 'cd "$WORKSPACE_DIR"').replace(/--outputdir \/workspace\/results/g, '--outputdir "$WORKSPACE_DIR/results"'));
     container = await docker.createContainer({ Image: profile.image, Cmd: command, Env: [`TARGET_URL=${environment.targetUrl}`, `CYPRESS_TARGET_URL=${environment.targetUrl}`, `SCRIPT_FILE=${script.filename}`, `WORKSPACE_DIR=${workingDir}`, ...(['Selenium', 'RobotFramework'].includes(run.engine) ? [`SELENIUM_REMOTE_URL=http://${seleniumHost}:4444/wd/hub`] : []), ...(run.engine === 'WebdriverIO' ? [`SELENIUM_HOST=${seleniumHost}`] : [])], WorkingDir: workingDir, HostConfig: { AutoRemove: false, ...(volume ? { Mounts: [{ Type: 'volume', Source: volume, Target: '/workspace', VolumeOptions: { Subpath: `multi-engine/${run._id}/attempt-${run.attempt}` } }] } : { Binds: [`${directory}:/workspace`] }), PidsLimit: 256, SecurityOpt: ['no-new-privileges'], Memory: profile.resourceLimits.memoryMb * 1024 * 1024, NanoCpus: profile.resourceLimits.cpus * 1e9, ...(network ? { NetworkMode: network.id } : {}) } });
-    await container.start(); await progress(45);
+    await container.start(); run.status = 'Running'; await run.save(); await progress(45);
     const wait = await Promise.race([container.wait(), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Automation timeout')), Math.min(profile.timeoutMs || 300000, 1200000)); })]); clearTimeout(timeout); run.status = 'Collecting'; await run.save();
     const rawLogs = await container.logs({ stdout: true, stderr: true });
     let logText = rawLogs.toString('utf8'); for (const value of Object.values(values)) if (String(value).length >= 4) logText = logText.split(String(value)).join('[REDACTED]');
     const logs = Buffer.from(logText); const logPath = path.join(directory, 'runner.log'); await fs.writeFile(logPath, logs);
     const evidence = await normalizeEvidence({ directory, project: run.project, automationResult: result._id, source: run.engine, environment: environment._id });
-    const passed = wait.StatusCode === 0; run.status = passed ? 'Passed' : 'Failed'; run.completedAt = new Date();
-    result.status = passed ? 'Passed' : 'Failed'; result.completedAt = new Date(); result.totalTests = 1; result.passed = passed ? 1 : 0; result.failed = passed ? 0 : 1; result.errorLogs = passed ? null : logs.toString('utf8').slice(-20000); result.artifacts = evidence.normalized.byType;
+    let outcome = wait.StatusCode === 0 ? 'Passed' : 'Failed';
+    if (liveEnabled) {
+      const state = await fs.readFile(path.join(directory, '.etms-live/state.json'), 'utf8').then(JSON.parse).catch(() => null);
+      outcome = state && ['Passed', 'Failed', 'Error', 'Skipped'].includes(state.status) ? state.status : 'Error';
+      if (wait.StatusCode !== 0 && outcome === 'Passed') outcome = 'Error';
+    }
+    const passed = outcome === 'Passed'; run.status = outcome; run.completedAt = new Date();
+    if (outcome === 'Error') run.error = 'Lỗi script, dữ liệu hoặc môi trường; QA cần triage trước khi tạo Product Bug.';
+    result.status = outcome; result.completedAt = new Date(); result.duration = result.completedAt - result.startedAt; result.totalTests = 1; result.passed = passed ? 1 : 0; result.failed = outcome === 'Failed' ? 1 : 0; result.skipped = outcome === 'Skipped' ? 1 : 0; result.errorLogs = passed ? null : logs.toString('utf8').slice(-20000); result.artifacts = evidence.normalized.byType;
     await result.save();
     const testCase = await require('../models').TestCase.findById(run.testCase);
-    if (!passed && run.attempt <= (testCase?.retryLimit || 0)) { run.status = 'Queued'; await run.save(); return { retry: true, runId: run._id }; }
-    await syncTestExecution(run, result.status);
+    if (['Failed', 'Error'].includes(outcome) && run.attempt <= (testCase?.retryLimit || 0)) { run.status = 'Queued'; await run.save(); return { retry: true, runId: run._id }; }
+    await syncTestExecution(run, outcome === 'Error' ? 'Blocked' : result.status);
     await run.save();
     if (!passed && run.schedule) await require('../models').Notification.create({ recipient: run.requestedBy, type: 'System', title: 'Scheduled test thất bại', message: `${script.filename}: ${run.status}`, link: '/studio/automation-operations' }).catch(() => null);
     if (!passed && environment.autoAnalyze !== false) await require('./rootCauseService').analyzeRootCause({ resultId: result._id, user: { _id: run.requestedBy } }).catch((error) => console.warn('RCA tự động thất bại:', error.message));

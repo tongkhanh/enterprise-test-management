@@ -33,10 +33,13 @@ router.get('/test-executions/:id/manual-browser', authorize('execution:execute',
 router.delete('/test-executions/:id/manual-browser', authorize('execution:execute', 'execution:manage'), asyncHandler(manualBrowser.end));
 router.get('/test-executions/:id/manual-browser/stream', authorize('execution:execute', 'execution:manage'), asyncHandler(manualBrowser.stream));
 router.post('/test-executions/:id/manual-browser/input', authorize('execution:execute', 'execution:manage'), asyncHandler(manualBrowser.input));
+router.post('/test-executions/:id/manual-browser/ticket', authorize('execution:execute', 'execution:manage'), asyncHandler(manualBrowser.ticket));
 router.post('/test-executions/:id/manual-browser/screenshot', authorize('execution:execute', 'execution:manage'), auditLog('UPDATE', 'TestExecution'), asyncHandler(manualBrowser.screenshot));
 router.post('/test-executions/:id/evidence', authorize('execution:execute', 'execution:manage'), uploadExecutionEvidence, auditLog('UPDATE', 'TestExecution'), asyncHandler(c.uploadExecutionEvidence));
 router.get('/test-executions/:id/evidence/:name', authorize('execution:execute', 'execution:manage'), asyncHandler(c.downloadExecutionEvidence));
 router.post('/test-executions/:id/auto', authorize('execution:execute', 'execution:manage'), asyncHandler(c.executeReviewedScript));
+router.get('/test-executions/:id/automation-preflight', authorize('execution:execute', 'execution:manage'), asyncHandler(require('../controllers/automationMonitorController').preflight));
+router.get('/test-executions/:id/automation-live', authorize('execution:execute', 'execution:manage'), asyncHandler(require('../controllers/automationMonitorController').stream));
 router.get('/automation-results', authorizeWorkspaceList('execution:execute'), asyncHandler(c.listAutomationResults));
 router.post('/automation/run-test-case/:testCaseId', authorize('execution:manage', 'execution:execute'), asyncHandler(c.runAutomatedTestCase));
 router.get('/automation/jobs/:id', authorize('execution:manage', 'execution:execute'), asyncHandler(c.getAutomationJob));

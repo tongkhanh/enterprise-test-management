@@ -72,4 +72,5 @@ const stream = async (req, res) => {
   } catch { /* disconnect/reconnect preserves the remote browser */ }
   finally { clearInterval(verify); res.end(); }
 };
-module.exports = { start, status, end, input, screenshot, stream };
+const ticket = async (req, res) => { await access(req, { starting: true }); send(res, require('../services/manualBrowserSocketService').issueTicket(req), 201); };
+module.exports = { access, start, status, end, input, screenshot, stream, ticket };

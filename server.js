@@ -143,7 +143,9 @@ const startServer = async () => {
     require('./services/automationResourcesService').startWorkerWatchdog();
     require('./services/automationResourcesService').startWorkerWatchdog();
     await recoverInterruptedAutomationJobs();
-    return app.listen(PORT, () => {
+    const server = require('node:http').createServer(app);
+    require('./services/manualBrowserSocketService').attachManualBrowserSockets(server);
+    return server.listen(PORT, () => {
       console.log('');
       console.log('============================================');
       console.log('  🚀 ENTERPRISE TEST MANAGEMENT SYSTEM');

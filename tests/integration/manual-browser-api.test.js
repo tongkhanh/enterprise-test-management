@@ -22,6 +22,7 @@ test('Manual browser API enforces project/mode/approval, ignores client target U
   const { app } = require('../../server'); const m = require('../../models');
   await mongoose.connect(uri.toString());
   const server = app.listen(0, '127.0.0.1'); await new Promise((resolve) => server.once('listening', resolve));
+  require('../../services/manualBrowserSocketService').attachManualBrowserSockets(server);
   let executionId;
   try {
     const role = await m.Role.create({ name: 'User', permissions: ['*'] });
@@ -60,6 +61,22 @@ test('Manual browser API enforces project/mode/approval, ignores client target U
     await request('/input', 'POST', { events: [{ type: 'eval', script: 'no' }] }, 400);
     assert.equal(calls.length, before);
     await request('/input', 'POST', { events: [{ type: 'text', text: 'hello' }] });
+    const { WebSocket } = require('ws');
+    const ticket = await request('/ticket', 'POST', {}, 201);
+    const connect = (value) => new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}${value.path}`, ['etms-manual', value.ticket], { origin: `http://127.0.0.1:${server.address().port}` });
+      ws.once('open', () => resolve(ws)); ws.once('error', reject);
+    });
+    const ws = await connect(ticket);
+    const received = new Promise((resolve) => ws.once('message', (raw) => resolve(JSON.parse(raw))));
+    ws.send(JSON.stringify({ seq: 1, events: [{ type: 'text', text: 'via-socket' }] }));
+    assert.deepEqual(await received, { seq: 1, ok: true });
+    assert.equal(calls.at(-1).body.events[0].text, 'via-socket');
+    await assert.rejects(connect(ticket), /401/); // Tickets are single use, even for the same owner.
+    const invalid = new Promise((resolve) => ws.once('message', (raw) => resolve(JSON.parse(raw))));
+    ws.send(JSON.stringify({ seq: 2, events: [{ type: 'eval', script: 'no' }] }));
+    assert.equal((await invalid).ok, false);
+    await new Promise((resolve) => { ws.once('close', resolve); ws.close(); });
     await m.TestExecution.updateOne({ _id: executionId }, { executionMode: 'Automation' });
     await request('', 'POST', {}, 409);
     await request('/screenshot', 'POST', {}, 409);

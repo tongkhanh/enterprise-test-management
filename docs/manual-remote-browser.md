@@ -67,6 +67,20 @@ session; only saved QA form values are guaranteed to survive a full refresh.
 
 ## Boundaries
 
+Manual input uses a persistent WebSocket after a one-use, 30-second ticket is
+issued by the authenticated execution API. The ticket is sent as a subprotocol,
+never as a URL or browser login JWT. Session, permissions, plan approval and
+execution mode are checked at connection and every 30 seconds. Each bounded
+input batch is acknowledged; uncertain input is never replayed automatically.
+If WebSockets are unavailable, the existing authenticated HTTP control path
+remains available. Vite proxies WebSocket upgrades during development.
+
+Frames use a reduced JPEG stream, cache the latest image for reconnection and
+send a periodic cached frame for static pages. Loading/error states survive a
+viewer reconnect. Cold starts wait up to 45 seconds; dead browser containers
+are replaced when reconnecting. New unsaved step results start as **Chưa kiểm
+thử**, while existing recorded results retain their values.
+
 This version supports desktop Chromium at a 1440x900 viewport, live interaction
 and screenshot evidence. Resizing the panes scales the display, not the target
 viewport. Video recording, target-site file upload/download, bidirectional

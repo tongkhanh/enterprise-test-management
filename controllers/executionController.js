@@ -565,7 +565,7 @@ const executeReviewedScript = async (req, res) => {
   const environmentId = run.testEnvironment?._id || run.testEnvironment || runtime?.environmentId;
   if (!environmentId) throw new AppError('Hãy gắn Test Environment Ready trước khi chạy Automation.', 409);
   if (run.executionMode !== 'Automation' || execution.executionMode !== 'Automation') throw new AppError('Test Execution này thuộc Manual Run, không thể chạy Automation.', 409);
-  const scriptId = execution.automationScript || req.body.scriptId;
+  const scriptId = req.body.scriptId || execution.automationScript;
   if (!scriptId) throw new AppError('Automation Run chưa được gắn script đã duyệt.', 409);
   const automationRun = await createAutomationRun({
     scriptId, environmentId, userId: req.user._id,
