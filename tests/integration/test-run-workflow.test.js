@@ -150,6 +150,10 @@ test('a Test Run records manual results and runs the reviewed script while retai
     const monitored = await fetch(`${base}/test-executions/${execution._id}/automation-live`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(monitored.status, 200);
     assert.match(await monitored.text(), /"status":"Failed"/);
+    await m.AutomationRun.updateOne({ _id: automationRunId }, { status: 'Passed', attempt: 2 });
+    const historical = await fetch(`${base}/test-executions/${execution._id}/automation-live?attempt=1`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.match(await historical.text(), /"status":"Failed"/, 'an older attempt must retain its own outcome instead of inheriting the latest retry');
+    await m.AutomationRun.updateOne({ _id: automationRunId }, { status: 'Failed', attempt: 1 });
     await request(`/test-executions/${manualExecution._id}/automation-live?run=${automationRunId}`, 'GET', undefined, 404);
     const reported = await request('/bugs', 'POST', { project: project._id, testExecution: execution._id, title: 'Runner discrepancy', description: 'Runner did not see the confirmation', severity: 'Minor', priority: 'Low' }, 201);
     assert.equal(reported.bug.automationResult, detail.automationJobs[0]._id);

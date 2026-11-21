@@ -104,6 +104,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
       ) : (
         <div className="space-y-2">
           <Button asChild variant="outline"><Link to={`/automation?${params}`}>Sinh / chỉnh script trong Automation Lab</Link></Button>
+          {!!testCase?.testSteps?.length && <details className="rounded border p-3 text-sm"><summary>Các bước Test Case / Expected result</summary><ol className="mt-2 list-inside list-decimal space-y-2">{testCase.testSteps.map((step, index) => <li key={index}>{step.action}<p className="text-xs text-slate-500">Expected: {step.expectedResult}</p></li>)}</ol></details>}
           <div aria-label="Automation readiness" className="rounded border p-3 text-sm"><strong>{preflight.isPending ? 'Đang kiểm tra readiness…' : preflight.data?.ready ? 'Sẵn sàng Automation' : 'Cần chuẩn bị trước khi chạy'}</strong>{preflight.isError && <p className="text-red-600">{preflight.error.message}</p>}<ul className="mt-2 space-y-1">{preflight.data?.checks.map((item) => <li key={item.name} className={item.ready ? 'text-emerald-700' : 'text-amber-700'}>{item.ready ? '✓' : '○'} {item.name}{!item.ready && ` · ${item.detail}`}</li>)}</ul><Button size="sm" variant="ghost" onClick={() => preflight.refetch()}>Kiểm tra lại</Button></div>
           <label className="block">
             <span className="label">Script đã duyệt</span>

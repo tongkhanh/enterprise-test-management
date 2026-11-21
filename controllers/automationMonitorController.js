@@ -77,7 +77,8 @@ const stream = async (req, res) => {
     const directory = path.join(root, `attempt-${attempt}`);
     const stateBuffer = await readBounded(directory, '.etms-live/state.json', 100000);
     let state; try { state = JSON.parse(stateBuffer); } catch { state = null; }
-    const snapshot = JSON.stringify({ status: current.status, engine: current.engine, attempt, startedAt: current.startedAt, completedAt: current.completedAt, progress: state });
+    const historical = Boolean(req.query.attempt && attempt < current.attempt);
+    const snapshot = JSON.stringify({ status: historical ? state?.status || 'Unknown' : current.status, engine: current.engine, attempt, startedAt: historical ? state?.startedAt : current.startedAt, completedAt: historical ? state?.completedAt : current.completedAt, progress: state });
     if (snapshot !== lastState) { writeEvent(res, 'state', JSON.parse(snapshot)); lastState = snapshot; }
     const frame = await readBounded(directory, '.etms-live/frame.jpg', 1500000);
     if (frame && !frame.equals(lastFrame || Buffer.alloc(0))) { writeEvent(res, 'frame', { data: frame.toString('base64') }); lastFrame = frame; }
