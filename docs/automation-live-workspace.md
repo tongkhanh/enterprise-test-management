@@ -52,6 +52,20 @@ The live pane shows progress events and individual assertion outcomes; it is
 not a raw console mirror. Existing QA verdict overrides remain separate from
 the runner outcome.
 
+Automation Lab's standalone **Chạy Playwright** entry uses this same read-only
+viewer below its job row. Its selected job is retained in the `job` URL parameter
+so refreshing reopens the monitor. A completed job can display its last captured
+frame and assertion journal without running the test again. Job percentages
+represent lifecycle stages (Queued 0, Preparing 20, Running 45, Collecting 90,
+terminal states 100), rather than the fraction of test assertions that passed.
+
+Use **Chiều cao trình duyệt** to resize the inline browser, or **Toàn màn hình**
+to expand it across the ETMS viewport with logs/assertions beside it on wide
+screens. **Thu gọn màn hình** or Escape restores the inline view. These controls
+preserve the current stream and do not start another test. The image fits its
+frame without cropping; status explanations are under **Giải thích trạng thái
+kết quả**.
+
 ## Verification
 
 The browser integration test executes real Playwright tests for Passed, Failed

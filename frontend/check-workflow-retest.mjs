@@ -13,8 +13,9 @@ import '/src/styles.css';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { executionApi, automationLabApi } from '/src/api/client.js';
+import { executionApi, automationLabApi, workspaceApi, testCaseApi } from '/src/api/client.js';
 import TestRunExecutionPanel from '/src/features/e2e/TestRunExecutionPanel.jsx';
+import AutomationLabPage from '/src/features/automation/AutomationLabPage.jsx';
 import { TestPlanningDocumentEditor } from '/src/features/e2e/QAWorkflow.jsx';
 const e = React.createElement;
 const read = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
@@ -33,6 +34,7 @@ executionApi.manualBrowserInput = async () => ({});
 executionApi.captureManualBrowser = async () => { localStorage.setItem('audit-browser-capture', 'saved'); return { url: '/fixture.png' }; };
 const actualFetch = window.fetch.bind(window);
 window.fetch = async (url, options) => {
+ if (String(url).includes('/automation-runs/') && String(url).includes('/live?')) { localStorage.setItem('audit-live-connections', String(Number(localStorage.getItem('audit-live-connections') || 0) + 1)); return new Response('event: state\\ndata: '+JSON.stringify({status:'Passed',percent:100,attempt:1,progress:{activity:'Hoàn tất: Passed',events:[],assertions:[{number:1,status:'Passed',duration:25}]}})+'\\n\\nevent: frame\\ndata: '+JSON.stringify({data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='})+'\\n\\n', {headers:{'Content-Type':'text/event-stream'}}); }
  if (String(url).includes('/automation-live')) {
   execution = {...execution, automationRun: {...execution.automationRun, status:'Passed'}};
   return new Response('event: state\\ndata: '+JSON.stringify({status:'Passed',attempt:1,progress:{activity:'Hoàn tất: Passed',events:[],assertions:[{number:1,status:'Passed',duration:25}]}})+'\\n\\n', { headers: {'Content-Type':'text/event-stream'} });
@@ -46,10 +48,19 @@ window.fetch = async (url, options) => {
 };
 automationLabApi.datasets = async () => [];
 automationLabApi.fixtures = async () => [];
+workspaceApi.projects = async () => [{_id:'project',name:'Synthetic project',currentRole:'Owner'}];
+workspaceApi.integrations = async () => [];
+automationLabApi.dockerStatus = async () => ({available:true});
+automationLabApi.environments = async () => [{_id:'environment',name:'Synthetic environment',status:'Ready',targetUrl:'https://example.test/'}];
+testCaseApi.list = async () => [{_id:'case',title:'Synthetic login',status:'Approved'}];
+automationLabApi.scripts = async () => [{_id:'script',testCase:{_id:'case',title:'Synthetic login'},engine:'Playwright',status:'Approved',filename:'fixture.spec.js',code:'approved fixture script'}];
+automationLabApi.createRun = async () => ({_id:'standalone-job'});
+automationLabApi.run = async (id) => ({_id:id,status:'Passed',progress:100,attempt:1,engine:'Playwright'});
 executionApi.createPlan = async (body) => { const plan = { ...body, _id: 'plan-' + plans.length }; plans.push(plan); localStorage.setItem('audit-plans', JSON.stringify(plans)); return plan; };
 executionApi.updatePlan = async (id, body) => { const plan = { ...body, _id: id }; plans = plans.map((item) => item._id === id ? plan : item); localStorage.setItem('audit-plans', JSON.stringify(plans)); return plan; };
 function App() {
  const items = useQuery({ queryKey: ['e2e-plans'], queryFn: async () => [...plans] });
+ if (location.search.includes('lab')) return e(AutomationLabPage);
  if (location.search.includes('notes') || auto) return e(TestRunExecutionPanel, { runId: 'run', project: 'project', profile: 'profile' });
  return e(TestPlanningDocumentEditor, { activeProject: 'project', profile: { _id: 'profile', workflow: { testBasisSelection: { requirements: [], useCases: [], userStories: ['story'] } } }, stories: [{ _id: 'story', title: 'Approved synthetic story', approvalStatus: 'Approved', source: 'ImportedDocument' }], items: items.data || [], onNext: () => {}, setActiveStep: () => {} });
 }
@@ -142,6 +153,39 @@ try {
   await page.getByRole('button', { name: 'Quay lại Test Run', exact: true }).click();
   assert.equal(await page.getByRole('dialog', { name: 'Không gian thực thi Automation', exact: true }).count(), 0);
   console.log('PASS: Automation readiness blocks execution, ready scripts open the read-only runner workspace, and assertions are visible.');
+
+  await page.goto(`${base}?lab&project=project`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.getByRole('button', { name: 'Synthetic login · Playwright', exact: false }).click();
+  await page.locator('select').filter({ has: page.locator('option', { hasText: 'Chọn Environment Ready' }) }).selectOption('environment');
+  await page.getByRole('button', { name: 'Chạy Playwright', exact: true }).click();
+  const labMonitor = page.getByRole('region', { name: 'Theo dõi Automation chỉ xem' });
+  await labMonitor.getByText('#1 · Passed · 25 ms', { exact: true }).waitFor();
+  await labMonitor.getByText('Tiến trình job: 100% · theo giai đoạn thực thi', { exact: true }).waitFor();
+  assert.equal(await labMonitor.getByRole('img').count(), 1);
+  await labMonitor.getByRole('img').evaluate((image) => image.decode());
+  const liveConnections = await page.evaluate(() => localStorage.getItem('audit-live-connections'));
+  const frameBox = labMonitor.getByLabel('Khung hình trình duyệt Automation', { exact: true });
+  const originalHeight = (await frameBox.boundingBox()).height;
+  await labMonitor.getByLabel('Chiều cao trình duyệt Automation').focus();
+  await page.keyboard.press('End');
+  assert.ok((await frameBox.boundingBox()).height > originalHeight, 'QA can enlarge the browser without cropping its image');
+  await labMonitor.getByRole('button', { name: 'Toàn màn hình', exact: true }).click();
+  const expanded = page.getByRole('dialog', { name: 'Màn hình Automation mở rộng', exact: true });
+  await expanded.waitFor();
+  const bounds = await expanded.boundingBox();
+  assert.equal(Math.round(bounds.width), page.viewportSize().width);
+  assert.equal(Math.round(bounds.height), page.viewportSize().height);
+  assert.ok(await expanded.evaluate((element) => element.scrollWidth <= element.clientWidth), 'expanded viewer must not overflow horizontally');
+  await page.keyboard.press('Escape');
+  assert.equal(await expanded.count(), 0);
+  assert.equal(await page.evaluate(() => localStorage.getItem('audit-live-connections')), liveConnections, 'expanding/collapsing must preserve the stream instead of reconnecting or rerunning');
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await labMonitor.evaluate((element) => element.scrollWidth <= element.clientWidth), 'narrow viewer must not overflow horizontally');
+  await page.setViewportSize({ width: 1280, height: 720 });
+  assert.ok(page.url().includes('job=standalone-job'));
+  await page.reload();
+  await page.getByRole('region', { name: 'Theo dõi Automation chỉ xem' }).getByText('#1 · Passed · 25 ms', { exact: true }).waitFor();
+  console.log('PASS: Automation Lab opens the live viewer, displays completed progress as 100%, and reopens the job after refresh.');
 
   await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.getByRole('tab', { name: 'Tự soạn / chỉnh sửa', exact: true }).click();

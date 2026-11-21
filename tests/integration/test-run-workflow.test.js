@@ -150,6 +150,26 @@ test('a Test Run records manual results and runs the reviewed script while retai
     const monitored = await fetch(`${base}/test-executions/${execution._id}/automation-live`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(monitored.status, 200);
     assert.match(await monitored.text(), /"status":"Failed"/);
+    assert.equal((await request(`/automation-runs/${automationRunId}`)).progress, 100, 'a finished Automation Lab job must not show 0%');
+    const standalone = await m.AutomationRun.create({ project: project._id, testCase: testCase._id, script: generated._id, profile: queued.profile, environment: environment._id, engine: 'Playwright', status: 'Passed', attempt: 1, requestedBy: owner._id });
+    const standalonePath = path.resolve('storage/multi-engine', String(standalone._id), 'attempt-1/.etms-live');
+    try {
+      await fs.mkdir(standalonePath, { recursive: true });
+      await fs.writeFile(path.join(standalonePath, 'state.json'), JSON.stringify({ status: 'Passed', assertions: [{ number: 1, status: 'Passed' }] }));
+      await fs.writeFile(path.join(standalonePath, 'frame.jpg'), Buffer.from([255, 216, 255, 217]));
+      const labStream = await fetch(`${base}/automation-runs/${standalone._id}/live`, { headers: { Authorization: `Bearer ${token}` } });
+      assert.equal(labStream.status, 200);
+      const events = await labStream.text();
+      assert.match(events, /"percent":100/); assert.match(events, /event: frame/);
+      assert.equal((await fetch(`${base}/automation-runs/${standalone._id}/live`)).status, 401);
+      const otherProject = await m.Project.create({ name: 'Other private project', key: 'OTHER', workspace: new mongoose.Types.ObjectId(), lead: new mongoose.Types.ObjectId() });
+      await m.AutomationRun.updateOne({ _id: standalone._id }, { project: otherProject._id });
+      await request(`/automation-runs/${standalone._id}/live`, 'GET', undefined, 403);
+    } finally {
+      const cleanupRoot = path.resolve('storage/multi-engine');
+      const cleanupPath = path.resolve(cleanupRoot, String(standalone._id));
+      if (path.dirname(cleanupPath) === cleanupRoot) await fs.rm(cleanupPath, { recursive: true, force: true });
+    }
     await m.AutomationRun.updateOne({ _id: automationRunId }, { status: 'Passed', attempt: 2 });
     const historical = await fetch(`${base}/test-executions/${execution._id}/automation-live?attempt=1`, { headers: { Authorization: `Bearer ${token}` } });
     assert.match(await historical.text(), /"status":"Failed"/, 'an older attempt must retain its own outcome instead of inheriting the latest retry');
