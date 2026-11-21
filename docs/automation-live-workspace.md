@@ -52,6 +52,13 @@ The live pane shows progress events and individual assertion outcomes; it is
 not a raw console mirror. Existing QA verdict overrides remain separate from
 the runner outcome.
 
+Automation Lab's standalone **Chạy Playwright** entry uses this same read-only
+viewer below its job row. Its selected job is retained in the `job` URL parameter
+so refreshing reopens the monitor. A completed job can display its last captured
+frame and assertion journal without running the test again. Job percentages
+represent lifecycle stages (Queued 0, Preparing 20, Running 45, Collecting 90,
+terminal states 100), rather than the fraction of test assertions that passed.
+
 ## Verification
 
 The browser integration test executes real Playwright tests for Passed, Failed

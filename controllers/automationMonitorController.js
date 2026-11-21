@@ -57,6 +57,14 @@ const stream = async (req, res) => {
   const selectedId = req.query.run || execution.automationRun;
   const automation = selectedId ? await AutomationRun.findOne({ _id: selectedId, testExecution: execution._id, project: run.testPlan.project }).lean() : null;
   if (!automation) throw new AppError('Chưa có lượt chạy Automation.', 404);
+  return streamAutomation(req, res, automation, run.testPlan.project);
+};
+const streamRun = async (req, res) => {
+  const automation = await getById(AutomationRun, req.params.id);
+  await assertProjectAccess(req.user, automation.project);
+  return streamAutomation(req, res, automation, automation.project);
+};
+async function streamAutomation(req, res, automation, project) {
   const selectedAttempt = Number(req.query.attempt || automation.attempt || 1);
   if (!Number.isInteger(selectedAttempt) || selectedAttempt < 1 || selectedAttempt > Math.max(automation.attempt, 1)) throw new AppError('Attempt không hợp lệ.', 400);
   res.status(200).set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' }); res.flushHeaders();
@@ -67,7 +75,7 @@ const stream = async (req, res) => {
     if (Date.now() - lastAuth >= 30000) {
       try {
         if (!await UserSession.exists({ _id: req.sessionId, user: req.user._id, isActive: true })) break;
-        await assertProjectAccess(req.user, run.testPlan.project);
+        await assertProjectAccess(req.user, project);
       } catch { break; }
       lastAuth = Date.now();
     }
@@ -78,7 +86,8 @@ const stream = async (req, res) => {
     const stateBuffer = await readBounded(directory, '.etms-live/state.json', 100000);
     let state; try { state = JSON.parse(stateBuffer); } catch { state = null; }
     const historical = Boolean(req.query.attempt && attempt < current.attempt);
-    const snapshot = JSON.stringify({ status: historical ? state?.status || 'Unknown' : current.status, engine: current.engine, attempt, startedAt: historical ? state?.startedAt : current.startedAt, completedAt: historical ? state?.completedAt : current.completedAt, progress: state });
+    const status = historical ? state?.status || 'Unknown' : current.status;
+    const snapshot = JSON.stringify({ status, percent: require('../services/automationProgressService').automationProgress(status), engine: current.engine, attempt, startedAt: historical ? state?.startedAt : current.startedAt, completedAt: historical ? state?.completedAt : current.completedAt, progress: state });
     if (snapshot !== lastState) { writeEvent(res, 'state', JSON.parse(snapshot)); lastState = snapshot; }
     const frame = await readBounded(directory, '.etms-live/frame.jpg', 1500000);
     if (frame && !frame.equals(lastFrame || Buffer.alloc(0))) { writeEvent(res, 'frame', { data: frame.toString('base64') }); lastFrame = frame; }
@@ -86,5 +95,5 @@ const stream = async (req, res) => {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   res.end();
-};
-module.exports = { preflight, stream, readBounded };
+}
+module.exports = { preflight, stream, streamRun, readBounded };

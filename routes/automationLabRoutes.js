@@ -31,6 +31,7 @@ router.post('/automation-profiles', authorize('execution:manage'), asyncHandler(
 router.get('/automation-runs', authorize('execution:execute', 'execution:manage'), asyncHandler(ops.listRuns));
 router.post('/automation-runs', authorize('execution:execute', 'execution:manage'), asyncHandler(ops.createRun));
 router.get('/automation-runs/:id', authorize('execution:execute', 'execution:manage'), asyncHandler(ops.getRun));
+router.get('/automation-runs/:id/live', authorize('execution:execute', 'execution:manage'), asyncHandler(require('../controllers/automationMonitorController').streamRun));
 router.get('/execution-artifacts/:id/download', authorize('execution:execute', 'execution:manage'), asyncHandler(ops.downloadArtifact));
 
 module.exports = router;

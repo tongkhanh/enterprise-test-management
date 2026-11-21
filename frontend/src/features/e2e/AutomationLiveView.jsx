@@ -14,7 +14,8 @@ export default function AutomationLiveView({ executionId, runner, history = [] }
     (async () => {
       const token = useAuthStore.getState().token || localStorage.getItem('etms_token');
       const params = new URLSearchParams({ run: selected._id }); if (attempt) params.set('attempt', attempt);
-      const response = await fetch(`${api.defaults.baseURL}/test-executions/${executionId}/automation-live?${params}`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+      const endpoint = executionId ? `/test-executions/${executionId}/automation-live` : `/automation-runs/${selected._id}/live`;
+      const response = await fetch(`${api.defaults.baseURL}${endpoint}?${params}`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
       if (!response.ok) throw new Error('Không tải được màn hình runner. Thử kết nối lại.');
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       while (!controller.signal.aborted) {
@@ -36,6 +37,7 @@ export default function AutomationLiveView({ executionId, runner, history = [] }
     <header className="space-y-2 border-b border-slate-700 p-3"><strong>Automation · Chỉ xem</strong><p className="text-xs text-slate-400">Runner tự thao tác. QA theo dõi và kết luận sau khi chạy; không điều khiển màn hình này.</p><div className="flex flex-wrap gap-2"><Select aria-label="Lịch sử Automation" className="min-w-0 flex-1 text-slate-900" value={selection} onChange={(event) => { setSelection(event.target.value); setAttempt(''); }}><option value="">Lượt hiện tại · {runner?.status || 'Chưa chạy'}</option>{history.filter((item) => item._id !== runner?._id).map((item) => <option value={item._id} key={item._id}>{new Date(item.createdAt).toLocaleString()} · {item.status}</option>)}</Select><Select aria-label="Automation attempt" className="w-40 text-slate-900" value={attempt} onChange={(event) => setAttempt(event.target.value)}><option value="">Attempt mới nhất</option>{Array.from({ length: selected?.attempt || 0 }, (_, index) => <option value={index + 1} key={index}>Attempt {index + 1}</option>)}</Select><Button variant="outline" size="sm" onClick={() => setRevision((value) => value + 1)}>Kết nối lại</Button></div></header>
     <div className="min-h-0 flex-1 overflow-auto p-3">
       <p role="status" className="mb-2 text-sm">{state?.status || runner?.status || 'Chưa chạy'} · Attempt {state?.attempt || runner?.attempt || '—'} · {progress?.activity || 'Chờ runner khởi tạo'}</p>
+      {state?.percent !== undefined && <p className="mb-2 text-xs text-slate-400">Tiến trình job: {state.percent}% · theo giai đoạn thực thi</p>}
       <p className="mb-2 break-all text-xs text-slate-400">{progress?.url || ''}{state?.startedAt && ` · Bắt đầu ${new Date(state.startedAt).toLocaleTimeString()}`}{state?.completedAt && ` · Kết thúc ${new Date(state.completedAt).toLocaleTimeString()}`}</p>
       {error && <p className="my-2 text-amber-300">{error}</p>}
       {frame ? <img src={frame} alt="Màn hình trình duyệt do Automation runner điều khiển" className="w-full rounded border border-slate-700" /> : <div className="rounded border border-slate-700 p-12 text-center text-sm text-slate-400">{!runner ? 'Chạy script đã duyệt để bắt đầu.' : 'Chờ hình ảnh Chromium. Profile tùy chỉnh và engine khác vẫn có kết quả/evidence, chưa có live view.'}</div>}
