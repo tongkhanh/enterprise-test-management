@@ -12,29 +12,41 @@ async function createRuntime({ token, targetUrl, launch = () => chromium.launch(
   const context = await browser.newContext({ viewport: { width: WIDTH, height: HEIGHT }, acceptDownloads: false, serviceWorkers: 'block' });
   const viewers = new Set(); const pages = new Map(); const heldKeys = new Set();
   let current; let cdp; let nextId = 0; let dialog; let ended = false;
+  let latestFrame; let lastFrameAt = 0;
+  const navigation = new WeakMap();
   let lastActivity = Date.now(); const createdAt = Date.now(); let inputQueue = Promise.resolve(); let queuedInputs = 0;
   const broadcast = (type, data) => viewers.forEach((res) => writeEvent(res, type, data));
-  const metadata = () => ({ url: current?.url() || '', tabs: [...pages].map(([id, page]) => ({ id, url: page.url(), active: page === current })), width: WIDTH, height: HEIGHT, lastActivity, idleMs });
+  const metadata = () => ({ url: current?.url() || '', navigation: navigation.get(current) || 'loading', tabs: [...pages].map(([id, page]) => ({ id, url: page.url(), active: page === current })), width: WIDTH, height: HEIGHT, lastActivity, idleMs });
   const sendMetadata = () => broadcast('state', metadata());
+  function navigate(page, operation) {
+    navigation.set(page, 'loading'); sendMetadata();
+    operation().then(() => { navigation.set(page, 'ready'); sendMetadata(); }).catch(() => { navigation.set(page, 'error'); sendMetadata(); });
+  }
   async function selectPage(page) {
     if (ended || page.isClosed()) return;
     if (current === page && cdp) return;
     if (cdp) { await cdp.detach().catch(() => {}); cdp = null; }
-    current = page; dialog = null;
+    current = page; dialog = null; latestFrame = null;
     await page.bringToFront();
     cdp = await context.newCDPSession(page);
     const client = cdp;
     client.on('Page.screencastFrame', (frame) => {
-      if (client === cdp) broadcast('frame', { data: frame.data, width: WIDTH, height: HEIGHT });
+      if (client === cdp) {
+        latestFrame = { data: frame.data, width: WIDTH, height: HEIGHT };
+        if (Date.now() - lastFrameAt >= 80) { lastFrameAt = Date.now(); broadcast('frame', latestFrame); }
+      }
       client.send('Page.screencastFrameAck', { sessionId: frame.sessionId }).catch(() => {});
     });
-    await client.send('Page.startScreencast', { format: 'jpeg', quality: 75, maxWidth: WIDTH, maxHeight: HEIGHT, everyNthFrame: 2 });
+    await client.send('Page.startScreencast', { format: 'jpeg', quality: 60, maxWidth: 1280, maxHeight: 800, everyNthFrame: 1 });
     sendMetadata();
   }
   let selection = Promise.resolve();
   const choose = (page) => { selection = selection.catch(() => {}).then(() => selectPage(page)); return selection; };
   context.on('page', (page) => {
     const id = String(++nextId); pages.set(id, page);
+    navigation.set(page, 'loading');
+    page.on('domcontentloaded', () => { navigation.set(page, 'ready'); if (current === page) sendMetadata(); });
+    page.on('requestfailed', (request) => { if (request.isNavigationRequest() && request.frame() === page.mainFrame()) { navigation.set(page, 'error'); if (current === page) sendMetadata(); } });
     page.on('framenavigated', (frame) => { if (frame === page.mainFrame() && current === page) sendMetadata(); });
     page.on('dialog', (value) => { if (current === page) { dialog = value; broadcast('dialog', { type: value.type(), message: value.message(), defaultValue: value.defaultValue() }); } else value.dismiss().catch(() => {}); });
     page.on('filechooser', () => broadcast('notice', { message: 'Phiên bản này chưa hỗ trợ tải tệp vào website đích. Bạn vẫn có thể gắn evidence trong ETMS.' }));
@@ -51,7 +63,7 @@ async function createRuntime({ token, targetUrl, launch = () => chromium.launch(
     } catch { await route.abort().catch(() => {}); }
   });
   const page = await context.newPage(); await choose(page);
-  page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => broadcast('notice', { message: 'Trang chưa tải xong hoặc không truy cập được. Có thể thử Tải lại.' }));
+  navigate(page, () => page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }));
 
   async function close() {
     if (ended) return; ended = true; clearInterval(watchdog);
@@ -86,10 +98,10 @@ async function createRuntime({ token, targetUrl, launch = () => chromium.launch(
         break;
       case 'navigate':
         await validateUrl(event.url);
-        active.goto(event.url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => broadcast('notice', { message: 'Không tải được URL. Kiểm tra địa chỉ hoặc thử lại.' })); break;
-      case 'back': active.goBack({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}); break;
-      case 'forward': active.goForward({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}); break;
-      case 'reload': active.reload({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}); break;
+        navigate(active, () => active.goto(event.url, { waitUntil: 'domcontentloaded', timeout: 30000 })); break;
+      case 'back': navigate(active, () => active.goBack({ waitUntil: 'domcontentloaded', timeout: 30000 })); break;
+      case 'forward': navigate(active, () => active.goForward({ waitUntil: 'domcontentloaded', timeout: 30000 })); break;
+      case 'reload': navigate(active, () => active.reload({ waitUntil: 'domcontentloaded', timeout: 30000 })); break;
       case 'tab': if (!pages.has(event.id)) throw new Error('Tab đã đóng.'); await choose(pages.get(event.id)); break;
       case 'dialog': if (dialog) { const value = dialog; dialog = null; await (event.accept ? value.accept(event.text) : value.dismiss()); } break;
     }
@@ -108,9 +120,13 @@ async function createRuntime({ token, targetUrl, launch = () => chromium.launch(
         if (viewers.size >= 2) { res.writeHead(409); return res.end(); }
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'X-Accel-Buffering': 'no' }); res.flushHeaders(); viewers.add(res);
         writeEvent(res, 'state', metadata());
+        if (latestFrame) writeEvent(res, 'frame', latestFrame);
+        if (dialog) writeEvent(res, 'dialog', { type: dialog.type(), message: dialog.message(), defaultValue: dialog.defaultValue() });
         const pulse = setInterval(() => { if (!res.destroyed) res.write(': heartbeat\n\n'); }, 15000);
         res.on('close', () => { clearInterval(pulse); viewers.delete(res); });
-        current.screenshot({ type: 'jpeg', quality: 75, timeout: 5000 }).then((data) => writeEvent(res, 'frame', { data: data.toString('base64'), width: WIDTH, height: HEIGHT })).catch(() => {});
+        const framePulse = setInterval(() => { if (latestFrame && !res.destroyed) writeEvent(res, 'frame', latestFrame); }, 1000);
+        res.on('close', () => clearInterval(framePulse));
+        current.screenshot({ type: 'jpeg', quality: 60, timeout: 5000 }).then((data) => { if (!latestFrame) latestFrame = { data: data.toString('base64'), width: WIDTH, height: HEIGHT }; if (!res.destroyed) writeEvent(res, 'frame', latestFrame); }).catch(() => {});
         return;
       }
       if (req.method === 'GET' && req.url === '/screenshot') {

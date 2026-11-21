@@ -19,7 +19,7 @@ export default defineConfig({
     // Frontend dev server chạy cùng container với Express (cổng 5000).
     // Nhờ vậy vẫn dùng được API/session khi mở giao diện qua cổng 5173.
     proxy: {
-      '/api': 'http://127.0.0.1:5000',
+      '/api': { target: 'http://127.0.0.1:5000', ws: true },
       '/uploads': 'http://127.0.0.1:5000',
     },
   },

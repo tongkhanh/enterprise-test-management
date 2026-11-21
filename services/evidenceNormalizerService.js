@@ -12,7 +12,7 @@ const TYPES = {
 
 async function walk(directory, output = []) {
   for (const entry of await fs.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-    if (['node_modules', '.git'].includes(entry.name)) continue;
+    if (['node_modules', '.git', '.etms-live'].includes(entry.name)) continue;
     const filePath = path.join(directory, entry.name);
     if (entry.isDirectory()) await walk(filePath, output);
     else output.push(filePath);

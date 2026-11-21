@@ -6,7 +6,7 @@ const schema = new mongoose.Schema({
   result: { type: mongoose.Schema.Types.ObjectId, ref: 'AutomationResult', default: null }, engine: { type: String, required: true },
   testExecution: { type: mongoose.Schema.Types.ObjectId, ref: 'TestExecution', default: null },
   approvedCodeHash: String,
-  status: { type: String, enum: ['Queued', 'Preparing', 'Running', 'Collecting', 'Passed', 'Failed', 'Error', 'Cancelled'], default: 'Queued', index: true },
+  status: { type: String, enum: ['Queued', 'Preparing', 'Running', 'Collecting', 'Passed', 'Failed', 'Error', 'Skipped', 'Cancelled'], default: 'Queued', index: true },
   jobId: { type: String, default: '' }, attempt: { type: Number, default: 0 }, error: { type: String, default: '' },
   startedAt: Date, completedAt: Date, requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   dataset: { type: mongoose.Schema.Types.ObjectId, ref: 'AutomationDataset' }, fixture: { type: mongoose.Schema.Types.ObjectId, ref: 'AutomationFixture' },

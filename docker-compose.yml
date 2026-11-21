@@ -87,10 +87,23 @@ services:
   automation-worker:
     <<: *etms-common
     command: node workers/automationWorker.js
+    depends_on:
+      redis:
+        condition: service_healthy
+      playwright-runner-image:
+        condition: service_completed_successfully
     volumes:
       - etms-storage:/app/storage
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
+
+  playwright-runner-image:
+    image: etms-playwright-runner:local
+    build:
+      context: .
+      target: playwright-runner
+    command: node -e "process.exit(0)"
+    restart: "no"
 
   integration-worker:
     <<: *etms-common

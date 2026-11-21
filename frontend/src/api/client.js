@@ -566,9 +566,11 @@ export const executionApi = {
   run: (id) => api.get(`/test-runs/${id}`).then(data),
   executeScript: (id, body) =>
     api.post(`/test-executions/${id}/auto`, body).then(data),
+  automationPreflight: (id, params) => api.get(`/test-executions/${id}/automation-preflight`, { params }).then(data),
   recordExecution: (id, body) =>
     api.patch(`/test-executions/${id}`, body).then(data),
   startManualBrowser: (id) => api.post(`/test-executions/${id}/manual-browser`).then(data),
+  manualBrowserTicket: (id) => api.post(`/test-executions/${id}/manual-browser/ticket`).then(data),
   endManualBrowser: (id) => api.delete(`/test-executions/${id}/manual-browser`).then(data),
   manualBrowserInput: (id, events) => api.post(`/test-executions/${id}/manual-browser/input`, { events }).then(data),
   captureManualBrowser: (id) => api.post(`/test-executions/${id}/manual-browser/screenshot`).then(data),

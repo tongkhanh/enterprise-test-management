@@ -21,4 +21,8 @@ USER pwuser
 ENV HOME=/tmp XDG_CONFIG_HOME=/tmp/config XDG_CACHE_HOME=/tmp/cache
 CMD ["xvfb-run", "-e", "/dev/stderr", "--server-args=-screen 0 1440x900x24 -nolisten tcp", "node", "manual-browser/runtime.js"]
 
+FROM build AS playwright-runner
+ENV NODE_PATH=/app/node_modules
+CMD ["sh", "-lc", "ln -s /app/node_modules /workspace/node_modules && node /app/node_modules/@playwright/test/cli.js test \"$SCRIPT_FILE\""]
+
 FROM build AS app

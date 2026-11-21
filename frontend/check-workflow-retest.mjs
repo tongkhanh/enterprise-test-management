@@ -20,14 +20,23 @@ const e = React.createElement;
 const read = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 let plans = read('audit-plans', []);
 let execution = read('audit-execution', { _id: 'execution', testCase: { _id: 'case', title: 'Synthetic login', testSteps: [{ stepNumber: 1, action: 'Previously checked', expectedResult: 'Confirmed' }, { stepNumber: 2, action: 'Untested step', expectedResult: 'Must be checked' }] }, stepResults: [{ stepNumber: 1, status: 'Passed', actualResult: 'Confirmed previously' }], result: 'Passed', qaVerdict: 'Passed', actualResult: 'Saved QA note', runtimeUrl: 'https://example.test/' });
-executionApi.run = async () => ({ run: { _id: 'run', testPlan: { kind: 'ExecutionPlan', approvalStatus: 'Approved' } }, scripts: [], automationJobs: [], executions: [execution] });
+const auto = location.search.includes('automation');
+if (auto) execution = { ...execution, executionMode: 'Automation', environmentId: 'environment', result: 'NotRun', automationRun: null };
+executionApi.run = async () => ({ run: { _id: 'run', executionMode: auto ? 'Automation' : 'Manual', testPlan: { kind: 'ExecutionPlan', approvalStatus: 'Approved' } }, scripts: auto ? [{ _id: 'script', testCase: 'case', engine: 'Playwright', filename: 'fixture.spec.js' }] : [], automationJobs: [], executions: [{...execution}] });
+executionApi.automationPreflight = async () => ({ ready: localStorage.getItem('audit-auto-ready') === 'true', checks: [{ name: 'Script', ready: localStorage.getItem('audit-auto-ready') === 'true', detail: 'QA approval required' }], history: execution.automationRun ? [execution.automationRun] : [] });
+executionApi.executeScript = async () => { execution = { ...execution, automationRun: { _id: 'runner', engine: 'Playwright', status: 'Running', attempt: 1 } }; localStorage.setItem('audit-auto-started', 'true'); return execution.automationRun; };
 executionApi.recordExecution = async (_id, body) => { execution = { ...execution, ...body }; localStorage.setItem('audit-execution', JSON.stringify(execution)); return { execution }; };
 executionApi.startManualBrowser = async () => { localStorage.setItem('audit-browser-starts', String(Number(localStorage.getItem('audit-browser-starts') || 0) + 1)); return { status: 'Ready' }; };
 executionApi.endManualBrowser = async () => ({ status: 'Ended' });
 executionApi.manualBrowserInput = async () => ({});
+  executionApi.manualBrowserTicket = async () => { throw new Error('Fixture uses HTTP controls'); };
 executionApi.captureManualBrowser = async () => { localStorage.setItem('audit-browser-capture', 'saved'); return { url: '/fixture.png' }; };
 const actualFetch = window.fetch.bind(window);
 window.fetch = async (url, options) => {
+ if (String(url).includes('/automation-live')) {
+  execution = {...execution, automationRun: {...execution.automationRun, status:'Passed'}};
+  return new Response('event: state\\ndata: '+JSON.stringify({status:'Passed',attempt:1,progress:{activity:'Hoàn tất: Passed',events:[],assertions:[{number:1,status:'Passed',duration:25}]}})+'\\n\\n', { headers: {'Content-Type':'text/event-stream'} });
+ }
  if (!String(url).includes('/manual-browser/stream')) return actualFetch(url, options);
  const body = new ReadableStream({ start(controller) {
   controller.enqueue(new TextEncoder().encode('event: state\\ndata: '+JSON.stringify({tabs:[],url:'https://example.test/',width:1440,height:900})+'\\n\\n'));
@@ -41,7 +50,7 @@ executionApi.createPlan = async (body) => { const plan = { ...body, _id: 'plan-'
 executionApi.updatePlan = async (id, body) => { const plan = { ...body, _id: id }; plans = plans.map((item) => item._id === id ? plan : item); localStorage.setItem('audit-plans', JSON.stringify(plans)); return plan; };
 function App() {
  const items = useQuery({ queryKey: ['e2e-plans'], queryFn: async () => [...plans] });
- if (location.search.includes('notes')) return e(TestRunExecutionPanel, { runId: 'run', project: 'project', profile: 'profile' });
+ if (location.search.includes('notes') || auto) return e(TestRunExecutionPanel, { runId: 'run', project: 'project', profile: 'profile' });
  return e(TestPlanningDocumentEditor, { activeProject: 'project', profile: { _id: 'profile', workflow: { testBasisSelection: { requirements: [], useCases: [], userStories: ['story'] } } }, stories: [{ _id: 'story', title: 'Approved synthetic story', approvalStatus: 'Approved', source: 'ImportedDocument' }], items: items.data || [], onNext: () => {}, setActiveStep: () => {} });
 }
 createRoot(document.getElementById('root')).render(e(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }, e(BrowserRouter, null, e(App))));
@@ -117,6 +126,22 @@ try {
   assert.equal(await note.inputValue(), 'Manual workspace QA note');
   assert.equal(await page.getByRole('dialog', { name: 'Không gian thực thi Manual', exact: true }).count(), 0);
   console.log('PASS: split Manual workspace, evidence capture, result saving without browser restart, and return to Test Run.');
+
+  await page.goto(`${base}?automation`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const runButton = page.getByRole('button', { name: 'Chạy script đã duyệt', exact: true });
+  await page.getByLabel('Automation readiness').waitFor();
+  assert.equal(await runButton.isEnabled(), false, 'unready Automation must not start');
+  await page.evaluate(() => localStorage.setItem('audit-auto-ready', 'true'));
+  await page.getByRole('button', { name: 'Kiểm tra lại', exact: true }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some((button) => button.textContent === 'Chạy script đã duyệt' && !button.disabled));
+  await runButton.click();
+  const monitor = page.getByRole('region', { name: 'Theo dõi Automation chỉ xem' });
+  await monitor.waitFor();
+  await monitor.getByText('#1 · Passed · 25 ms', { exact: true }).waitFor();
+  assert.equal(await monitor.locator('canvas').count(), 0, 'Automation must not expose Manual input controls');
+  await page.getByRole('button', { name: 'Quay lại Test Run', exact: true }).click();
+  assert.equal(await page.getByRole('dialog', { name: 'Không gian thực thi Automation', exact: true }).count(), 0);
+  console.log('PASS: Automation readiness blocks execution, ready scripts open the read-only runner workspace, and assertions are visible.');
 
   await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.getByRole('tab', { name: 'Tự soạn / chỉnh sửa', exact: true }).click();
