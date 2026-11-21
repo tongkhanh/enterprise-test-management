@@ -34,7 +34,7 @@ executionApi.manualBrowserInput = async () => ({});
 executionApi.captureManualBrowser = async () => { localStorage.setItem('audit-browser-capture', 'saved'); return { url: '/fixture.png' }; };
 const actualFetch = window.fetch.bind(window);
 window.fetch = async (url, options) => {
- if (String(url).includes('/automation-runs/') && String(url).includes('/live?')) return new Response('event: state\\ndata: '+JSON.stringify({status:'Passed',percent:100,attempt:1,progress:{activity:'Hoàn tất: Passed',events:[],assertions:[{number:1,status:'Passed',duration:25}]}})+'\\n\\nevent: frame\\ndata: '+JSON.stringify({data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='})+'\\n\\n', {headers:{'Content-Type':'text/event-stream'}});
+ if (String(url).includes('/automation-runs/') && String(url).includes('/live?')) { localStorage.setItem('audit-live-connections', String(Number(localStorage.getItem('audit-live-connections') || 0) + 1)); return new Response('event: state\\ndata: '+JSON.stringify({status:'Passed',percent:100,attempt:1,progress:{activity:'Hoàn tất: Passed',events:[],assertions:[{number:1,status:'Passed',duration:25}]}})+'\\n\\nevent: frame\\ndata: '+JSON.stringify({data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='})+'\\n\\n', {headers:{'Content-Type':'text/event-stream'}}); }
  if (String(url).includes('/automation-live')) {
   execution = {...execution, automationRun: {...execution.automationRun, status:'Passed'}};
   return new Response('event: state\\ndata: '+JSON.stringify({status:'Passed',attempt:1,progress:{activity:'Hoàn tất: Passed',events:[],assertions:[{number:1,status:'Passed',duration:25}]}})+'\\n\\n', { headers: {'Content-Type':'text/event-stream'} });
@@ -163,6 +163,25 @@ try {
   await labMonitor.getByText('Tiến trình job: 100% · theo giai đoạn thực thi', { exact: true }).waitFor();
   assert.equal(await labMonitor.getByRole('img').count(), 1);
   await labMonitor.getByRole('img').evaluate((image) => image.decode());
+  const liveConnections = await page.evaluate(() => localStorage.getItem('audit-live-connections'));
+  const frameBox = labMonitor.getByLabel('Khung hình trình duyệt Automation', { exact: true });
+  const originalHeight = (await frameBox.boundingBox()).height;
+  await labMonitor.getByLabel('Chiều cao trình duyệt Automation').focus();
+  await page.keyboard.press('End');
+  assert.ok((await frameBox.boundingBox()).height > originalHeight, 'QA can enlarge the browser without cropping its image');
+  await labMonitor.getByRole('button', { name: 'Toàn màn hình', exact: true }).click();
+  const expanded = page.getByRole('dialog', { name: 'Màn hình Automation mở rộng', exact: true });
+  await expanded.waitFor();
+  const bounds = await expanded.boundingBox();
+  assert.equal(Math.round(bounds.width), page.viewportSize().width);
+  assert.equal(Math.round(bounds.height), page.viewportSize().height);
+  assert.ok(await expanded.evaluate((element) => element.scrollWidth <= element.clientWidth), 'expanded viewer must not overflow horizontally');
+  await page.keyboard.press('Escape');
+  assert.equal(await expanded.count(), 0);
+  assert.equal(await page.evaluate(() => localStorage.getItem('audit-live-connections')), liveConnections, 'expanding/collapsing must preserve the stream instead of reconnecting or rerunning');
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await labMonitor.evaluate((element) => element.scrollWidth <= element.clientWidth), 'narrow viewer must not overflow horizontally');
+  await page.setViewportSize({ width: 1280, height: 720 });
   assert.ok(page.url().includes('job=standalone-job'));
   await page.reload();
   await page.getByRole('region', { name: 'Theo dõi Automation chỉ xem' }).getByText('#1 · Passed · 25 ms', { exact: true }).waitFor();
