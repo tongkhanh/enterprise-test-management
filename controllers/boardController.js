@@ -126,7 +126,13 @@ const moveBoardItem = async (req, res) => {
   if (fromStatus !== toStatus && !transitions[fromStatus]?.includes(toStatus)) {
     throw new AppError(`Không thể chuyển trực tiếp từ ${fromStatus} sang ${toStatus}.`, 409);
   }
+  if (toStatus === 'InProgress' && !item.testRun) throw new AppError('Hãy tạo Execution Plan/Test Run trước khi bắt đầu thực thi.', 409);
   if (toStatus === 'InReview' && item.reviewState !== 'Approved') throw new AppError('Test Case cần được QA duyệt lại trước khi vào In Review.', 409);
+  if (toStatus === 'InReview') {
+    if (!item.testRun) throw new AppError('Test Case chưa có Test Run để gửi review.', 409);
+    const execution = await TestExecution.findOne({ testRun: item.testRun, testCase: item.testCase }).select('result');
+    if (!execution || execution.result === 'NotRun') throw new AppError('Hãy thực thi Test Case và ghi nhận kết quả trước khi gửi review.', 409);
+  }
   if (toStatus === 'Done') {
     if (!item.testRun) throw new AppError('Hãy tạo Execution Plan/Test Run cho thẻ trước khi chuyển Done.', 409);
     const execution = await TestExecution.findOne({ testRun: item.testRun, testCase: item.testCase }).select('result actualResult notes bugReported');

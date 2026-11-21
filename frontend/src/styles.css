@@ -54,3 +54,72 @@
 .board-workspace .glass-card::before, .board-workspace .glass-card::after, .board-workspace .card-scene { display: none; }
 .board-workspace .glass-card { backdrop-filter: none; background: white; }
 .dark .board-workspace .glass-card { background: #17181d; }
+.planning-workspace .glass-card::before, .planning-workspace .glass-card::after, .planning-workspace .card-scene { display: none; }
+.planning-workspace .glass-card { backdrop-filter: none; transform: none; }
+.planning-workspace .glass-card:hover { transform: none; box-shadow: 0 18px 45px -32px rgba(30, 41, 59, .45); }
+.planning-workspace > .glass-card { background: color-mix(in srgb, #f1f5f9 88%, transparent); }
+.planning-workspace > .glass-card.text-slate-100 { background: #020617; }
+.dark .planning-workspace > .glass-card { background: #17181d; }
+.dark .planning-workspace > .glass-card.text-slate-100 { background: #020617; }
+
+/* Planning uses one continuous canvas instead of stacking white cards. */
+.planning-workspace > header {
+  border-color: rgba(196, 181, 253, .28)!important;
+  background: linear-gradient(115deg, #3b0764 0%, #312e81 54%, #075985 100%)!important;
+  color: #fff!important;
+  box-shadow: 0 18px 42px -26px rgba(30, 27, 75, .75)!important;
+}
+.planning-workspace > header .text-slate-900 { color: #0f172a!important; }
+.planning-workspace > header .text-slate-600 { color: #cbd5e1!important; }
+.planning-workspace > header .text-violet-600 { color: #c4b5fd!important; }
+.planning-workspace > header > div:last-child { background: rgba(255,255,255,.1)!important; border-color: rgba(255,255,255,.16)!important; }
+.planning-workspace > section:not(.glass-card) { border: 0!important; border-radius: 1rem; background: rgba(226,232,240,.62); padding: 1rem; }
+
+/* The roadmap is a single dark workspace; white is reserved for editable fields. */
+.planning-workspace > .glass-card.text-slate-900 { display: flex; flex-direction: column; background: #0b1220!important; color: #f8fafc!important; border-color: #334155!important; }
+.planning-workspace > .glass-card.text-slate-900 > div { order: 3; }
+.planning-workspace > .glass-card.text-slate-900 > .card-scene + div { order: 1; background: linear-gradient(105deg,#111827,#172554 58%,#164e63)!important; border-color: #334155!important; }
+.planning-workspace > .glass-card.text-slate-900 > .card-scene + div + div { display: none!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view { display: block!important; order: 2; }
+.planning-workspace > .glass-card.text-slate-900 > div.space-y-2.border-t { order: 4; }
+.planning-workspace > .glass-card.text-slate-900 details { background: #111827!important; border-color: #334155!important; box-shadow: none!important; }
+.planning-workspace > .glass-card.text-slate-900 details > summary { background: transparent!important; }
+.planning-workspace > .glass-card.text-slate-900 details > summary:hover { background: #1e293b!important; }
+.planning-workspace > .glass-card.text-slate-900 details > div { background: #0f172a!important; border-color: #334155!important; }
+.planning-workspace > .glass-card.text-slate-900 details details { background: rgba(30,41,59,.7)!important; }
+.planning-workspace > .glass-card.text-slate-900 [class*="bg-white"] { background: #0f172a!important; }
+.planning-workspace > .glass-card.text-slate-900 [class*="border-slate-200"] { border-color: #334155!important; }
+.planning-workspace > .glass-card.text-slate-900 .text-slate-900,
+.planning-workspace > .glass-card.text-slate-900 .text-slate-800,
+.planning-workspace > .glass-card.text-slate-900 .text-slate-700 { color: #f1f5f9!important; }
+.planning-workspace > .glass-card.text-slate-900 .text-slate-600 { color: #cbd5e1!important; }
+.planning-workspace > .glass-card.text-slate-900 .text-slate-500 { color: #94a3b8!important; }
+.planning-workspace > .glass-card.text-slate-900 input,
+.planning-workspace > .glass-card.text-slate-900 select { background: #172033!important; color: #f8fafc!important; border-color: #475569!important; }
+.planning-workspace > .glass-card.text-slate-900 input[type="date"] { color-scheme: dark; }
+.planning-workspace > .glass-card.text-slate-900 details details > div { border: 0!important; border-radius: 0!important; border-top: 1px solid #273449!important; background: transparent!important; }
+.planning-workspace > .glass-card.text-slate-900 div[class*="rounded-lg"][class*="border-slate-200"][class*="bg-white"] { border-width: 0 0 1px!important; border-radius: 0!important; background: transparent!important; }
+
+/* High-contrast read view: one light canvas, dark copy, no nested white cards. */
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view { background: #f8fafc!important; color: #0f172a!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view details { background: transparent!important; border-color: #cbd5e1!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view details > summary { background: transparent!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view details > summary:hover { background: #eef2ff!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view details > div { background: #f8fafc!important; border-color: #cbd5e1!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view [class*="border-slate-700"] { border-color: #cbd5e1!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view .text-slate-100,
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view .text-slate-200 { color: #0f172a!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view .text-slate-300 { color: #334155!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view .text-slate-400,
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view .text-slate-500 { color: #475569!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view .text-slate-600 { color: #64748b!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view .text-violet-300 { color: #6d28d9!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view .text-sky-300 { color: #0369a1!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view .text-emerald-300 { color: #047857!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view [class*="bg-slate-700"] { background: #cbd5e1!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view .bg-violet-400 { background: #6d28d9!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view [class*="bg-slate-800"] { background: #e2e8f0!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view button { color: #334155!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view button:hover { background: #e2e8f0!important; color: #0f172a!important; }
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view input,
+.planning-workspace > .glass-card.text-slate-900 > .roadmap-read-view select { background: #fff!important; color: #0f172a!important; border-color: #94a3b8!important; color-scheme: light; }

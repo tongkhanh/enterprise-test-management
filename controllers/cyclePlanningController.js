@@ -12,6 +12,8 @@ async function source(project, planId, session = null) {
   const plan = await TestPlan.findOne({ _id: planId, project, kind: 'TestPlan' }).session(session);
   if (!plan) throw new AppError('Không tìm thấy Test Plan thiết kế trong Project.', 404);
   if (plan.approvalStatus !== 'Approved') throw new AppError('Chọn Test Plan đã duyệt trước khi lập kế hoạch tuần.', 409);
+  // TestCase is scoped through Test Suite/BoardItem and has no direct `project` field.
+  // The BoardItem query below is the Project boundary for the resulting IDs.
   const ids = await TestCase.find({ ...planning.caseScope(plan), status: { $in: ['Approved', 'Active'] } }).session(session).distinct('_id');
   const items = await BoardItem.find({ project, testCase: { $in: ids }, isArchived: false }).session(session).populate(populate);
   return { plan, items };
@@ -125,6 +127,14 @@ const applyRoadmap = async (req, res) => {
       const { plan, items } = await source(project, testPlanId, session);
       const byId = new Map(items.map((item) => [String(item._id), item]));
       if (allIds.some((value) => { const item = byId.get(value); return !item || item.cycle || item.status !== 'Backlog' || item.reviewState !== 'Approved' || !planning.minutes(item); })) throw new AppError('Có Test Case đã đổi trạng thái, thiếu estimate hoặc không còn trong Backlog.', 409);
+      const selectedItems = allIds.map((value) => byId.get(value));
+      if (planning.deduplicateCases(selectedItems).duplicates.length) throw new AppError('Roadmap có Test Case trùng cùng Test Basis và kịch bản. Hãy giữ lại một bản trước khi xác nhận.', 409);
+      const requestedSignatures = groups.map(planning.cycleSignature);
+      if (new Set(requestedSignatures).size !== requestedSignatures.length) throw new AppError('Roadmap có Test Cycle trùng tên và khoảng thời gian.', 400);
+      const existingCycles = await Sprint.find({ project, status: { $ne: 'Cancelled' } }).select('name startDate endDate').session(session).lean();
+      const existingSignatures = new Set(existingCycles.map(planning.cycleSignature));
+      const duplicateIndex = requestedSignatures.findIndex((signature) => existingSignatures.has(signature));
+      if (duplicateIndex >= 0) throw new AppError(`Đã tồn tại Test Cycle "${String(groups[duplicateIndex].name || '').trim()}" trong cùng khoảng thời gian. Hãy chỉnh sửa Cycle hiện có hoặc đổi tên/ngày trước khi xác nhận roadmap.`, 409);
       const latest = await Sprint.findOne({ project }).sort('-sequence').select('sequence').session(session);
       let sequence = latest?.sequence || 0;
       for (let index = 0; index < groups.length; index++) {
@@ -136,7 +146,7 @@ const applyRoadmap = async (req, res) => {
         const selected = group.boardItemIds.map((value) => byId.get(String(value)));
         const totalMinutes = selected.reduce((sum, item) => sum + planning.minutes(item), 0);
         if (!name || !Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime()) || endDate <= startDate) throw new AppError(`Cycle ${index + 1} thiếu tên hoặc ngày hợp lệ.`, 400);
-        if (selected.length > budget.maxCases || totalMinutes > budget.capacityMinutes) throw new AppError(`${name} vượt capacity hoặc số Test Case tối đa.`, 409);
+        if ((budget.maxCases > 0 && selected.length > budget.maxCases) || totalMinutes > budget.capacityMinutes) throw new AppError(`${name} vượt capacity hoặc giới hạn Test Case đã cấu hình.`, 409);
         const cycle = await Sprint.create([{
           project, name, goal: String(group.goal || '').slice(0, 1000), description: String(group.description || '').slice(0, 1000),
           cycleType: group.cycleType || 'Custom', startDate, endDate, sequence: ++sequence,

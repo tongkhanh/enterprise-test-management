@@ -6,7 +6,7 @@ const tabs = [
   { id: 'delivery', label: 'Delivery Cycles', description: 'Nhịp giao hàng của đội sản phẩm', icon: Layers3 },
   { id: 'test-cycles', label: 'Test Cycles', description: 'Đợt kiểm thử độc lập hoặc liên kết Delivery Cycle', icon: FlaskConical },
   { id: 'board', label: 'Test Board', description: 'Phân công, kéo thả và Test Run', icon: Columns3 },
-  { id: 'issues', label: 'AI Test Planning', description: 'Gợi ý Test Case cho từng Test Cycle', icon: ListTodo },
+  { id: 'issues', label: 'AI Test Planning', description: 'Tự động chọn Test Case phù hợp cho từng Test Cycle', icon: ListTodo },
 ]
 
 export default function PlanningTabs({ project = '', current = 'delivery' }) {
