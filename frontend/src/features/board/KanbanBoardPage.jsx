@@ -128,7 +128,7 @@ export default function KanbanBoardPage({ embeddedProject = '' }) {
     onSettled: refresh,
   })
   const updateMutation = useMutation({ mutationFn: ({ id, body }) => boardApi.update(id, body), onSuccess: (updated) => { setDetail(updated); setEditForm(toEditForm(updated)); refresh(); toast.success('Đã cập nhật thẻ.') }, onError: (error) => toast.error(error.message) })
-  const planMutation = useMutation({ mutationFn: () => boardApi.createPlan({ project: activeProject, cycle: activeCycle === 'backlog' ? null : activeCycle, boardItemIds: selected, ...planForm, caseModes: Object.entries(caseModes).map(([boardItemId, mode]) => ({ boardItemId, mode })) }), onSuccess: (result) => { setPlanOpen(false); setSelected([]); setCaseModes({}); refresh(); const query = new URLSearchParams({ project: activeProject, step: 'execution', run: result.run._id }); if (result.plan.systemProfile) query.set('profile', String(result.plan.systemProfile._id || result.plan.systemProfile)); const summary = result.summary || {}; toast.success(`Đã tạo ${result.runs?.length || 1} Test Run`, { description: `${summary.Manual || 0} Manual · ${summary.Automation || 0} Automation. Đang mở “${result.run.name}”.` }); navigate(`/ai-generator?${query.toString()}`) }, onError: (error) => toast.error('Không thể tạo kế hoạch chạy', { description: error.message }) })
+  const planMutation = useMutation({ mutationFn: () => boardApi.createPlan({ project: activeProject, cycle: activeCycle === 'backlog' ? null : activeCycle, boardItemIds: selected, ...planForm, caseModes: Object.entries(caseModes).map(([boardItemId, mode]) => ({ boardItemId, mode })) }), onSuccess: (result) => { setPlanOpen(false); setSelected([]); setCaseModes({}); refresh(); const query = new URLSearchParams({ project: activeProject, step: 'execution', run: result.run._id }); if (result.plan.systemProfile) query.set('profile', String(result.plan.systemProfile._id || result.plan.systemProfile)); const summary = result.summary || {}; toast.success(`Đã tạo ${result.runs?.length || 1} Test Run`, { description: `${summary.Manual || 0} Manual · ${summary.Automation || 0} Automation. Đang mở “${result.run.name}”.` }); navigate(`/test-execution?${query.toString()}`) }, onError: (error) => toast.error('Không thể tạo kế hoạch chạy', { description: error.message }) })
 
   const board = boardQuery.data?.columns || Object.fromEntries(columns.map((column) => [column.id, []]))
   const selectedItems = useMemo(() => (boardQuery.data?.items || []).filter((item) => selected.includes(item._id)), [boardQuery.data, selected])
@@ -148,7 +148,7 @@ export default function KanbanBoardPage({ embeddedProject = '' }) {
     const query = new URLSearchParams({ project: activeProject, step: 'execution', run: idOf(run) })
     const profile = item?.testPlan?.systemProfile || item?.testCase?.e2e?.systemProfile
     if (profile) query.set('profile', idOf(profile))
-    navigate(`/ai-generator?${query.toString()}`)
+    navigate(`/test-execution?${query.toString()}`)
   }
   const toggleSelect = (id) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
   const openDetail = (item) => { setDetail(item); setEditForm(toEditForm(item)) }

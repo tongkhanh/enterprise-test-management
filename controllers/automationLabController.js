@@ -14,6 +14,16 @@ async function access(req, projectId) {
 async function githubAccess(req) { const connection = await IntegrationConnection.findById(req.params.integrationId); if (!connection || connection.provider !== 'GitHub') throw new AppError('GitHub integration không tồn tại.', 404); await assertWorkspaceAccess(req.user, connection.workspace, { permission: 'integration:read' }); }
 const runtimeNames = new Set(['Dockerfile', 'compose.yaml', 'compose.yml', 'docker-compose.yml', 'docker-compose.yaml']);
 const generatedNodeDockerfile = 'ETMS.generated.Node.Dockerfile';
+const normalizeStaticTargetUrl = (value) => {
+  try {
+    const target = new URL(String(value || '').trim());
+    const bridgeHost = String(process.env.DOCKER_TARGET_HOST || '').trim();
+    if (bridgeHost && ['localhost', '127.0.0.1', '::1'].includes(target.hostname)) target.hostname = bridgeHost;
+    return target.toString();
+  } catch {
+    throw new AppError('Target URL không đúng định dạng.', 400);
+  }
+};
 const findRuntimeFiles = async (integrationId, owner, repo, ref = 'HEAD') => {
   const tree = await githubRequest(integrationId, `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
   const files = (tree.tree || []).filter((item) => runtimeNames.has(item.path.split('/').pop())).map((item) => ({ path: item.path, type: item.path.toLowerCase().includes('compose') ? 'Compose' : 'Dockerfile', sha: item.sha }));
@@ -70,8 +80,28 @@ const createEnvironment = async (req, res) => {
     repository = { fullName, cloneUrl: `https://github.com/${fullName}.git`, ref, commitSha, pullRequestNumber: req.body.repository?.pullRequestNumber || null };
     docker = { dockerfile, context, containerPort: Number(req.body.docker?.containerPort || 3000) };
   }
-  const env = await TestEnvironment.create({ project: req.body.project, name: req.body.name, kind: req.body.kind, targetUrl: req.body.targetUrl || '', integration: req.body.integration || null, repository, docker, healthCheckPath: req.body.healthCheckPath || '/', expiresAt: req.body.expiresAt || null, autoBuildOnPush: req.body.autoBuildOnPush !== false, autoBuildOnPullRequest: req.body.autoBuildOnPullRequest !== false, autoRetest: Boolean(req.body.autoRetest), autoAnalyze: req.body.autoAnalyze !== false, createdBy: req.user._id });
+  const targetUrl = req.body.kind === 'StaticUrl' ? normalizeStaticTargetUrl(req.body.targetUrl) : '';
+  const env = await TestEnvironment.create({ project: req.body.project, name: req.body.name, kind: req.body.kind, targetUrl, integration: req.body.integration || null, repository, docker, healthCheckPath: req.body.healthCheckPath || '/', expiresAt: req.body.expiresAt || null, autoBuildOnPush: req.body.autoBuildOnPush !== false, autoBuildOnPullRequest: req.body.autoBuildOnPullRequest !== false, autoRetest: Boolean(req.body.autoRetest), autoAnalyze: req.body.autoAnalyze !== false, createdBy: req.user._id });
   send(res, env, 201);
+};
+const updateEnvironment = async (req, res) => {
+  const env = await TestEnvironment.findById(req.params.id);
+  if (!env) throw new AppError('Environment không tồn tại.', 404);
+  await access(req, env.project);
+  if (env.status === 'Provisioning') throw new AppError('Không thể sửa khi Environment đang Provision.', 409);
+  if (env.kind !== 'StaticUrl') throw new AppError('Chỉ môi trường dùng website có sẵn mới được sửa URL tại đây.', 409);
+  const name = String(req.body.name || '').trim();
+  const rawTargetUrl = String(req.body.targetUrl || '').trim();
+  if (!name) throw new AppError('Tên môi trường là bắt buộc.', 400);
+  if (!/^https?:\/\//i.test(rawTargetUrl)) throw new AppError('Target URL phải bắt đầu bằng http:// hoặc https://.', 400);
+  env.name = name;
+  env.targetUrl = normalizeStaticTargetUrl(rawTargetUrl);
+  env.status = 'Draft';
+  env.lastError = '';
+  env.healthCheckStatus = 'Unknown';
+  env.readyAt = null;
+  await env.save();
+  send(res, env);
 };
 const provisionEnvironment = async (req, res) => {
   const env = await TestEnvironment.findById(req.params.id); if (!env) throw new AppError('Environment không tồn tại.', 404);
@@ -93,4 +123,4 @@ const pulls = async (req, res) => { await githubAccess(req); send(res, (await gi
 const runtimeFiles = async (req, res) => { await githubAccess(req); send(res, await findRuntimeFiles(req.params.integrationId, req.params.owner, req.params.repo, req.query.ref || 'HEAD')); };
 const sourceFiles = async (req, res) => { await githubAccess(req); const system = req.query.purpose === 'system'; send(res, await listRepositoryFiles({ integrationId: req.params.integrationId, owner: req.params.owner, repo: req.params.repo, ref: req.query.ref || 'HEAD', purpose: system ? 'system' : 'requirements', includeMetadata: system })); };
 
-module.exports = { listScripts, createScript, downloadScript, validate, reviewScript, listEnvironments, createEnvironment, provisionEnvironment, stop, status, repos, branches, commits, pulls, runtimeFiles, sourceFiles };
+module.exports = { listScripts, createScript, downloadScript, validate, reviewScript, listEnvironments, createEnvironment, updateEnvironment, provisionEnvironment, stop, status, repos, branches, commits, pulls, runtimeFiles, sourceFiles };

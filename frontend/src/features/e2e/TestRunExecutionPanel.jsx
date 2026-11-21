@@ -10,7 +10,7 @@ import AutomationLiveView from "./AutomationLiveView";
 
 const activeStatuses = new Set(["Queued", "Preparing", "Running", "Collecting"]);
 
-function ExecutionCase({ execution, scripts, jobs, project, profile, run, refresh }) {
+function ExecutionCase({ execution, scripts, jobs, project, profile, run, refresh, onBindEnvironment }) {
   const mode = execution.executionMode || run.executionMode || (execution.automationRun ? "Automation" : "Manual");
   const [manualOpen, setManualOpen] = useState(false);
   const [automationOpen, setAutomationOpen] = useState(false);
@@ -96,7 +96,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
       <div className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${mode === 'Automation' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}`}>{mode} Run</div>
       {mode === "Manual" ? (
         <div className="space-y-2">
-          {execution.runtimeUrl ? <Button variant="outline" disabled={!planReady} onClick={() => setManualOpen(true)}>{manualOpen ? 'Đang thực thi Manual' : 'Bắt đầu Manual Test'}</Button> : <p className="text-sm text-slate-500">Gắn môi trường chạy để mở website kiểm thử.</p>}
+          {execution.runtimeUrl ? <Button variant="outline" disabled={!planReady} onClick={() => setManualOpen(true)}>{manualOpen ? 'Đang thực thi Manual' : 'Bắt đầu Manual Test'}</Button> : <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/20"><div><p className="text-sm font-semibold text-amber-900 dark:text-amber-100">Chưa có website để chạy Manual</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Chọn một Test Environment Ready hoặc nhập URL ứng dụng đang chạy, rồi quay lại Test Run.</p></div>{onBindEnvironment && <Button size="sm" onClick={onBindEnvironment}>Gắn môi trường chạy</Button>}</div>}
           {!planReady && <p className="text-sm text-amber-700">QA Manager cần duyệt Execution Plan trước khi chạy.</p>}
           {!!Object.keys(testCase?.generatedTestData || {}).length && <details className="text-sm"><summary>Dữ liệu kiểm thử</summary><pre className="mt-2 whitespace-pre-wrap break-words rounded border p-2 text-xs">{JSON.stringify(testCase.generatedTestData, null, 2)}</pre></details>}
           {testCase?.testSteps?.length > 0 && <div className="overflow-hidden rounded-xl border"><div className="grid grid-cols-[3rem_1fr_1fr_9rem] gap-2 bg-slate-50 p-3 text-xs font-bold dark:bg-slate-800"><span>Bước</span><span>Thao tác / Expected</span><span>Actual result</span><span>Kết quả</span></div>{testCase.testSteps.map((step, index) => { const row = stepResults[index] || {}; return <div key={index} className="grid grid-cols-[3rem_1fr_1fr_9rem] gap-2 border-t p-3 text-sm"><strong>{step.stepNumber || index + 1}</strong><div>{step.action}{step.testData && <p className="mt-1 text-xs text-slate-500">Test Data: {step.testData}</p>}<p className="mt-1 text-xs text-slate-500">Expected: {step.expectedResult}</p></div><Textarea className="min-h-20" aria-label={`Actual result bước ${index + 1}`} value={row.actualResult || ''} onChange={(event) => setStepResults((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, actualResult: event.target.value } : item))} /><Select aria-label={`Kết quả bước ${index + 1}`} value={row.status || 'NotRun'} onChange={(event) => setStepResults((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, status: event.target.value } : item))}>{['NotRun','Passed','Failed','Blocked','Skipped'].map((value) => <option key={value} value={value}>{value === 'NotRun' ? 'Chưa kiểm thử' : value}</option>)}</Select></div> })}</div>}
@@ -160,7 +160,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
   </div>, document.body);
 }
 
-export default function TestRunExecutionPanel({ runId, project, profile }) {
+export default function TestRunExecutionPanel({ runId, project, profile, onBindEnvironment }) {
   const client = useQueryClient();
   const run = useQuery({
     queryKey: ["test-run-detail", runId],
@@ -174,5 +174,5 @@ export default function TestRunExecutionPanel({ runId, project, profile }) {
   if (run.isPending) return <p className="mt-4 text-sm">Đang tải Test Run…</p>;
   if (run.isError) return <p className="mt-4 text-sm text-red-600">{run.error.message}</p>;
   if (!run.data.executions.length) return <p className="mt-4 text-sm">Test Run chưa có Test Case.</p>;
-  return <div className="mt-4 space-y-3">{run.data.executions.map((execution) => <ExecutionCase key={execution._id} execution={execution} scripts={run.data.scripts} jobs={run.data.automationJobs} project={project} profile={profile} run={run.data.run} refresh={refresh} />)}</div>;
+  return <div className="mt-4 space-y-3">{run.data.executions.map((execution) => <ExecutionCase key={execution._id} execution={execution} scripts={run.data.scripts} jobs={run.data.automationJobs} project={project} profile={profile} run={run.data.run} refresh={refresh} onBindEnvironment={onBindEnvironment} />)}</div>;
 }

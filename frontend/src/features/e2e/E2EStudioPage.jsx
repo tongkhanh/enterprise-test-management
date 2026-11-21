@@ -1,5 +1,5 @@
 /* eslint-disable no-unreachable */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   useInfiniteQuery,
   useMutation,
@@ -28,7 +28,7 @@ import {
   TestTube2,
   UploadCloud,
 } from "lucide-react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { DocumentQualityBadge, DocumentQualityNotice } from "@/components/common/DocumentQuality";
 import {
@@ -139,20 +139,22 @@ const workflowStepIds = new Set([
   "result",
   "documents",
 ]);
+const executionStepIds = new Set(["agile", "runtime", "automation", "execution", "result"]);
 
-export default function E2EStudioPage() {
+export default function E2EStudioPage({ defaultStep = "requirement" }) {
   const qc = useQueryClient();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [search] = useSearchParams();
   const user = useAuthStore((state) => state.user);
   const [project, setProject] = useState("");
   const ensuredScopeProject = useRef("");
-  const [activeStep, setActiveStep] = useState(() =>
-    workflowStepIds.has(search.get("step"))
-      ? search.get("step")
-      : search.get("mode") === "github"
-        ? "evidence"
-        : "requirement",
-  );
+  const [activeStep, setActiveStep] = useState(() => {
+    const requestedStep = search.get("step");
+    if (search.get("run") && !executionStepIds.has(requestedStep)) return "execution";
+    if (workflowStepIds.has(requestedStep)) return requestedStep;
+    return search.get("mode") === "github" ? "evidence" : defaultStep;
+  });
   const [profile, setProfile] = useState(emptyProfile);
   const [profileEditor, setProfileEditor] = useState("create");
   const [profileMode, setProfileMode] = useState("SystemProfile");
@@ -660,6 +662,10 @@ export default function E2EStudioPage() {
       if (!search.get("step")) setActiveStep(currentProfile.workflow?.lastStep || "requirement");
     }
   }, [currentProfile?._id]);
+  useLayoutEffect(() => {
+    const routeStep = search.get("step");
+    if (workflowStepIds.has(routeStep) && routeStep !== activeStep) setActiveStep(routeStep);
+  }, [location.search]);
   useEffect(() => {
     if (
       currentProfile?._id &&
@@ -689,13 +695,11 @@ export default function E2EStudioPage() {
       query.set("profile", currentProfile._id);
       changed = true;
     }
-    if (changed)
-      window.history.replaceState(
-        null,
-        "",
-        `${window.location.pathname}?${query.toString()}${window.location.hash}`,
-      );
-  }, [activeStep, activeProject, currentProfile?._id]);
+    const targetPath = executionStepIds.has(activeStep) ? "/test-execution" : "/ai-generator";
+    const nextSearch = `?${query.toString()}`;
+    if (changed || location.pathname !== targetPath || location.search !== nextSearch)
+      navigate({ pathname: targetPath, search: nextSearch, hash: location.hash }, { replace: true });
+  }, [activeStep, activeProject, currentProfile?._id, location.pathname, location.search, location.hash, navigate]);
   return (
     <QAWorkflow
       {...{

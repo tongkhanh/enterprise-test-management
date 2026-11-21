@@ -14,6 +14,7 @@ router.post('/automation-scripts/:id/validate', authorize('execution:execute', '
 router.patch('/automation-scripts/:id/review', authorize('testcase:approve'), auditLog('APPROVE', 'AutomationScript'), asyncHandler(c.reviewScript));
 router.get('/test-environments', authorize('execution:execute', 'execution:manage'), asyncHandler(c.listEnvironments));
 router.post('/test-environments', authorize('execution:manage'), auditLog('CREATE', 'TestEnvironment'), asyncHandler(c.createEnvironment));
+router.patch('/test-environments/:id', authorize('execution:manage'), auditLog('UPDATE', 'TestEnvironment'), asyncHandler(c.updateEnvironment));
 router.post('/test-environments/:id/provision', authorize('execution:manage'), asyncHandler(c.provisionEnvironment));
 router.post('/test-environments/:id/stop', authorize('execution:manage'), asyncHandler(c.stop));
 router.get('/github/:integrationId/repos', authorize('integration:read', 'integration:manage'), asyncHandler(c.repos));

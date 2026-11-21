@@ -491,6 +491,7 @@ export const automationLabApi = {
   fixtures: (project) =>
     api.get("/automation-fixtures", { params: { project } }).then(data),
   createEnvironment: (body) => api.post("/test-environments", body).then(data),
+  updateEnvironment: (id, body) => api.patch(`/test-environments/${id}`, body).then(data),
   provision: (id) => api.post(`/test-environments/${id}/provision`).then(data),
   stop: (id) => api.post(`/test-environments/${id}/stop`).then(data),
   scripts: (project) =>

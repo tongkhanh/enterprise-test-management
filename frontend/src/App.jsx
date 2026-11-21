@@ -78,7 +78,8 @@ export default function App() {
         <Route path="teams" element={<TeamsPage />} />
         <Route path="cycles" element={<CyclesPage />} />
         <Route path="issues" element={<AgileIssuesPage />} />
-        <Route path="ai-generator" element={<E2EStudioPage />} />
+        <Route path="ai-generator" element={<E2EStudioPage key="document-workspace" />} />
+        <Route path="test-execution" element={<E2EStudioPage key="execution-workspace" defaultStep="execution" />} />
         <Route path="requirements" element={<LegacyRequirementRedirect />} />
         <Route path="documents" element={<DocumentLibraryPage />} />
         <Route path="approvals" element={<ApprovalInboxPage />} />

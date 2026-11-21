@@ -72,6 +72,14 @@ const workflowSteps = [
   ["review", "Review & duyệt"],
   ["documents", "Hoàn tất & xuất file"],
 ];
+const executionWorkspaceSteps = new Set(["agile", "runtime", "automation", "execution", "result"]);
+const executionWorkspaceLabels = {
+  agile: "Bàn giao Agile",
+  runtime: "Môi trường chạy",
+  automation: "Automation",
+  execution: "Thực thi Test Run",
+  result: "Kết quả & báo cáo",
+};
 const sourceTabs = [
   ["requirement", "Requirement"],
   ["usecase", "Use Case"],
@@ -130,6 +138,7 @@ export default function QAWorkflow(props) {
     scopeName: "",
   }));
   const currentWorkflowStep = primaryStepId(activeStep);
+  const executionWorkspace = executionWorkspaceSteps.has(activeStep);
   const workflowStepIndex = Math.max(0, workflowSteps.findIndex(([id]) => id === currentWorkflowStep));
   const testPlans = (plans.data || []).filter(
     (item) =>
@@ -340,6 +349,7 @@ export default function QAWorkflow(props) {
         project={activeProject}
         requestedEnvironment={props.requestedEnvironment}
         updateProfile={updateProfile}
+        onBound={() => setActiveStep(props.requestedRun ? "execution" : "automation")}
         onNext={() => setActiveStep("automation")}
       />
     ),
@@ -412,12 +422,12 @@ export default function QAWorkflow(props) {
   return (
     <div className="e2e-workflow space-y-5 pb-8">
       <PageHeader
-        eyebrow="QA delivery workflow"
-        title="Luồng E2E theo quy trình QA"
-        description="Chọn đúng mục tiêu cho lần làm việc này. Mọi tài liệu được lưu độc lập, nên bạn có thể dừng và quay lại bất cứ lúc nào."
-        actions={currentProfile && <Button variant="outline" asChild><Link to={`/documents?${new URLSearchParams({ project: String(activeProject || ""), profile: String(currentProfile._id || "") }).toString()}`}><FileCheck2 className="h-4 w-4" />Mở thư viện tài liệu</Link></Button>}
+        eyebrow={executionWorkspace ? "Test execution workspace" : "QA delivery workflow"}
+        title={executionWorkspace ? executionWorkspaceLabels[activeStep] : "Luồng E2E theo quy trình QA"}
+        description={executionWorkspace ? "Chạy các Test Case trong Test Run, ghi kết quả riêng từng case và thu evidence mà không quay lại luồng tạo tài liệu." : "Chọn đúng mục tiêu cho lần làm việc này. Mọi tài liệu được lưu độc lập, nên bạn có thể dừng và quay lại bất cứ lúc nào."}
+        actions={executionWorkspace ? <div className="flex flex-wrap gap-2"><Button variant="outline" asChild><Link to={`/board?project=${activeProject}`}>Quay lại Test Board</Link></Button><Button variant="outline" asChild><Link to={`/ai-generator?${new URLSearchParams({ project: String(activeProject || ""), profile: String(currentProfile?._id || ""), step: "documents" }).toString()}`}><FileCheck2 className="h-4 w-4" />Tài liệu nguồn</Link></Button></div> : currentProfile && <Button variant="outline" asChild><Link to={`/documents?${new URLSearchParams({ project: String(activeProject || ""), profile: String(currentProfile._id || "") }).toString()}`}><FileCheck2 className="h-4 w-4" />Mở thư viện tài liệu</Link></Button>}
       />
-      <WorkflowRunPanel
+      {!executionWorkspace && <WorkflowRunPanel
         profile={currentProfile}
         profiles={profiles.data || []}
         liveCounts={{ requirements: props.requirements?.data?.length || 0, useCases: sourceUseCaseCount, stories: sourceStoryCount, plans: testPlans.length, suites: suites.data?.length || 0, testCases: currentCases.length }}
@@ -426,8 +436,8 @@ export default function QAWorkflow(props) {
         startWorkflowRun={startWorkflowRun}
         updateWorkflowProgress={updateWorkflowProgress}
         currentStep={currentWorkflowStep}
-      />
-      <Card className="overflow-hidden border-slate-200 shadow-sm dark:border-slate-700">
+      />}
+      {!executionWorkspace && <Card className="overflow-hidden border-slate-200 shadow-sm dark:border-slate-700">
         <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-700 sm:flex-row sm:items-end sm:justify-between">
           <div className="w-full sm:max-w-sm">
             <label className="label" htmlFor="workflow-project">
@@ -487,7 +497,8 @@ export default function QAWorkflow(props) {
             </div>
           </div>}
         </div>
-      </Card>
+      </Card>}
+      {executionWorkspace && <Card className="border-violet-200 bg-gradient-to-r from-violet-50 via-white to-sky-50 p-4 dark:border-violet-900 dark:from-violet-950/30 dark:via-slate-900 dark:to-sky-950/20"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wide text-violet-700 dark:text-violet-300">Đang ở khu vực thực thi</p><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{executionWorkspaceLabels[activeStep]} · Project {projects.data?.find((item) => String(item._id) === String(activeProject))?.name || "đang chọn"}</p></div><div className="flex flex-wrap gap-2">{[["runtime", "Môi trường"], ["automation", "Automation"], ["execution", "Test Run"], ["result", "Báo cáo"]].map(([id, label]) => <Button key={id} size="sm" variant={activeStep === id ? "default" : "outline"} onClick={() => setActiveStep(id)}>{label}</Button>)}</div></div></Card>}
       {activeStep === "documents" || currentProfile || activeStep === "requirement" ? (
         activeStep === "requirement" ? requirementContent : content[activeStep]
       ) : (
@@ -2660,6 +2671,7 @@ function RuntimeBindingStep({
   project,
   requestedEnvironment,
   updateProfile,
+  onBound,
   onNext,
 }) {
   const [selected, setSelected] = useState(
@@ -2679,6 +2691,19 @@ function RuntimeBindingStep({
   );
   const bound = ready.find((item) => String(item._id) === boundId);
   const runtimeUrl = boundId ? bound?.targetUrl : profile?.baseUrl;
+  const bindEnvironment = (environmentId) => {
+    if (!environmentId || updateProfile.isPending) return;
+    updateProfile.mutate(
+      { environment: environmentId, baseUrl: "" },
+      {
+        onSuccess: () => {
+          environments.refetch();
+          toast.success("Đã gắn môi trường vào Test Run.");
+          onBound?.();
+        },
+      },
+    );
+  };
   return (
     <Card className="p-5">
       <SectionTitle
@@ -2723,9 +2748,7 @@ function RuntimeBindingStep({
               selected === boundId ||
               updateProfile.isPending
             }
-            onClick={() =>
-              updateProfile.mutate({ environment: selected, baseUrl: "" })
-            }
+            onClick={() => bindEnvironment(selected)}
           >
             Gắn vào Profile
           </Button>
@@ -2781,11 +2804,8 @@ function RuntimeBindingStep({
             initialProject={project}
             onEnvironmentReady={(item) => {
               setSelected(String(item._id));
-              environments.refetch();
               setShowBuilder(false);
-              toast.success(
-                "Đã chọn môi trường Ready. Hãy gắn vào Profile để tiếp tục.",
-              );
+              bindEnvironment(String(item._id));
             }}
           />
         </div>
@@ -2920,7 +2940,7 @@ function ExecutionStep({ project, profile, cases, plans, setActiveStep, requeste
           <p className="mt-3 text-xs text-slate-500">Run này đã tồn tại. Không cần tạo lại kế hoạch hoặc điền lại biểu mẫu; hãy chọn môi trường và chạy khi sẵn sàng.</p>
         </section>
       )}
-      {openedRun && <TestRunExecutionPanel key={openedRun._id} runId={openedRun._id} project={project} profile={profile?._id} />}
+      {openedRun && <TestRunExecutionPanel key={openedRun._id} runId={openedRun._id} project={project} profile={profile?._id} onBindEnvironment={() => setActiveStep("runtime")} />}
       {!runtimeUrl && !openedRun && (
         <p className="mt-4 rounded-lg bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
           Chưa có Runtime URL nên chưa thể tạo Execution Plan hoặc Test Run. Các

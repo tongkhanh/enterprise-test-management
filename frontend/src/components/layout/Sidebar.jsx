@@ -2,7 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   Bug, CheckSquare2, ChevronLeft, FlaskConical, FolderKanban, Gauge,
   Building2, Columns3, Repeat2, Settings, Sparkles, Trophy, UsersRound, X, TerminalSquare, ListTodo, Mail, FileBarChart,
-  FileStack,
+  FileStack, PlayCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
@@ -30,6 +30,7 @@ const groups = [
     items: [
       { label: 'Cycles & Test Planning', to: '/cycles', icon: Repeat2 },
       { label: 'Backlog & Test Board', to: '/board', icon: Columns3 },
+      { label: 'Thực thi Test Run', to: '/test-execution?step=execution', icon: PlayCircle },
       { label: 'Công việc Agile', to: '/issues', icon: ListTodo },
     ],
   },
