@@ -102,7 +102,7 @@ test('a Test Run records manual results and runs the reviewed script while retai
     assert.ok(!storedTestCase.targetUrl);
     const plan = await m.TestPlan.create({ name: 'Execution Plan', project: project._id, kind: 'ExecutionPlan', approvalStatus: 'Approved', createdBy: owner._id, testCases: [testCase._id] });
     const manual = await request('/test-runs', 'POST', { testPlan: plan._id, name: 'Manual run' }, 201);
-    const auto = await request('/test-runs', 'POST', { testPlan: plan._id, name: 'Auto run' }, 201);
+    const auto = await request('/test-runs', 'POST', { testPlan: plan._id, name: 'Auto run', executionMode: 'Automation' }, 201);
     const manualDetail = await request(`/test-runs/${manual._id}`);
     const manualExecution = manualDetail.executions[0];
     assert.equal(manualExecution.runtimeUrl, url);

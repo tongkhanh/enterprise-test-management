@@ -568,6 +568,10 @@ export const executionApi = {
     api.post(`/test-executions/${id}/auto`, body).then(data),
   recordExecution: (id, body) =>
     api.patch(`/test-executions/${id}`, body).then(data),
+  startManualBrowser: (id) => api.post(`/test-executions/${id}/manual-browser`).then(data),
+  endManualBrowser: (id) => api.delete(`/test-executions/${id}/manual-browser`).then(data),
+  manualBrowserInput: (id, events) => api.post(`/test-executions/${id}/manual-browser/input`, { events }).then(data),
+  captureManualBrowser: (id) => api.post(`/test-executions/${id}/manual-browser/screenshot`).then(data),
   uploadExecutionEvidence: (id, files) => {
     const body = new FormData();
     Array.from(files || []).forEach((file) => body.append('evidence', file));

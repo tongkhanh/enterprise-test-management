@@ -1,6 +1,8 @@
 x-etms-common: &etms-common
   image: etms-app:local
-  build: .
+  build:
+    context: .
+    target: app
   env_file: .env
   environment:
     REDIS_URL: redis://redis:6379
@@ -27,8 +29,51 @@ services:
 
   api:
     <<: *etms-common
+    environment:
+      REDIS_URL: redis://redis:6379
+      DOCKER_TARGET_HOST: host.docker.internal
+      RUNNER_STORAGE_VOLUME: etms-storage
+      MANUAL_BROWSER_BROKER_URL: http://manual-browser-broker:3100
+    depends_on:
+      redis:
+        condition: service_healthy
+      manual-browser-broker:
+        condition: service_healthy
     ports:
       - "5000:5000"
+    restart: unless-stopped
+
+  # Build the isolated browser image once; the broker starts one container per
+  # tester/execution. This initializer is expected to exit successfully.
+  manual-browser-image:
+    image: etms-manual-browser:local
+    build:
+      context: .
+      target: manual-browser
+    command: node -e "process.exit(0)"
+    restart: "no"
+
+  manual-browser-broker:
+    image: etms-app:local
+    command: node manual-browser/broker.js
+    environment:
+      MANUAL_BROWSER_BROKER_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      MANUAL_BROWSER_NETWORK: etms-manual-browsers
+      WEB_ANALYZER_ALLOW_PRIVATE: ${WEB_ANALYZER_ALLOW_PRIVATE:-false}
+      WEB_ANALYZER_ALLOWED_HOSTS: ${WEB_ANALYZER_ALLOWED_HOSTS:-}
+    networks:
+      - default
+      - manual-browsers
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      manual-browser-image:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
 
   environment-worker:
@@ -56,3 +101,7 @@ volumes:
   etms-storage:
     name: etms-storage
   redis-data:
+
+networks:
+  manual-browsers:
+    name: etms-manual-browsers

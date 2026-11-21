@@ -1,20 +1,30 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { automationLabApi, bugApi, executionApi } from "@/api/client";
 import { Badge, Button, Card, Input, Select, Textarea } from "@/components/ui";
+import RemoteManualBrowser from "./RemoteManualBrowser";
 
 const activeStatuses = new Set(["Queued", "Preparing", "Running", "Collecting"]);
 
 function ExecutionCase({ execution, scripts, jobs, project, profile, run, refresh }) {
   const mode = execution.executionMode || run.executionMode || (execution.automationRun ? "Automation" : "Manual");
+  const [manualOpen, setManualOpen] = useState(false);
+  const [split, setSplit] = useState(40);
+  const [closing, setClosing] = useState(false);
+  useEffect(() => {
+    if (!manualOpen) return;
+    const previous = document.body.style.overflow; document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previous; };
+  }, [manualOpen]);
   const [script, setScript] = useState("");
   const [dataset, setDataset] = useState("");
   const [fixture, setFixture] = useState("");
   const [verdict, setVerdict] = useState("");
   const [files, setFiles] = useState([]);
-  const [stepResults, setStepResults] = useState(() => (execution.testCase?.testSteps || []).map((step, index) => execution.stepResults?.find((row) => row.stepNumber === (step.stepNumber || index + 1)) || { stepNumber: step.stepNumber || index + 1, status: "Passed", actualResult: "", note: "" }));
+  const [stepResults, setStepResults] = useState(() => (execution.testCase?.testSteps || []).map((step, index) => execution.stepResults?.find((row) => row.stepNumber === (step.stepNumber || index + 1)) || { stepNumber: step.stepNumber || index + 1, status: "NotRun", actualResult: "", note: "" }));
   const [noteEdit, setNote] = useState(null);
   const note = noteEdit ?? execution.actualResult ?? "";
   const [showBug, setShowBug] = useState(false);
@@ -72,7 +82,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
     }
   }
 
-  return (
+  const card = (
     <Card className="space-y-4 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <h4 className="font-semibold">{testCase?.title || "Test Case"}</h4>
@@ -82,8 +92,10 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
       <div className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${mode === 'Automation' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}`}>{mode} Run</div>
       {mode === "Manual" ? (
         <div className="space-y-2">
-          {execution.runtimeUrl ? <Button asChild variant="outline"><a href={execution.runtimeUrl} target="_blank" rel="noreferrer">Mở website kiểm thử</a></Button> : <p className="text-sm text-slate-500">Gắn môi trường chạy để mở website kiểm thử.</p>}
-          {testCase?.testSteps?.length > 0 && <div className="overflow-hidden rounded-xl border"><div className="grid grid-cols-[3rem_1fr_1fr_9rem] gap-2 bg-slate-50 p-3 text-xs font-bold dark:bg-slate-800"><span>Bước</span><span>Thao tác / Expected</span><span>Actual result</span><span>Kết quả</span></div>{testCase.testSteps.map((step, index) => { const row = stepResults[index] || {}; return <div key={index} className="grid grid-cols-[3rem_1fr_1fr_9rem] gap-2 border-t p-3 text-sm"><strong>{step.stepNumber || index + 1}</strong><div>{step.action}<p className="mt-1 text-xs text-slate-500">Expected: {step.expectedResult}</p></div><Textarea className="min-h-20" aria-label={`Actual result bước ${index + 1}`} value={row.actualResult || ''} onChange={(event) => setStepResults((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, actualResult: event.target.value } : item))} /><Select value={row.status || 'Passed'} onChange={(event) => setStepResults((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, status: event.target.value } : item))}>{['Passed','Failed','Blocked','Skipped'].map((value) => <option key={value}>{value}</option>)}</Select></div> })}</div>}
+          {execution.runtimeUrl ? <Button variant="outline" disabled={!planReady} onClick={() => setManualOpen(true)}>{manualOpen ? 'Đang thực thi Manual' : 'Bắt đầu Manual Test'}</Button> : <p className="text-sm text-slate-500">Gắn môi trường chạy để mở website kiểm thử.</p>}
+          {!planReady && <p className="text-sm text-amber-700">QA Manager cần duyệt Execution Plan trước khi chạy.</p>}
+          {!!Object.keys(testCase?.generatedTestData || {}).length && <details className="text-sm"><summary>Dữ liệu kiểm thử</summary><pre className="mt-2 whitespace-pre-wrap break-words rounded border p-2 text-xs">{JSON.stringify(testCase.generatedTestData, null, 2)}</pre></details>}
+          {testCase?.testSteps?.length > 0 && <div className="overflow-hidden rounded-xl border"><div className="grid grid-cols-[3rem_1fr_1fr_9rem] gap-2 bg-slate-50 p-3 text-xs font-bold dark:bg-slate-800"><span>Bước</span><span>Thao tác / Expected</span><span>Actual result</span><span>Kết quả</span></div>{testCase.testSteps.map((step, index) => { const row = stepResults[index] || {}; return <div key={index} className="grid grid-cols-[3rem_1fr_1fr_9rem] gap-2 border-t p-3 text-sm"><strong>{step.stepNumber || index + 1}</strong><div>{step.action}{step.testData && <p className="mt-1 text-xs text-slate-500">Test Data: {step.testData}</p>}<p className="mt-1 text-xs text-slate-500">Expected: {step.expectedResult}</p></div><Textarea className="min-h-20" aria-label={`Actual result bước ${index + 1}`} value={row.actualResult || ''} onChange={(event) => setStepResults((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, actualResult: event.target.value } : item))} /><Select aria-label={`Kết quả bước ${index + 1}`} value={row.status || 'NotRun'} onChange={(event) => setStepResults((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, status: event.target.value } : item))}>{['NotRun','Passed','Failed','Blocked','Skipped'].map((value) => <option key={value} value={value}>{value === 'NotRun' ? 'Chưa kiểm thử' : value}</option>)}</Select></div> })}</div>}
         </div>
       ) : (
         <div className="space-y-2">
@@ -133,6 +145,11 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
       </form>}
     </Card>
   );
+  if (!manualOpen) return card;
+  return createPortal(<div role="dialog" aria-modal="true" aria-label="Không gian thực thi Manual" className="fixed inset-0 z-[100] flex flex-col bg-white dark:bg-slate-950">
+    <header className="flex flex-wrap items-center justify-between gap-3 border-b p-3 dark:border-slate-800"><div><h2 className="font-semibold">Manual Test · {testCase?.title}</h2><p className="text-xs text-slate-500">Thao tác website bên phải, ghi nhận kết quả và evidence bên trái.</p></div><label className="flex items-center gap-2 text-xs">Độ rộng QA<input aria-label="Độ rộng bảng kết quả QA" type="range" min="30" max="65" value={split} onChange={(event) => setSplit(Number(event.target.value))} /></label><Button variant="ghost" title="Giữ phiên để tiếp tục; tự đóng sau 15 phút không thao tác" onClick={() => setManualOpen(false)}>Thu gọn</Button><Button variant="outline" disabled={closing} onClick={async () => { setClosing(true); try { await executionApi.endManualBrowser(execution._id); setManualOpen(false); } catch (error) { if ([404, 410].includes(error.status)) setManualOpen(false); else toast.error(error.message); } finally { setClosing(false); } }}>{closing ? 'Đang đóng…' : 'Kết thúc & quay lại Test Run'}</Button></header>
+    <div className="flex min-h-0 flex-1 flex-col md:flex-row"><div className="min-h-48 overflow-auto border-r md:h-full" style={{ flex: `0 1 ${split}%` }}>{card}</div><div className="min-h-80 min-w-0 flex-1"><RemoteManualBrowser executionId={execution._id} onEvidence={refresh} /></div></div>
+  </div>, document.body);
 }
 
 export default function TestRunExecutionPanel({ runId, project, profile }) {

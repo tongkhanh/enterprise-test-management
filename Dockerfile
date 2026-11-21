@@ -15,3 +15,10 @@ RUN npm --prefix frontend run build
 ENV NODE_ENV=production
 EXPOSE 5000
 CMD ["node", "server.js"]
+
+FROM build AS manual-browser
+USER pwuser
+ENV HOME=/tmp XDG_CONFIG_HOME=/tmp/config XDG_CACHE_HOME=/tmp/cache
+CMD ["xvfb-run", "-e", "/dev/stderr", "--server-args=-screen 0 1440x900x24 -nolisten tcp", "node", "manual-browser/runtime.js"]
+
+FROM build AS app

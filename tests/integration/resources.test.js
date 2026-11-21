@@ -54,7 +54,10 @@ test('isolated API: RBAC, dataset encryption/masking, schedules, signed webhook,
     assert.equal((await fetch(base + '/observability/metrics')).status, 401);
     assert.equal((await fetch(base + '/observability/metrics', { headers: { Authorization: `Bearer ${process.env.METRICS_TOKEN}` } })).status, 200);
     if (process.env.TEST_BROWSER === 'true') await t.test('browser enters authenticated automation operations', async () => {
-      const browser = await require('playwright').chromium.launch({ headless: true });
+      const browser = await require('playwright').chromium.launch({ headless: true }).catch((error) => {
+        if (process.platform === 'win32' && /Executable doesn't exist/.test(error.message)) return require('playwright').chromium.launch({ headless: true, channel: 'msedge' });
+        throw error;
+      });
       try { const page = await browser.newPage(); await page.goto(base + '/studio/login'); assert.ok((await page.locator('body').innerText()).length > 20); await page.goto(base + '/studio/automation-operations'); await page.waitForURL('**/login'); } finally { await browser.close(); }
     });
   } finally {

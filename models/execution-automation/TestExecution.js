@@ -23,7 +23,8 @@ const stepResultSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ['Passed', 'Failed', 'Blocked', 'Skipped'],
+      enum: ['NotRun', 'Passed', 'Failed', 'Blocked', 'Skipped'],
+      default: 'NotRun',
       required: true,
     },
     actualResult: {
