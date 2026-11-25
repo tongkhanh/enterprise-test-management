@@ -372,10 +372,10 @@ export default function QAWorkflow(props) {
     ),
     result: (
       <Overview
-        title="Evidence · RCA · Bug · Report"
-        description="Thu screenshot, video, trace, console và network; AI RCA; tạo hoặc đồng bộ Jira Issue; retest và xuất Test Summary Report."
-        action="Mở Test Reports"
-        to={`/reports?project=${activeProject}`}
+        title="Results & Triage"
+        description="Kiểm tra kết quả và evidence, xác nhận QA verdict, phân loại nguyên nhân và ghi Bug trước khi đánh giá hoàn tất hoặc tạo báo cáo."
+        action="Mở Results & Triage"
+        to={`/results?project=${activeProject}`}
       />
     ),
     documents: (

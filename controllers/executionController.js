@@ -523,7 +523,7 @@ const getRun = async (req, res) => {
     project: run.testPlan.project, status: 'Approved', testCase: { $in: executions.flatMap((execution) => execution.testCase ? [execution.testCase._id] : []) },
   }).select('testCase engine filename runtimeUrl sourceCaseUpdatedAt').sort({ approvedAt: -1 }).lean();
   const automationJobs = await AutomationResult.find({ testRun: run._id })
-    .select('suiteName status progress testCase testExecution duration artifacts failureAnalysis createdAt completedAt')
+    .select('suiteName status progress testCase testExecution duration artifacts failureAnalysis triage startedAt createdAt completedAt')
     .sort('createdAt');
   send(res, { run, executions, automationJobs, scripts });
 };
@@ -581,8 +581,22 @@ const recordExecution = async (req, res) => {
   req._auditBefore = execution.toObject();
   const editable = ['result', 'duration', 'notes', 'actualResult', 'evidence', 'stepResults', 'bugReported'];
   const updates = Object.fromEntries(editable.filter((key) => req.body[key] !== undefined).map((key) => [key, req.body[key]]));
-  if (req.body.result !== undefined) updates.qaVerdict = ['Passed', 'Failed'].includes(req.body.result) ? req.body.result : null;
-  execution = await TestExecution.findByIdAndUpdate(execution._id, { ...updates, executedBy: req.user._id, executedAt: new Date() }, { new: true, runValidators: true });
+  if (req.body.result !== undefined) {
+    if (!require('../services/executionReviewService').verdicts.has(req.body.result)) throw new AppError('Chọn Pass, Fail, Blocked hoặc Skipped để xác nhận QA.', 400);
+    const active = execution.automationRun && await require('../models').AutomationRun.exists({ _id: execution.automationRun, status: { $in: ['Queued', 'Preparing', 'Running', 'Collecting'] } });
+    if (active) throw new AppError('Đợi runner kết thúc trước khi xác nhận verdict cuối cùng.', 409);
+    updates.qaVerdict = req.body.result; updates.qaReviewedAt = new Date(); updates.qaReviewedBy = req.user._id; updates.qaAutomationRun = execution.automationRun || null;
+  }
+  if (req.body.duration !== undefined && (!Number.isFinite(Number(req.body.duration)) || Number(req.body.duration) < 0)) throw new AppError('Thời gian thực hiện phải là số phút không âm.', 400);
+  const resultChanged = ['result', 'actualResult', 'duration', 'stepResults'].some((key) => req.body[key] !== undefined && JSON.stringify(req.body[key]) !== JSON.stringify(execution[key]));
+  if (resultChanged) {
+    updates.triage = null;
+    if (req.body.result === undefined) Object.assign(updates, { qaVerdict: null, qaReviewedAt: null, qaReviewedBy: null, qaAutomationRun: null });
+  }
+  if (updates.qaReviewedAt) updates.$push = { qaReviews: { $each: [{ verdict: updates.qaVerdict, actualResult: updates.actualResult ?? execution.actualResult, duration: updates.duration ?? execution.duration, stepResults: updates.stepResults ?? execution.stepResults, automationRun: updates.qaAutomationRun, reviewedBy: req.user._id, reviewedAt: updates.qaReviewedAt }], $slice: -100 } };
+  execution = await TestExecution.findOneAndUpdate({ _id: execution._id, automationRun: execution.automationRun || null }, { ...updates, executedBy: req.user._id, executedAt: new Date() }, { new: true, runValidators: true });
+  if (!execution) throw new AppError('Lượt chạy vừa thay đổi. Tải lại trước khi xác nhận QA.', 409);
+  if (resultChanged) await TestRun.updateOne({ _id: execution.testRun }, { $set: { 'completionReview.reviewedAt': null } });
   const run = await recalculateRun(execution.testRun);
   const plan = await getById(TestPlan, run.testPlan);
   await addKpiPoints({ user: req.user._id, project: plan.project, points: 1, reason: 'Thực thi test case', entityType: 'TestExecution', entityId: execution._id, counters: { testCasesExecuted: 1 } });

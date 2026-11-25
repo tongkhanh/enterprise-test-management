@@ -570,6 +570,9 @@ export const executionApi = {
   automationPreflight: (id, params) => api.get(`/test-executions/${id}/automation-preflight`, { params }).then(data),
   recordExecution: (id, body) =>
     api.patch(`/test-executions/${id}`, body).then(data),
+  bugDraft: (id) => api.get(`/test-executions/${id}/bug-draft`).then(data),
+  analyzeExecution: (id) => api.post(`/test-executions/${id}/root-cause/analyze`, {}, { timeout: 180000 }).then(data),
+  reviewTriage: (id, body) => api.patch(`/test-executions/${id}/triage`, body).then(data),
   startManualBrowser: (id) => api.post(`/test-executions/${id}/manual-browser`).then(data),
   manualBrowserTicket: (id) => api.post(`/test-executions/${id}/manual-browser/ticket`).then(data),
   endManualBrowser: (id) => api.delete(`/test-executions/${id}/manual-browser`).then(data),

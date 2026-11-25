@@ -58,9 +58,15 @@ const testExecutionSchema = new Schema(
     },
     qaVerdict: {
       type: String,
-      enum: ['Passed', 'Failed'],
+      enum: ['Passed', 'Failed', 'Blocked', 'Skipped'],
       default: null,
     },
+    qaReviewedAt: { type: Date, default: null },
+    qaReviewedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    qaAutomationRun: { type: Schema.Types.ObjectId, ref: 'AutomationRun', default: null },
+    qaReviews: { type: [Schema.Types.Mixed], default: [] },
+    triage: { type: Schema.Types.Mixed, default: null },
+    triageHistory: { type: [Schema.Types.Mixed], default: [] },
     automationRun: {
       type: Schema.Types.ObjectId,
       ref: 'AutomationRun',

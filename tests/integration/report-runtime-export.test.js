@@ -56,7 +56,7 @@ test('reports distinguish execution modes and retries, and exports resolve the c
     const plan = await m.TestPlan.create({ name: 'Login plan', project: project._id, kind: 'ExecutionPlan', approvalStatus: 'Approved', testCases: cases.map((item) => item._id), createdBy: owner._id });
     const run = await m.TestRun.create({ name: 'Manual and Auto run', testPlan: plan._id, status: 'Completed', environment: 'environment binding pending', totalCases: 2, passedCount: 2, completionReview: { exitCriteriaMet: true, releaseRecommendation: 'Go', reviewedBy: owner._id, reviewedAt: new Date() }, createdBy: owner._id });
     const executions = await m.TestExecution.insertMany(cases.map((item) => ({
-      testRun: run._id, testCase: item._id, result: 'Passed', qaVerdict: 'Passed',
+      testRun: run._id, testCase: item._id, result: 'Passed', qaVerdict: 'Passed', qaReviewedAt: new Date(), qaReviewedBy: owner._id,
       executedAt: new Date(), executedBy: owner._id,
     })));
     const previous = await m.AutomationResult.create({ project: project._id, suiteName: 'Login', framework: 'Playwright', status: 'Error', testRun: run._id, testExecution: executions[1]._id, testCase: cases[1]._id, targetUrl: url });
@@ -66,7 +66,10 @@ test('reports distinguish execution modes and retries, and exports resolve the c
       environment: environment._id, script: new mongoose.Types.ObjectId(), engine: 'Playwright',
       status: 'Passed', requestedBy: owner._id, targetUrl: url,
     });
-    await m.TestExecution.updateOne({ _id: executions[1]._id }, { automationRun: automationRun._id });
+    await m.TestExecution.updateOne({ _id: executions[1]._id }, { automationRun: automationRun._id, qaAutomationRun: automationRun._id });
+    await m.TestExecution.updateOne({ _id: executions[1]._id }, { qaReviewedAt: null });
+    await request(`/test-runs/${run._id}/reports/suggest`, 'POST', {}, 409);
+    await m.TestExecution.updateOne({ _id: executions[1]._id }, { qaReviewedAt: new Date() });
     const report = await request(`/test-runs/${run._id}/reports/suggest`, 'POST', {}, 201);
     assert.equal(report.metrics.manual, 1);
     assert.equal(report.metrics.auto, 1);
@@ -103,7 +106,11 @@ test('reports distinguish execution modes and retries, and exports resolve the c
     assert.equal((await m.TestCase.findById(cases[0]._id)).targetUrl, oldUrl);
     assert.equal((await m.TestCase.findById(cases[0]._id)).status, 'Approved');
 
-    await m.TestExecution.updateOne({ _id: executions[1]._id }, { result: 'Failed', qaVerdict: 'Failed' });
+    await m.TestExecution.updateOne({ _id: executions[1]._id }, { result: 'Failed', qaVerdict: 'Failed', triage: { classification: 'ProductBug', reviewedAt: new Date(), automationRun: automationRun._id } });
+    const reviewedTriage = (await m.TestExecution.findById(executions[1]._id)).triage;
+    await m.TestExecution.updateOne({ _id: executions[1]._id }, { triage: null });
+    await request(`/test-runs/${run._id}/reports/suggest`, 'POST', {}, 409);
+    await m.TestExecution.updateOne({ _id: executions[1]._id }, { triage: reviewedTriage });
     const override = await request(`/test-runs/${run._id}/reports/suggest`, 'POST', {}, 201);
     assert.equal(override.metrics.passed, 1);
     assert.equal(override.metrics.failed, 1);

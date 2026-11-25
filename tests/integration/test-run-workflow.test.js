@@ -135,8 +135,13 @@ test('a Test Run records manual results and runs the reviewed script while retai
     const queued = await request(`/test-executions/${execution._id}/auto`, 'POST', { scriptId: generated._id }, 202);
     automationRunId = queued._id;
     await request(`/test-executions/${execution._id}/auto`, 'POST', { scriptId: generated._id }, 409);
-    await request(`/test-executions/${execution._id}`, 'PATCH', { result: 'Passed', actualResult: 'QA verified alternate login' });
+    await request(`/test-executions/${execution._id}`, 'PATCH', { result: 'Passed', actualResult: 'Premature verdict' }, 409);
     await executeWithRetries(automationRunId);
+    const pendingQa = await m.TestExecution.findById(execution._id);
+    assert.equal(pendingQa.qaReviewedAt, null, 'runner outcomes are not QA confirmations');
+    const bugDraft = await request(`/test-executions/${execution._id}/bug-draft`);
+    assert.ok(bugDraft.attachments.some((item) => item.fileUrl.startsWith('/api/v1/execution-artifacts/')));
+    await request(`/test-executions/${execution._id}`, 'PATCH', { result: 'Passed', actualResult: 'QA verified alternate login' });
     const detail = await request(`/test-runs/${auto._id}`);
     assert.equal(detail.run.passedCount, 1);
     assert.equal(detail.executions[0].qaVerdict, 'Passed');
@@ -183,6 +188,11 @@ test('a Test Run records manual results and runs the reviewed script while retai
     await request(`/automation-scripts/${replacement._id}/review`, 'PATCH', { status: 'Approved' });
     const retest = await request(`/test-executions/${execution._id}/auto`, 'POST', { scriptId: replacement._id }, 202);
     assert.notEqual(retest._id, automationRunId);
+    const awaitingRetest = await m.TestExecution.findById(execution._id);
+    assert.equal(awaitingRetest.qaVerdict, null);
+    assert.equal(awaitingRetest.qaReviewedAt, null);
+    assert.equal(awaitingRetest.triage, null);
+    assert.equal(awaitingRetest.qaReviews.length, 1, 'new attempts retain prior QA review history');
     assert.equal(String((await m.TestExecution.findById(execution._id)).automationScript), replacement._id);
     assert.equal((await m.AutomationRun.findById(automationRunId)).status, 'Failed', 'Retest must preserve the prior attempt and outcome');
 

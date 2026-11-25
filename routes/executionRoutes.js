@@ -28,6 +28,9 @@ router.get('/test-runs/:id', authorize('execution:manage', 'execution:execute'),
 router.post('/test-runs/:id/execute', authorize('execution:manage', 'execution:execute'), asyncHandler(c.executeAutomatedRun));
 router.patch('/test-runs/:id', authorize('execution:manage'), auditLog('UPDATE', 'TestRun'), asyncHandler(c.updateRun));
 router.patch('/test-executions/:id', authorize('execution:execute', 'execution:manage'), auditLog('UPDATE', 'TestExecution'), asyncHandler(c.recordExecution));
+router.get('/test-executions/:id/bug-draft', authorize('execution:execute', 'execution:manage'), asyncHandler(require('../controllers/executionTriageController').bugDraft));
+router.post('/test-executions/:id/root-cause/analyze', authorize('execution:execute', 'execution:manage'), auditLog('UPDATE', 'TestExecution'), asyncHandler(require('../controllers/executionTriageController').analyze));
+router.patch('/test-executions/:id/triage', authorize('execution:execute', 'execution:manage'), auditLog('UPDATE', 'TestExecution'), asyncHandler(require('../controllers/executionTriageController').review));
 router.post('/test-executions/:id/manual-browser', authorize('execution:execute', 'execution:manage'), asyncHandler(manualBrowser.start));
 router.get('/test-executions/:id/manual-browser', authorize('execution:execute', 'execution:manage'), asyncHandler(manualBrowser.status));
 router.delete('/test-executions/:id/manual-browser', authorize('execution:execute', 'execution:manage'), asyncHandler(manualBrowser.end));
