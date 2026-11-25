@@ -13,8 +13,9 @@ import '/src/styles.css';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { executionApi, automationLabApi, workspaceApi, testCaseApi } from '/src/api/client.js';
+import { executionApi, automationLabApi, workspaceApi, testCaseApi, bugApi } from '/src/api/client.js';
 import TestRunExecutionPanel from '/src/features/e2e/TestRunExecutionPanel.jsx';
+import ResultsTriagePage from '/src/features/e2e/ResultsTriagePage.jsx';
 import AutomationLabPage from '/src/features/automation/AutomationLabPage.jsx';
 import { TestPlanningDocumentEditor } from '/src/features/e2e/QAWorkflow.jsx';
 const e = React.createElement;
@@ -22,11 +23,18 @@ const read = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.str
 let plans = read('audit-plans', []);
 let execution = read('audit-execution', { _id: 'execution', testCase: { _id: 'case', title: 'Synthetic login', testSteps: [{ stepNumber: 1, action: 'Previously checked', expectedResult: 'Confirmed' }, { stepNumber: 2, action: 'Untested step', expectedResult: 'Must be checked' }] }, stepResults: [{ stepNumber: 1, status: 'Passed', actualResult: 'Confirmed previously' }], result: 'Passed', qaVerdict: 'Passed', actualResult: 'Saved QA note', runtimeUrl: 'https://example.test/' });
 const auto = location.search.includes('automation');
+const triage = location.search.includes('triage');
+if (triage && !localStorage.getItem('audit-triage-initialized')) { execution = { ...execution, result:'Failed', qaVerdict:null, qaReviewedAt:null, actualResult:'Observed failure', duration:0, triage:null }; localStorage.setItem('audit-triage-initialized','true'); localStorage.setItem('audit-execution',JSON.stringify(execution)); }
 if (auto) execution = { ...execution, executionMode: 'Automation', environmentId: 'environment', result: 'NotRun', automationRun: null };
 executionApi.run = async () => ({ run: { _id: 'run', executionMode: auto ? 'Automation' : 'Manual', testPlan: { kind: 'ExecutionPlan', approvalStatus: 'Approved' } }, scripts: auto ? [{ _id: 'script', testCase: 'case', engine: 'Playwright', filename: 'fixture.spec.js' }] : [], automationJobs: [], executions: [{...execution}] });
 executionApi.automationPreflight = async () => ({ ready: localStorage.getItem('audit-auto-ready') === 'true', checks: [{ name: 'Script', ready: localStorage.getItem('audit-auto-ready') === 'true', detail: 'QA approval required' }], history: execution.automationRun ? [execution.automationRun] : [] });
 executionApi.executeScript = async () => { execution = { ...execution, automationRun: { _id: 'runner', engine: 'Playwright', status: 'Running', attempt: 1 } }; localStorage.setItem('audit-auto-started', 'true'); return execution.automationRun; };
-executionApi.recordExecution = async (_id, body) => { execution = { ...execution, ...body }; localStorage.setItem('audit-execution', JSON.stringify(execution)); return { execution }; };
+executionApi.recordExecution = async (_id, body) => { execution = { ...execution, ...body, qaVerdict:body.result, qaReviewedAt:new Date().toISOString(), qaAutomationRun:execution.automationRun?._id || null }; localStorage.setItem('audit-execution', JSON.stringify(execution)); return { execution }; };
+executionApi.runs = async () => [{_id:'run',name:'Synthetic run',executionMode:'Manual'}];
+executionApi.reviewTriage = async (_id, body) => { execution = {...execution, triage:{...body,reviewedAt:new Date().toISOString()}}; localStorage.setItem('audit-execution',JSON.stringify(execution)); return execution.triage; };
+executionApi.analyzeExecution = async () => { localStorage.setItem('audit-ai-requested','true'); throw new Error('AI unavailable; manual triage remains available'); };
+executionApi.bugDraft = async () => ({title:'[Environment] Synthetic login',description:execution.actualResult,actualResult:execution.actualResult,stepsToReproduce:'1. Open login',expectedResult:'Login form visible',environment:'https://authoritative.test/',severity:'Major',priority:'Medium',anomalyType:'Environment',attachments:[{fileName:'runner.log',fileUrl:'/api/v1/execution-artifacts/fixture/runner.log'}]});
+bugApi.create = async (body) => { localStorage.setItem('audit-bug',JSON.stringify(body)); return {_id:'bug'}; };
 executionApi.startManualBrowser = async () => { localStorage.setItem('audit-browser-starts', String(Number(localStorage.getItem('audit-browser-starts') || 0) + 1)); return { status: 'Ready' }; };
 executionApi.endManualBrowser = async () => ({ status: 'Ended' });
 executionApi.manualBrowserInput = async () => ({});
@@ -60,6 +68,7 @@ executionApi.createPlan = async (body) => { const plan = { ...body, _id: 'plan-'
 executionApi.updatePlan = async (id, body) => { const plan = { ...body, _id: id }; plans = plans.map((item) => item._id === id ? plan : item); localStorage.setItem('audit-plans', JSON.stringify(plans)); return plan; };
 function App() {
  const items = useQuery({ queryKey: ['e2e-plans'], queryFn: async () => [...plans] });
+ if (triage) return e(ResultsTriagePage);
  if (location.search.includes('lab')) return e(AutomationLabPage);
  if (location.search.includes('notes') || auto) return e(TestRunExecutionPanel, { runId: 'run', project: 'project', profile: 'profile' });
  return e(TestPlanningDocumentEditor, { activeProject: 'project', profile: { _id: 'profile', workflow: { testBasisSelection: { requirements: [], useCases: [], userStories: ['story'] } } }, stories: [{ _id: 'story', title: 'Approved synthetic story', approvalStatus: 'Approved', source: 'ImportedDocument' }], items: items.data || [], onNext: () => {}, setActiveStep: () => {} });
@@ -186,6 +195,39 @@ try {
   await page.reload();
   await page.getByRole('region', { name: 'Theo dõi Automation chỉ xem' }).getByText('#1 · Passed · 25 ms', { exact: true }).waitFor();
   console.log('PASS: Automation Lab opens the live viewer, displays completed progress as 100%, and reopens the job after refresh.');
+
+  await page.goto(`${base}?triage&project=project&run=run`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.getByRole('heading', {name:'Results & Triage', exact:true}).waitFor();
+  await page.getByText('Chờ xác nhận QA', {exact:true}).waitFor();
+  assert.equal(await page.getByRole('link', {name:'Đánh giá hoàn tất & báo cáo'}).count(),0);
+  assert.equal(await page.getByRole('button', {name:'Ghi Bug Log',exact:true}).isEnabled(),false);
+  await page.getByRole('textbox', {name:'Ghi chú kết quả'}).fill('Confirmed failure with evidence');
+  await page.getByLabel('Thời gian thực hiện (phút)').fill('1.25');
+  await page.getByRole('button', {name:'Lưu kết quả QA',exact:true}).click();
+  await page.getByText('QA: Failed', {exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('audit-execution')).duration),1.25);
+  await page.getByRole('button', {name:'AI gợi ý root cause',exact:true}).click();
+  await page.waitForFunction(()=>localStorage.getItem('audit-ai-requested')==='true');
+  await page.getByLabel('Phân loại triage').selectOption('Environment');
+  await page.getByLabel('Root cause QA').fill('Staging service unavailable');
+  await page.getByLabel('Giải pháp QA').fill('Restore staging then retest');
+  await page.getByRole('button', {name:'Xác nhận triage',exact:true}).click();
+  await page.getByRole('link', {name:'Đánh giá hoàn tất & báo cáo'}).waitFor();
+  await page.reload();
+  await page.getByLabel('Root cause QA').waitFor();
+  assert.equal(await page.getByLabel('Root cause QA').inputValue(),'Staging service unavailable');
+  assert.equal(await page.getByRole('textbox',{name:'Ghi chú kết quả'}).inputValue(),'Confirmed failure with evidence');
+  await page.getByRole('button', {name:'Ghi Bug Log',exact:true}).click();
+  assert.equal(await page.getByLabel('Các bước tái hiện').inputValue(),'1. Open login');
+  assert.equal(await page.getByLabel('Kết quả mong đợi').inputValue(),'Login form visible');
+  assert.equal(await page.getByLabel('Kết quả thực tế',{exact:true}).inputValue(),'Confirmed failure with evidence');
+  await page.getByRole('button', {name:'Lưu Bug Log',exact:true}).click();
+  await page.waitForFunction(()=>localStorage.getItem('audit-bug'));
+  const bug = await page.evaluate(()=>JSON.parse(localStorage.getItem('audit-bug')));
+  assert.equal(bug.approvalStatus,'PendingApproval');
+  assert.equal(bug.environment,'https://authoritative.test/');
+  assert.equal(bug.attachments[0].fileName,'runner.log');
+  console.log('PASS: Results & Triage requires QA, persists notes/time/classification, works without AI, and prefills pending Bug evidence.');
 
   await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.getByRole('tab', { name: 'Tự soạn / chỉnh sửa', exact: true }).click();

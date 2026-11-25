@@ -41,8 +41,9 @@ async function syncTestExecution(run, result) {
   if (!run.testExecution) return;
   const execution = await TestExecution.findOne({ _id: run.testExecution, automationRun: run._id }).select('testRun');
   if (!execution) return;
+  const timing = run.result ? await AutomationResult.findById(run.result).select('duration').lean() : null;
   await TestExecution.updateOne({ _id: execution._id, automationRun: run._id, qaVerdict: null }, {
-    result, executedAt: new Date(), executedBy: run.requestedBy,
+    result, executedAt: new Date(), executedBy: run.requestedBy, ...(timing ? { duration: Math.round(timing.duration / 60) / 1000 } : {}),
   });
   await recalculateRun(execution.testRun);
 }
@@ -66,11 +67,13 @@ async function createAutomationRun({ scriptId, environmentId, profileId, userId,
   if (tc.quarantined) throw new AppError('Test Case đang bị quarantine.', 409);
   const run = await AutomationRun.create({ project: script.project, testCase: script.testCase, script: script._id, profile: profile._id, environment: environment._id, commitSha: environment.repository?.commitSha, targetUrl: environment.targetUrl, engine: script.engine, requestedBy: userId, dataset, fixture, matrix, dataRow, groupId, schedule, triggeredBy, testExecution: execution?._id, approvedCodeHash: execution ? codeHash(script) : undefined });
   if (execution) {
-    const linked = await TestExecution.updateOne({ _id: execution._id, automationRun: execution.automationRun || null }, { automationRun: run._id, automationScript: script._id });
+    const linked = await TestExecution.updateOne({ _id: execution._id, automationRun: execution.automationRun || null }, { automationRun: run._id, automationScript: script._id, qaVerdict: null, qaReviewedAt: null, qaReviewedBy: null, qaAutomationRun: null, triage: null, result: 'NotRun' });
     if (!linked.matchedCount) {
       await run.deleteOne();
       throw new AppError('Test Case vừa được đưa vào lượt chạy khác.', 409);
     }
+    await TestRun.updateOne({ _id: execution.testRun }, { $set: { 'completionReview.reviewedAt': null } });
+    await recalculateRun(execution.testRun);
   }
   let job;
   try {

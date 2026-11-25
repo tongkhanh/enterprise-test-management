@@ -23,6 +23,7 @@ import SettingsPage from '@/features/settings/SettingsPage'
 import AutomationLabPage from '@/features/automation/AutomationLabPage'
 import AgileIssuesPage from '@/features/issues/AgileIssuesPage'
 import TestReportsPage from '@/features/reports/TestReportsPage'
+import ResultsTriagePage from '@/features/e2e/ResultsTriagePage'
 import AutomationOperationsPage from '@/features/automation/AutomationOperationsPage'
 import { authApi } from '@/api/client'
 import { useAuthStore } from '@/store/authStore'
@@ -86,6 +87,7 @@ export default function App() {
         <Route path="automation" element={<AutomationLabPage />} />
         <Route path="bugs" element={<BugTrackingPage />} />
         <Route path="reports" element={<TestReportsPage />} />
+        <Route path="results" element={<ResultsTriagePage />} />
         <Route path="automation-operations" element={<AutomationOperationsPage />} />
         <Route path="gamification" element={<GamificationPage />} />
         <Route path="settings" element={<SettingsPage />} />

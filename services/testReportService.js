@@ -21,12 +21,14 @@ async function buildContext(testRunId) {
     TestExecution.find({ testRun: run._id })
       .populate('testCase', 'testCaseId title priority type e2e targetUrl')
       .populate('automationRun', 'result status engine targetUrl')
-      .select('result duration notes actualResult testCase automationRun executedBy executedAt qaVerdict').lean(),
+      .select('result duration notes actualResult testCase automationRun executedBy executedAt qaVerdict qaReviewedAt qaAutomationRun triage').lean(),
     AutomationResult.find({ testRun: run._id })
       .select('framework status duration failureAnalysis testCase testExecution targetUrl createdAt completedAt')
       .sort({ createdAt: 1, _id: 1 }).lean(),
     Bug.find({ project: run.testPlan.project, testExecution: { $in: await TestExecution.find({ testRun: run._id }).distinct('_id') } }).select('title severity priority status rootCause').lean(),
   ]);
+  const reviewGaps = require('./executionReviewService').reviewGaps(executions);
+  if (reviewGaps.length) throw new AppError('Xác nhận QA verdict và triage các kết quả Fail/Blocked trong Results & Triage trước khi tạo báo cáo.', 409, { reviewGaps });
   const details = await Promise.all(executions.map(async (execution) => {
     const attempts = automation.filter((result) => String(result.testExecution || '') === String(execution._id) ||
       (!result.testExecution && String(result.testCase || '') === String(execution.testCase?._id)));

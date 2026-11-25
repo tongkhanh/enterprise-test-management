@@ -7,10 +7,11 @@ import { automationLabApi, bugApi, executionApi } from "@/api/client";
 import { Badge, Button, Card, Input, Select, Textarea } from "@/components/ui";
 import RemoteManualBrowser from "./RemoteManualBrowser";
 import AutomationLiveView from "./AutomationLiveView";
+import ExecutionTriage from "./ExecutionTriage";
 
 const activeStatuses = new Set(["Queued", "Preparing", "Running", "Collecting"]);
 
-function ExecutionCase({ execution, scripts, jobs, project, profile, run, refresh, onBindEnvironment }) {
+function ExecutionCase({ execution, scripts, jobs, project, profile, run, refresh, onBindEnvironment, reviewOnly }) {
   const mode = execution.executionMode || run.executionMode || (execution.automationRun ? "Automation" : "Manual");
   const [manualOpen, setManualOpen] = useState(false);
   const [automationOpen, setAutomationOpen] = useState(false);
@@ -25,6 +26,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
   const [dataset, setDataset] = useState("");
   const [fixture, setFixture] = useState("");
   const [verdict, setVerdict] = useState("");
+  const [durationEdit, setDuration] = useState(null);
   const [files, setFiles] = useState([]);
   const [stepResults, setStepResults] = useState(() => (execution.testCase?.testSteps || []).map((step, index) => execution.stepResults?.find((row) => row.stepNumber === (step.stepNumber || index + 1)) || { stepNumber: step.stepNumber || index + 1, status: "NotRun", actualResult: "", note: "" }));
   const [noteEdit, setNote] = useState(null);
@@ -35,6 +37,8 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
   const runner = execution.automationRun;
   const runnerActive = activeStatuses.has(runner?.status);
   const runnerResult = jobs.find((job) => job._id === runner?.result);
+  const duration = durationEdit ?? execution.duration ?? 0;
+  const qaConfirmed = Boolean(execution.qaReviewedAt && execution.qaVerdict === execution.result && String(execution.qaAutomationRun || '') === String(runner?._id || ''));
   const evidence = Object.values(runnerResult?.artifacts || {}).flat().filter((item) => item?.url?.startsWith("/api/v1/execution-artifacts/"));
   const options = scripts.filter((item) =>
     item.testCase === testCase?._id &&
@@ -52,7 +56,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
   const preflight = useQuery({ queryKey: ['automation-preflight', execution._id, selectedScript, dataset, fixture, runner?.status, runner?.attempt], queryFn: () => executionApi.automationPreflight(execution._id, { scriptId: selectedScript || undefined, dataset: dataset || undefined, fixture: fixture || undefined }), enabled: mode === 'Automation', refetchOnWindowFocus: true });
 
   const save = useMutation({
-    mutationFn: () => executionApi.recordExecution(execution._id, { result: verdict || execution.result, actualResult: note.trim(), stepResults }),
+    mutationFn: () => executionApi.recordExecution(execution._id, { result: verdict || execution.result, actualResult: note.trim(), duration: Number(duration), stepResults }),
     onSuccess: () => { setVerdict(""); refresh(); toast.success("Đã lưu kết quả QA"); },
     onError: (error) => toast.error(error.message),
   });
@@ -67,10 +71,12 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
     onError: (error) => toast.error(error.message),
   });
   const logBug = useMutation({
-    mutationFn: () => bugApi.create({ ...bug, title: bug.title.trim(), description: bug.description.trim(), project, testExecution: execution._id, approvalStatus: "PendingApproval", environment: execution.runtimeUrl || "", attachments: (execution.evidence || []).map((url) => ({ fileName: decodeURIComponent(url.split('/').at(-1)), fileUrl: url, fileType: "Evidence" })) }),
+    mutationFn: () => bugApi.create({ ...bug, title: bug.title.trim(), description: bug.description.trim(), project, testExecution: execution._id, approvalStatus: "PendingApproval", environment: bug.environment || execution.runtimeUrl || "", attachments: bug.attachments || (execution.evidence || []).map((url) => ({ fileName: decodeURIComponent(url.split('/').at(-1)), fileUrl: url, fileType: "Evidence" })) }),
     onSuccess: () => { setShowBug(false); setBug({ title: "", description: "", stepsToReproduce: "", expectedResult: "", actualResult: "", anomalyType: "ProductBug", severity: "Major", priority: "Medium", jiraRequested: false }); refresh(); toast.success("Đã tạo Bug nháp để triage và phê duyệt"); },
     onError: (error) => toast.error(error.message),
   });
+
+  const prepareBug = useMutation({ mutationFn: () => executionApi.bugDraft(execution._id), onSuccess: (draft) => { setBug({ ...draft, jiraRequested: false }); setShowBug(true); }, onError: (error) => toast.error(error.message) });
 
   async function download(item) {
     try {
@@ -91,17 +97,17 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
       <div className="flex flex-wrap items-center gap-2">
         <h4 className="font-semibold">{testCase?.title || "Test Case"}</h4>
         {testCase?._id && <span className="text-xs text-slate-500">TC-{testCase._id.slice(-6).toUpperCase()}</span>}
-        <Badge>{execution.result}</Badge>
+        <Badge>{execution.result}</Badge><Badge>{qaConfirmed ? `QA: ${execution.qaVerdict}` : "Chờ xác nhận QA"}</Badge>
       </div>
       <div className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${mode === 'Automation' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}`}>{mode} Run</div>
       {mode === "Manual" ? (
         <div className="space-y-2">
-          {execution.runtimeUrl ? <Button variant="outline" disabled={!planReady} onClick={() => setManualOpen(true)}>{manualOpen ? 'Đang thực thi Manual' : 'Bắt đầu Manual Test'}</Button> : <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/20"><div><p className="text-sm font-semibold text-amber-900 dark:text-amber-100">Chưa có website để chạy Manual</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Chọn một Test Environment Ready hoặc nhập URL ứng dụng đang chạy, rồi quay lại Test Run.</p></div>{onBindEnvironment && <Button size="sm" onClick={onBindEnvironment}>Gắn môi trường chạy</Button>}</div>}
+          {!reviewOnly && (execution.runtimeUrl ? <Button variant="outline" disabled={!planReady} onClick={() => setManualOpen(true)}>{manualOpen ? 'Đang thực thi Manual' : 'Bắt đầu Manual Test'}</Button> : <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/20"><div><p className="text-sm font-semibold text-amber-900 dark:text-amber-100">Chưa có website để chạy Manual</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Chọn một Test Environment Ready hoặc nhập URL ứng dụng đang chạy, rồi quay lại Test Run.</p></div>{onBindEnvironment && <Button size="sm" onClick={onBindEnvironment}>Gắn môi trường chạy</Button>}</div>)}
           {!planReady && <p className="text-sm text-amber-700">QA Manager cần duyệt Execution Plan trước khi chạy.</p>}
           {!!Object.keys(testCase?.generatedTestData || {}).length && <details className="text-sm"><summary>Dữ liệu kiểm thử</summary><pre className="mt-2 whitespace-pre-wrap break-words rounded border p-2 text-xs">{JSON.stringify(testCase.generatedTestData, null, 2)}</pre></details>}
           {testCase?.testSteps?.length > 0 && <div className="overflow-hidden rounded-xl border"><div className="grid grid-cols-[3rem_1fr_1fr_9rem] gap-2 bg-slate-50 p-3 text-xs font-bold dark:bg-slate-800"><span>Bước</span><span>Thao tác / Expected</span><span>Actual result</span><span>Kết quả</span></div>{testCase.testSteps.map((step, index) => { const row = stepResults[index] || {}; return <div key={index} className="grid grid-cols-[3rem_1fr_1fr_9rem] gap-2 border-t p-3 text-sm"><strong>{step.stepNumber || index + 1}</strong><div>{step.action}{step.testData && <p className="mt-1 text-xs text-slate-500">Test Data: {step.testData}</p>}<p className="mt-1 text-xs text-slate-500">Expected: {step.expectedResult}</p></div><Textarea className="min-h-20" aria-label={`Actual result bước ${index + 1}`} value={row.actualResult || ''} onChange={(event) => setStepResults((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, actualResult: event.target.value } : item))} /><Select aria-label={`Kết quả bước ${index + 1}`} value={row.status || 'NotRun'} onChange={(event) => setStepResults((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, status: event.target.value } : item))}>{['NotRun','Passed','Failed','Blocked','Skipped'].map((value) => <option key={value} value={value}>{value === 'NotRun' ? 'Chưa kiểm thử' : value}</option>)}</Select></div> })}</div>}
         </div>
-      ) : (
+      ) : !reviewOnly ? (
         <div className="space-y-2">
           <Button asChild variant="outline"><Link to={`/automation?${params}`}>Sinh / chỉnh script trong Automation Lab</Link></Button>
           {!!testCase?.testSteps?.length && <details className="rounded border p-3 text-sm"><summary>Các bước Test Case / Expected result</summary><ol className="mt-2 list-inside list-decimal space-y-2">{testCase.testSteps.map((step, index) => <li key={index}>{step.action}<p className="text-xs text-slate-500">Expected: {step.expectedResult}</p></li>)}</ol></details>}
@@ -120,7 +126,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
           <Button disabled={!selectedScript || !execution.environmentId || !planReady || !preflight.data?.ready || runnerActive || start.isPending} onClick={() => start.mutate()}>{runner ? 'Retest bằng script đã duyệt' : 'Chạy script đã duyệt'}</Button>
           {runner && <Button variant="outline" onClick={() => setAutomationOpen(true)}>Theo dõi runner & lịch sử</Button>}
         </div>
-      )}
+      ) : null}
       {runner && <div className="space-y-1 rounded-md border p-3 text-sm">
         <p>Kết quả runner · {runner.engine} · <strong>{runner.status}</strong></p>
         {runner.error && <p className="text-red-600">{runner.error}</p>}
@@ -134,16 +140,18 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
             <option value="NotRun">Chưa chạy</option><option value="Passed">Pass</option><option value="Failed">Fail</option><option value="Blocked">Blocked</option><option value="Skipped">Skipped</option>
           </Select>
         </label>
+        <label className="block max-w-xs"><span className="label">Thời gian thực hiện (phút)</span><Input aria-label="Thời gian thực hiện (phút)" type="number" min="0" step="0.001" value={duration} onChange={(event) => setDuration(event.target.value)} /></label>
         <Textarea aria-label="Ghi chú kết quả" placeholder="Ghi chú kết quả" value={note} onChange={(event) => setNote(event.target.value)} />
-        <Button type="submit" disabled={!(verdict || execution.result) || (verdict || execution.result) === 'NotRun' || save.isPending}>Lưu kết quả QA</Button>
+        <Button type="submit" disabled={runnerActive || !(verdict || execution.result) || (verdict || execution.result) === 'NotRun' || save.isPending}>Lưu kết quả QA</Button>
       </form>
+      <ExecutionTriage execution={execution} refresh={refresh} qaConfirmed={qaConfirmed} />
       {execution.bugReported && <p className="text-sm text-slate-500">Bug Log đã liên kết · {execution.bugReported}</p>}
-      {!showBug && <Button variant="outline" onClick={() => setShowBug(true)}>Ghi Bug Log</Button>}
+      {!showBug && <Button variant="outline" disabled={execution.result !== "Failed" || !qaConfirmed || prepareBug.isPending} onClick={() => prepareBug.mutate()}>Ghi Bug Log</Button>}
       {showBug && <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); if (bug.title.trim() && bug.description.trim()) logBug.mutate(); }}>
-        <div className="grid gap-2 md:grid-cols-3"><label><span className="label">Phân loại anomaly</span><Select value={bug.anomalyType} onChange={(event) => setBug({ ...bug, anomalyType: event.target.value })}>{['ProductBug','TestScript','TestData','Environment','FlakyTest','RequirementMismatch'].map((item) => <option key={item}>{item}</option>)}</Select></label><label><span className="label">Severity</span><Select value={bug.severity} onChange={(event) => setBug({ ...bug, severity: event.target.value })}>{['Critical','Major','Minor','Trivial'].map((item) => <option key={item}>{item}</option>)}</Select></label><label><span className="label">Priority</span><Select value={bug.priority} onChange={(event) => setBug({ ...bug, priority: event.target.value })}>{['Urgent','High','Medium','Low'].map((item) => <option key={item}>{item}</option>)}</Select></label></div>
+        <div className="grid gap-2 md:grid-cols-3"><label><span className="label">Phân loại anomaly</span><Select value={bug.anomalyType} onChange={(event) => setBug({ ...bug, anomalyType: event.target.value })}>{['Untriaged','ProductBug','TestScript','TestData','Environment','FlakyTest','RequirementMismatch','Duplicate','ExpectedBehavior'].map((item) => <option key={item}>{item}</option>)}</Select></label><label><span className="label">Severity</span><Select value={bug.severity} onChange={(event) => setBug({ ...bug, severity: event.target.value })}>{['Critical','Major','Minor','Trivial'].map((item) => <option key={item}>{item}</option>)}</Select></label><label><span className="label">Priority</span><Select value={bug.priority} onChange={(event) => setBug({ ...bug, priority: event.target.value })}>{['Urgent','High','Medium','Low'].map((item) => <option key={item}>{item}</option>)}</Select></label></div>
         <Input aria-label="Tiêu đề lỗi" placeholder="Tiêu đề lỗi" required value={bug.title} onChange={(event) => setBug({ ...bug, title: event.target.value })} />
         <Textarea aria-label="Mô tả lỗi" placeholder="Mô tả hiện tượng và ảnh hưởng" required value={bug.description} onChange={(event) => setBug({ ...bug, description: event.target.value })} />
-        <div className="grid gap-2 md:grid-cols-2"><Textarea aria-label="Các bước tái hiện" placeholder="Các bước tái hiện" value={bug.stepsToReproduce} onChange={(event) => setBug({ ...bug, stepsToReproduce: event.target.value })} /><Textarea aria-label="Kết quả mong đợi" placeholder="Expected result" value={bug.expectedResult} onChange={(event) => setBug({ ...bug, expectedResult: event.target.value })} /><Textarea aria-label="Kết quả thực tế" placeholder="Actual result" value={bug.actualResult || note} onChange={(event) => setBug({ ...bug, actualResult: event.target.value })} /></div>
+        <div className="grid gap-2 md:grid-cols-2"><Textarea aria-label="Các bước tái hiện" placeholder="Các bước tái hiện" value={bug.stepsToReproduce} onChange={(event) => setBug({ ...bug, stepsToReproduce: event.target.value })} /><Textarea aria-label="Kết quả mong đợi" placeholder="Expected result" value={bug.expectedResult} onChange={(event) => setBug({ ...bug, expectedResult: event.target.value })} /><Textarea aria-label="Kết quả thực tế" placeholder="Actual result" value={bug.actualResult ?? note} onChange={(event) => setBug({ ...bug, actualResult: event.target.value })} /></div>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={bug.jiraRequested} onChange={(event) => setBug({ ...bug, jiraRequested: event.target.checked })} />Yêu cầu đồng bộ Jira sau khi Bug được duyệt</label>
         <div className="flex gap-2">
           <Button type="submit" disabled={logBug.isPending}>Lưu Bug Log</Button>
@@ -160,7 +168,7 @@ function ExecutionCase({ execution, scripts, jobs, project, profile, run, refres
   </div>, document.body);
 }
 
-export default function TestRunExecutionPanel({ runId, project, profile, onBindEnvironment }) {
+export default function TestRunExecutionPanel({ runId, project, profile, onBindEnvironment, reviewOnly = false }) {
   const client = useQueryClient();
   const run = useQuery({
     queryKey: ["test-run-detail", runId],
@@ -174,5 +182,5 @@ export default function TestRunExecutionPanel({ runId, project, profile, onBindE
   if (run.isPending) return <p className="mt-4 text-sm">Đang tải Test Run…</p>;
   if (run.isError) return <p className="mt-4 text-sm text-red-600">{run.error.message}</p>;
   if (!run.data.executions.length) return <p className="mt-4 text-sm">Test Run chưa có Test Case.</p>;
-  return <div className="mt-4 space-y-3">{run.data.executions.map((execution) => <ExecutionCase key={execution._id} execution={execution} scripts={run.data.scripts} jobs={run.data.automationJobs} project={project} profile={profile} run={run.data.run} refresh={refresh} onBindEnvironment={onBindEnvironment} />)}</div>;
+  return <div className="mt-4 space-y-3">{!reviewOnly && <Button asChild variant="outline"><Link to={`/results?project=${project}&run=${runId}`}>Kết quả & Triage →</Link></Button>}{run.data.executions.map((execution) => <ExecutionCase key={execution._id} execution={execution} scripts={run.data.scripts} jobs={run.data.automationJobs} project={project} profile={profile} run={run.data.run} refresh={refresh} onBindEnvironment={onBindEnvironment} reviewOnly={reviewOnly} />)}</div>;
 }

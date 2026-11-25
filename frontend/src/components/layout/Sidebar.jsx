@@ -31,6 +31,7 @@ const groups = [
       { label: 'Cycles & Test Planning', to: '/cycles', icon: Repeat2 },
       { label: 'Backlog & Test Board', to: '/board', icon: Columns3 },
       { label: 'Thực thi Test Run', to: '/test-execution?step=execution', icon: PlayCircle },
+      { label: 'Results & Triage', to: '/results', icon: CheckSquare2 },
       { label: 'Công việc Agile', to: '/issues', icon: ListTodo },
     ],
   },
