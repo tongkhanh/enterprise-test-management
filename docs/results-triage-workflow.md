@@ -33,6 +33,21 @@ pending, and a database lease rejects concurrent decisions for the same Bug.
 Live issue creation still requires a separate
 workflow retest; the automated checks mock Jira and use a disposable local DB.
 
+### Jira status mapping
+
+Settings → Integrations → Ánh xạ trạng thái edits the seven ETMS Bug statuses
+for each Jira connection without resending credentials or changing Jira issues.
+Empty entries use the ETMS status name; mappings must be valid Bug statuses with
+string destinations of at most 120 characters. Save the Bug again to request a
+sync after changing its connection's mapping.
+
+The provider checks the current Jira status first, then matches available
+transitions by destination status (the action name can differ). An already-correct
+status is a successful no-op. A missing transition fails the sync and records an
+actionable Failed log instead of a false Success; other fields may already have
+updated. Existing historical sync logs are not rewritten. No mappings are applied
+automatically to existing connections.
+
 ## Remaining staged work
 
 1. Complete Bug review, root-cause review history, and approved Jira synchronization/retry behavior.

@@ -19,8 +19,12 @@ async function processIntegrationJob(job) {
   try {
     const provider = createIntegrationProvider({ connection, credential: decryptCredential(connection.credentialCiphertext) });
     const assigneeId = connection.settings?.userMappings?.[bug.assignedTo?.email]; const fields = { summary: bug.title, priority: { name: bug.priority } }; if (assigneeId) fields.assignee = { accountId: assigneeId };
-    await provider.updateIssue(bug.externalIssue.key, fields); const target = connection.syncConfig?.statusMappings?.[bug.status] || bug.status; await provider.transitionIssue(bug.externalIssue.key, target); if (job.data.comment) await provider.addComment(bug.externalIssue.key, job.data.comment);
-    log.status = 'Success'; log.durationMs = Date.now() - started; log.message = 'Đã đồng bộ ETMS Bug sang Jira.'; connection.lastSyncAt = new Date(); await Promise.all([log.save(), connection.save()]); return { bugId: bug._id, key: bug.externalIssue.key };
-  } catch (error) { log.status = 'Failed'; log.error = error.message.slice(0, 1000); log.durationMs = Date.now() - started; await log.save(); throw error; }
+    await provider.updateIssue(bug.externalIssue.key, fields);
+    const target = connection.syncConfig?.statusMappings?.[bug.status] || bug.status;
+    const transition = await provider.transitionIssue(bug.externalIssue.key, target);
+    if (transition?.skipped) throw new Error(transition.reason || 'Jira status transition chưa hoàn tất.');
+    if (job.data.comment) await provider.addComment(bug.externalIssue.key, job.data.comment);
+    log.status = 'Success'; log.durationMs = Date.now() - started; log.message = `Đã đồng bộ ETMS Bug sang Jira. Trạng thái: ${transition?.status || target}.`; connection.lastSyncAt = new Date(); await Promise.all([log.save(), connection.save()]); return { bugId: bug._id, key: bug.externalIssue.key };
+  } catch (error) { log.status = 'Failed'; log.error = error.message.slice(0, 1000); log.message = 'Đồng bộ chưa hoàn tất; một số trường có thể đã được cập nhật.'; log.durationMs = Date.now() - started; await log.save(); throw error; }
 }
 module.exports = { enqueueJiraBugSync, processIntegrationJob };

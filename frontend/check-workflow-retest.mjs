@@ -15,6 +15,8 @@ import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { executionApi, automationLabApi, workspaceApi, testCaseApi, bugApi } from '/src/api/client.js';
 import TestRunExecutionPanel from '/src/features/e2e/TestRunExecutionPanel.jsx';
+import SettingsPage from '/src/features/settings/SettingsPage.jsx';
+import { useAuthStore } from '/src/store/authStore.js';
 import ResultsTriagePage from '/src/features/e2e/ResultsTriagePage.jsx';
 import AutomationLabPage from '/src/features/automation/AutomationLabPage.jsx';
 import { TestPlanningDocumentEditor } from '/src/features/e2e/QAWorkflow.jsx';
@@ -22,6 +24,8 @@ const e = React.createElement;
 const read = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 let plans = read('audit-plans', []);
 let execution = read('audit-execution', { _id: 'execution', testCase: { _id: 'case', title: 'Synthetic login', testSteps: [{ stepNumber: 1, action: 'Previously checked', expectedResult: 'Confirmed' }, { stepNumber: 2, action: 'Untested step', expectedResult: 'Must be checked' }] }, stepResults: [{ stepNumber: 1, status: 'Passed', actualResult: 'Confirmed previously' }], result: 'Passed', qaVerdict: 'Passed', actualResult: 'Saved QA note', runtimeUrl: 'https://example.test/' });
+const settings = location.search.includes('settings');
+if (settings) useAuthStore.setState({user:{_id:'owner'}});
 const auto = location.search.includes('automation');
 const triage = location.search.includes('triage');
 if (triage && !localStorage.getItem('audit-triage-initialized')) { execution = { ...execution, result:'Failed', qaVerdict:null, qaReviewedAt:null, actualResult:'Observed failure', duration:0, triage:null }; localStorage.setItem('audit-triage-initialized','true'); localStorage.setItem('audit-execution',JSON.stringify(execution)); }
@@ -57,7 +61,11 @@ window.fetch = async (url, options) => {
 automationLabApi.datasets = async () => [];
 automationLabApi.fixtures = async () => [];
 workspaceApi.projects = async () => [{_id:'project',name:'Synthetic project',currentRole:'Owner'}];
-workspaceApi.integrations = async () => [];
+let integration = read('audit-jira-connection', {_id:'jira-connection',provider:'Jira',displayName:'Synthetic Jira',project:{_id:'project',key:'QA'},workspace:'workspace',externalProjectKey:'QA',status:'Connected',hasCredentials:true,settings:{accountEmail:'owner@example.test'},syncConfig:{direction:'Outbound',entities:['Bug']}});
+workspaceApi.workspaces = async () => [{_id:'workspace',name:'Synthetic workspace',owner:'owner'}];
+workspaceApi.workspaceMemberships = async () => [];
+workspaceApi.integrations = async () => settings ? [integration] : [];
+workspaceApi.updateIntegration = async (_id, body) => { integration={...integration,...body}; localStorage.setItem('audit-jira-connection',JSON.stringify(integration)); localStorage.setItem('audit-jira-request',JSON.stringify(body)); return integration; };
 automationLabApi.dockerStatus = async () => ({available:true});
 automationLabApi.environments = async () => [{_id:'environment',name:'Synthetic environment',status:'Ready',targetUrl:'https://example.test/'}];
 testCaseApi.list = async () => [{_id:'case',title:'Synthetic login',status:'Approved'}];
@@ -68,6 +76,7 @@ executionApi.createPlan = async (body) => { const plan = { ...body, _id: 'plan-'
 executionApi.updatePlan = async (id, body) => { const plan = { ...body, _id: id }; plans = plans.map((item) => item._id === id ? plan : item); localStorage.setItem('audit-plans', JSON.stringify(plans)); return plan; };
 function App() {
  const items = useQuery({ queryKey: ['e2e-plans'], queryFn: async () => [...plans] });
+ if (settings) return e(SettingsPage);
  if (triage) return e(ResultsTriagePage);
  if (location.search.includes('lab')) return e(AutomationLabPage);
  if (location.search.includes('notes') || auto) return e(TestRunExecutionPanel, { runId: 'run', project: 'project', profile: 'profile' });
@@ -228,6 +237,23 @@ try {
   assert.equal(bug.environment,'https://authoritative.test/');
   assert.equal(bug.attachments[0].fileName,'runner.log');
   console.log('PASS: Results & Triage requires QA, persists notes/time/classification, works without AI, and prefills pending Bug evidence.');
+
+  await page.goto(`${base}?settings`, {waitUntil:'domcontentloaded',timeout:60000});
+  await page.getByRole('button',{name:'Ánh xạ trạng thái',exact:true}).click();
+  const mapping = page.getByRole('dialog',{name:'Ánh xạ trạng thái Jira',exact:true});
+  await mapping.getByLabel('Jira cho InProgress',{exact:true}).fill('In Progress');
+  await mapping.getByLabel('Jira cho New',{exact:true}).fill('To Do');
+  await mapping.getByRole('button',{name:'Lưu ánh xạ',exact:true}).click();
+  await page.waitForFunction(()=>localStorage.getItem('audit-jira-request'));
+  const mappingRequest=await page.evaluate(()=>JSON.parse(localStorage.getItem('audit-jira-request')));
+  assert.deepEqual(Object.keys(mappingRequest),['syncConfig']);
+  assert.equal(mappingRequest.syncConfig.direction,'Outbound');
+  assert.equal(mappingRequest.syncConfig.statusMappings.InProgress,'In Progress');
+  await page.reload();
+  await page.getByRole('button',{name:'Ánh xạ trạng thái',exact:true}).click();
+  assert.equal(await page.getByLabel('Jira cho InProgress',{exact:true}).inputValue(),'In Progress');
+  await page.getByRole('dialog',{name:'Ánh xạ trạng thái Jira',exact:true}).getByRole('button',{name:'Hủy',exact:true}).click();
+  console.log('PASS: Jira mappings save and reopen per connection without resending credentials or changing other sync configuration.');
 
   await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.getByRole('tab', { name: 'Tự soạn / chỉnh sửa', exact: true }).click();

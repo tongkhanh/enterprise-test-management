@@ -145,6 +145,7 @@ export const workspaceApi = {
       .get(`/integrations?limit=100${project ? `&project=${project}` : ""}`)
       .then(data),
   createIntegration: (body) => api.post("/integrations", body).then(data),
+  updateIntegration: (id, body) => api.patch(`/integrations/${id}`, body).then(data),
   testIntegration: (id) => api.post(`/integrations/${id}/test`).then(data),
   integrationLogs: (id) =>
     api.get(`/integrations/${id}/logs?limit=50`).then(data),

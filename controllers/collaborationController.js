@@ -452,6 +452,7 @@ const listIntegrations = async (req, res) => {
 };
 
 const createIntegration = async (req, res) => {
+  if (req.body.provider === 'Jira' && req.body.syncConfig !== undefined) req.body.syncConfig = require('../services/integrationService').validateJiraStatusMappings(req.body.syncConfig);
   const { provider, project: projectId } = req.body;
   if (!['Jira', 'GitHub', 'Linear'].includes(provider)) throw new AppError('Provider phải là Jira, GitHub hoặc Linear.', 400);
   let project = null;
@@ -495,6 +496,7 @@ const updateIntegration = async (req, res) => {
   const integration = await getById(IntegrationConnection, req.params.id);
   if (integration.project) await assertProjectManager(await getById(Project, integration.project), req.user);
   else await assertWorkspaceAccess(req.user, integration.workspace, { manage: true, permission: 'integration:manage' });
+  if (integration.provider === 'Jira' && req.body.syncConfig !== undefined) req.body.syncConfig = require('../services/integrationService').validateJiraStatusMappings(req.body.syncConfig);
   ['displayName', 'baseUrl', 'externalProjectKey', 'settings', 'status', 'syncConfig', 'retryPolicy'].forEach((key) => {
     if (req.body[key] !== undefined) integration[key] = req.body[key];
   });
