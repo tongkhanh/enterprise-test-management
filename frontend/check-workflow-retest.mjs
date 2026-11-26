@@ -64,6 +64,7 @@ workspaceApi.projects = async () => [{_id:'project',name:'Synthetic project',cur
 let integration = read('audit-jira-connection', {_id:'jira-connection',provider:'Jira',displayName:'Synthetic Jira',project:{_id:'project',key:'QA'},workspace:'workspace',externalProjectKey:'QA',status:'Connected',hasCredentials:true,settings:{accountEmail:'owner@example.test'},syncConfig:{direction:'Outbound',entities:['Bug']}});
 workspaceApi.workspaces = async () => [{_id:'workspace',name:'Synthetic workspace',owner:'owner'}];
 workspaceApi.workspaceMemberships = async () => [];
+workspaceApi.integrationLogs = async () => [{_id:'failed-log',action:'SyncBug',status:'Failed',message:'Đồng bộ chưa hoàn tất',error:'Không có transition Jira đến InProgress',durationMs:12}];
 workspaceApi.integrations = async () => settings ? [integration] : [];
 workspaceApi.updateIntegration = async (_id, body) => { integration={...integration,...body}; localStorage.setItem('audit-jira-connection',JSON.stringify(integration)); localStorage.setItem('audit-jira-request',JSON.stringify(body)); return integration; };
 automationLabApi.dockerStatus = async () => ({available:true});
@@ -253,6 +254,10 @@ try {
   await page.getByRole('button',{name:'Ánh xạ trạng thái',exact:true}).click();
   assert.equal(await page.getByLabel('Jira cho InProgress',{exact:true}).inputValue(),'In Progress');
   await page.getByRole('dialog',{name:'Ánh xạ trạng thái Jira',exact:true}).getByRole('button',{name:'Hủy',exact:true}).click();
+  await page.getByRole('button',{name:'Logs',exact:true}).click();
+  const logs = page.getByRole('dialog',{name:'Integration logs · Synthetic Jira',exact:true});
+  await logs.getByText(/Không có transition Jira đến InProgress/).waitFor();
+  await logs.getByRole('button',{name:'Đóng',exact:true}).click();
   console.log('PASS: Jira mappings save and reopen per connection without resending credentials or changing other sync configuration.');
 
   await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 });
