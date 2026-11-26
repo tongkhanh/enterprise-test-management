@@ -75,6 +75,8 @@ const bugSchema = new Schema(
       default: 'New',
     },
     approvalStatus: { type: String, enum: ['PendingApproval', 'Approved', 'Rejected'], default: 'Approved', index: true },
+    approvalLeaseToken: { type: String, select: false },
+    approvalLeaseUntil: { type: Date, select: false },
     reviewNote: { type: String, default: '', maxlength: 2000 },
     approvedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     approvedAt: { type: Date, default: null },
@@ -188,6 +190,7 @@ const bugSchema = new Schema(
 
     externalIssue: {
       provider: { type: String, enum: ['Jira'], default: null },
+      integration: { type: Schema.Types.ObjectId, ref: 'IntegrationConnection', default: null },
       id: { type: String, default: null },
       key: { type: String, default: null },
       url: { type: String, default: null },

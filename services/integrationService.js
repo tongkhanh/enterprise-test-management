@@ -6,6 +6,19 @@ const { createIntegrationProvider } = require('./integrations');
 
 const safeError = (error) => String(error?.message || 'Integration error').replace(/(bearer|token|password|secret)\s+[^\s,;]+/ig, '$1 [REDACTED]').slice(0, 1000);
 
+const validateJiraStatusMappings = (config) => {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new AppError('syncConfig phải là object.', 400);
+  if (!Object.hasOwn(config, 'statusMappings')) return config;
+  const mappings = config.statusMappings;
+  if (!mappings || typeof mappings !== 'object' || Array.isArray(mappings)) throw new AppError('statusMappings phải là bảng trạng thái ETMS → Jira.', 400);
+  const statuses = new Set(['New', 'Open', 'InProgress', 'Resolved', 'Verified', 'Closed', 'Reopened']);
+  const entries = Object.entries(mappings).map(([status, target]) => {
+    if (!statuses.has(status) || typeof target !== 'string' || target.length > 120) throw new AppError('Ánh xạ Jira cần trạng thái Bug hợp lệ và tên đích tối đa 120 ký tự.', 400);
+    return [status, target.trim()];
+  }).filter(([, target]) => target);
+  return { ...config, statusMappings: Object.fromEntries(entries) };
+};
+
 // People naturally paste a repository clone URL when creating a GitHub
 // connection. The connection test, however, needs the GitHub API endpoint.
 // Repair this common configuration safely when it is a github.com URL; GitHub
@@ -63,4 +76,4 @@ const rotateWebhookSecret = async (connection) => {
   return secret;
 };
 
-module.exports = { testIntegrationConnection, rotateWebhookSecret, safeError, normalizeGitHubApiEndpoint };
+module.exports = { testIntegrationConnection, rotateWebhookSecret, safeError, normalizeGitHubApiEndpoint, validateJiraStatusMappings };

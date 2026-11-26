@@ -145,18 +145,25 @@ const decideBug = async (req, res) => {
   if (!['Approved', 'Rejected'].includes(req.body.decision)) throw new AppError('decision không hợp lệ.', 400);
   if (bug.approvalStatus !== 'PendingApproval') throw new AppError('Bug không ở trạng thái chờ duyệt.', 409);
   if (req.body.decision === 'Rejected' && !String(req.body.reviewNote || '').trim()) throw new AppError('Cần nhập lý do từ chối.', 400);
-  bug.approvalStatus = req.body.decision; bug.reviewNote = String(req.body.reviewNote || '').trim().slice(0, 2000);
-  bug.approvedBy = req.body.decision === 'Approved' ? req.user._id : null; bug.approvedAt = req.body.decision === 'Approved' ? new Date() : null;
-  if (req.body.decision === 'Approved' && (bug.jiraRequested || req.body.createJira) && !bug.externalIssue?.key) {
-    const jiraAttachments = bug.attachments.flatMap((item) => {
-      const match = String(item.fileUrl || '').match(/^\/api\/v1\/test-executions\/([a-f\d]{24})\/evidence\/([^/?#]+)$/i);
-      if (!match) return [];
-      return [{ path: path.resolve('storage', 'execution-evidence', match[1], path.basename(decodeURIComponent(match[2]))), name: item.fileName, type: item.fileType }];
-    });
-    const issue = await createJiraBug({ summary: bug.title, rootCause: bug.rootCause?.summary, confidence: bug.rootCause?.confidence, severity: bug.severity, priority: bug.priority, environment: bug.environment, steps: `${bug.stepsToReproduce}\n\nExpected: ${bug.expectedResult}\nActual: ${bug.actualResult}`, evidence: bug.rootCause?.evidence || [], targetUrl: bug.environment, attachments: jiraAttachments });
-    bug.externalIssue = { provider: 'Jira', id: issue.id, key: issue.key, url: issue.url, syncedAt: issue.syncedAt, attachmentWarnings: issue.warnings || [] };
+  const leaseToken = require('node:crypto').randomUUID();
+  const claimed = await Bug.updateOne({ _id: bug._id, approvalStatus: 'PendingApproval', $or: [{ approvalLeaseUntil: null }, { approvalLeaseUntil: { $lte: new Date() } }] }, { $set: { approvalLeaseToken: leaseToken, approvalLeaseUntil: new Date(Date.now() + 180000) } });
+  if (!claimed.matchedCount) throw new AppError('Bug đang được duyệt hoặc đã có quyết định. Tải lại trước khi thử lại.', 409);
+  try {
+    bug.approvalStatus = req.body.decision; bug.reviewNote = String(req.body.reviewNote || '').trim().slice(0, 2000);
+    bug.approvedBy = req.body.decision === 'Approved' ? req.user._id : null; bug.approvedAt = req.body.decision === 'Approved' ? new Date() : null;
+    if (req.body.decision === 'Approved' && (bug.jiraRequested || req.body.createJira) && !bug.externalIssue?.key) {
+      const jiraAttachments = bug.attachments.flatMap((item) => {
+        const match = String(item.fileUrl || '').match(/^\/api\/v1\/test-executions\/([a-f\d]{24})\/evidence\/([^/?#]+)$/i);
+        if (!match) return [];
+        return [{ path: path.resolve('storage', 'execution-evidence', match[1], path.basename(decodeURIComponent(match[2]))), name: item.fileName, type: item.fileType }];
+      });
+      const issue = await createJiraBug({ project: bug.project, initiatedBy: req.user._id, summary: bug.title, rootCause: bug.rootCause?.summary, rootCauseSource: bug.rootCause?.suggestedByAi ? 'AI' : 'QA', confidence: bug.rootCause?.confidence, severity: bug.severity, priority: bug.priority, environment: bug.environment, steps: `${bug.stepsToReproduce}\n\nExpected: ${bug.expectedResult}\nActual: ${bug.actualResult}`, evidence: bug.rootCause?.evidence || [], targetUrl: bug.environment, attachments: jiraAttachments });
+      bug.externalIssue = { provider: 'Jira', id: issue.id, key: issue.key, url: issue.url, integration: issue.integration, syncedAt: issue.syncedAt, attachmentWarnings: issue.warnings || [] };
+    }
+    await bug.save({ validateBeforeSave: false });
+  } finally {
+    await Bug.updateOne({ _id: bug._id, approvalLeaseToken: leaseToken }, { $unset: { approvalLeaseToken: 1, approvalLeaseUntil: 1 } }).catch(() => console.warn('Không thể giải phóng Bug approval lease; lease sẽ tự hết hạn.'));
   }
-  await bug.save({ validateBeforeSave: false });
   send(res, bug);
 };
 
