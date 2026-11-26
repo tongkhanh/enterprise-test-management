@@ -188,6 +188,7 @@ const bugSchema = new Schema(
 
     externalIssue: {
       provider: { type: String, enum: ['Jira'], default: null },
+      integration: { type: Schema.Types.ObjectId, ref: 'IntegrationConnection', default: null },
       id: { type: String, default: null },
       key: { type: String, default: null },
       url: { type: String, default: null },

@@ -14,6 +14,23 @@ Test Run → Result & Evidence → QA Verdict → Bug/Triage → Fix → Retest/
 - Bug drafts prefill steps, expected/actual results, environment, reviewed root cause, and available execution/runner evidence. New drafts remain PendingApproval; requesting Jira synchronization does not constitute approval.
 - Existing data and already exported/approved reports are preserved. Older executions without explicit QA confirmation need confirmation before generating a new summary.
 
+## Jira project connection follow-up
+
+Bug approval now uses the project's verified Jira connection from Settings,
+including its encrypted token, Atlassian account email and external project key.
+When several connections are Connected, the most recently tested one is used.
+The resulting issue stores that connection so subsequent updates cannot switch
+silently to another account. Missing/unverified project connections block Jira
+creation instead of falling back to server-wide credentials. Existing legacy
+callers without a project retain their environment-based configuration.
+
+Jira is contacted only when a pending Bug is approved with Jira requested. A
+rejection or internal-only approval creates no issue. Creation failures leave
+the Bug pending and write a redacted CreateIssue integration log; successful
+approval saves the Jira key/link. Jira descriptions distinguish QA-entered root
+causes from AI suggestions. Live issue creation still requires a separate
+workflow retest; the automated checks mock Jira and use a disposable local DB.
+
 ## Remaining staged work
 
 1. Complete Bug review, root-cause review history, and approved Jira synchronization/retry behavior.

@@ -153,8 +153,8 @@ const decideBug = async (req, res) => {
       if (!match) return [];
       return [{ path: path.resolve('storage', 'execution-evidence', match[1], path.basename(decodeURIComponent(match[2]))), name: item.fileName, type: item.fileType }];
     });
-    const issue = await createJiraBug({ summary: bug.title, rootCause: bug.rootCause?.summary, confidence: bug.rootCause?.confidence, severity: bug.severity, priority: bug.priority, environment: bug.environment, steps: `${bug.stepsToReproduce}\n\nExpected: ${bug.expectedResult}\nActual: ${bug.actualResult}`, evidence: bug.rootCause?.evidence || [], targetUrl: bug.environment, attachments: jiraAttachments });
-    bug.externalIssue = { provider: 'Jira', id: issue.id, key: issue.key, url: issue.url, syncedAt: issue.syncedAt, attachmentWarnings: issue.warnings || [] };
+    const issue = await createJiraBug({ project: bug.project, initiatedBy: req.user._id, summary: bug.title, rootCause: bug.rootCause?.summary, rootCauseSource: bug.rootCause?.suggestedByAi ? 'AI' : 'QA', confidence: bug.rootCause?.confidence, severity: bug.severity, priority: bug.priority, environment: bug.environment, steps: `${bug.stepsToReproduce}\n\nExpected: ${bug.expectedResult}\nActual: ${bug.actualResult}`, evidence: bug.rootCause?.evidence || [], targetUrl: bug.environment, attachments: jiraAttachments });
+    bug.externalIssue = { provider: 'Jira', id: issue.id, key: issue.key, url: issue.url, integration: issue.integration, syncedAt: issue.syncedAt, attachmentWarnings: issue.warnings || [] };
   }
   await bug.save({ validateBeforeSave: false });
   send(res, bug);
