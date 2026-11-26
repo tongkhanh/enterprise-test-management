@@ -75,6 +75,8 @@ const bugSchema = new Schema(
       default: 'New',
     },
     approvalStatus: { type: String, enum: ['PendingApproval', 'Approved', 'Rejected'], default: 'Approved', index: true },
+    approvalLeaseToken: { type: String, select: false },
+    approvalLeaseUntil: { type: Date, select: false },
     reviewNote: { type: String, default: '', maxlength: 2000 },
     approvedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     approvedAt: { type: Date, default: null },

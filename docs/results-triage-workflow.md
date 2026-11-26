@@ -28,7 +28,9 @@ Jira is contacted only when a pending Bug is approved with Jira requested. A
 rejection or internal-only approval creates no issue. Creation failures leave
 the Bug pending and write a redacted CreateIssue integration log; successful
 approval saves the Jira key/link. Jira descriptions distinguish QA-entered root
-causes from AI suggestions. Live issue creation still requires a separate
+causes from AI suggestions. Approval buttons are disabled while a decision is
+pending, and a database lease rejects concurrent decisions for the same Bug.
+Live issue creation still requires a separate
 workflow retest; the automated checks mock Jira and use a disposable local DB.
 
 ## Remaining staged work

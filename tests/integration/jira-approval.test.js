@@ -13,6 +13,7 @@ test('Bug approval creates Jira issues using the verified project connection and
   t.mock.method(ai, 'isEmbeddingConfigured', () => false);
   const realFetch = global.fetch;
   const outbound = []; let jiraFails = false;
+  let entered, release; let holdResponse = false;
   t.mock.method(global, 'fetch', async (url, options = {}) => {
     if (String(url).startsWith('http://127.0.0.1:')) return realFetch(url, options);
     assert.equal(String(url), 'https://jira.example.test/rest/api/3/issue', 'no cross-project or legacy destination');
@@ -25,6 +26,7 @@ test('Bug approval creates Jira issues using the verified project connection and
     assert.match(JSON.stringify(body), /Actual: Observed failure/);
     assert.match(JSON.stringify(body), /Root cause do QA xác nhận/);
     assert.doesNotMatch(JSON.stringify(body), /AI confidence|automation-failure/);
+    if (holdResponse) { entered(); await new Promise(resolve => { release = resolve; }); }
     return new Response(JSON.stringify(jiraFails ? { errorMessages: ['Rejected fixture project-token'] } : { id: '10001', key: 'QA-1' }), { status: jiraFails ? 400 : 201 });
   });
   const { app } = require('../../server'); const m = require('../../models');
@@ -77,11 +79,22 @@ test('Bug approval creates Jira issues using the verified project connection and
     assert.equal(approved.externalIssue.url, 'https://jira.example.test/browse/QA-1');
     assert.equal(approved.externalIssue.integration, String(connection._id));
     assert.ok(await m.IntegrationSyncLog.exists({ integration: connection._id, action: 'CreateIssue', status: 'Success' }));
-    const count = outbound.length;
+    let count = outbound.length;
     await decide(bug, 'Approved', 409);
     await decide(await newBug(), 'Rejected');
     await decide(await newBug({ jiraRequested: false }), 'Approved');
     assert.equal(outbound.length, count, 'repeated approval, rejection and internal-only Bugs create no issue');
+    // Concurrent approval clicks must not create two external issues.
+    const concurrentBug = await newBug();
+    holdResponse = true;
+    const started = new Promise(resolve => { entered = resolve; });
+    const firstApproval = decide(concurrentBug, 'Approved');
+    await started;
+    try { await decide(concurrentBug, 'Approved', 409); } finally { holdResponse = false; release(); }
+    await firstApproval;
+    assert.equal(outbound.length, count + 1);
+    count = outbound.length;
+    assert.equal((await m.Bug.findById(concurrentBug._id)).approvalStatus, 'Approved');
     // A later connection must not silently take over an already-linked issue.
     await m.IntegrationConnection.create({ ...connectionData, status: 'Connected', lastTestedAt: new Date(Date.now() + 10000) });
     let syncJob;
